@@ -1,0 +1,14 @@
+# Build output
+build*/
+cmake-build-*/
+dist/
+install/
+
+# Not needed to build the servers
+.github/
+assets/
+doc/
+plans/
+
+# Local compose settings
+.env

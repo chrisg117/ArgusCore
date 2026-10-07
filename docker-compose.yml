@@ -1,0 +1,76 @@
+name: arguscore
+
+# Settings shared by worldserver and bnetserver.
+# ARGUSCORE_HOME holds configs/, data/ (extracted client data), logs/ and
+# the TDB_*.sql dumps the auto-updater imports on first start.
+x-server: &server
+  image: arguscore:dev
+  build:
+    context: .
+    args:
+      BUILD_TYPE: ${BUILD_TYPE:-RelWithDebInfo}
+      JOBS: ${JOBS:-6}
+  user: "${ARGUSCORE_UID:-1000}:${ARGUSCORE_GID:-1000}"
+  volumes:
+    - ${ARGUSCORE_HOME:-../arguscore-server}:/srv/arguscore
+  restart: unless-stopped
+  depends_on:
+    db:
+      condition: service_healthy
+
+# Config keys can be overridden with TC_* environment variables
+# (see IniKeyToEnvVarKey in src/common/Configuration/Config.cpp).
+x-database-env: &database-env
+  TC_LOGIN_DATABASE_INFO: "db;3306;arguscore;arguscore;auth"
+  TC_WORLD_DATABASE_INFO: "db;3306;arguscore;arguscore;world"
+  TC_CHARACTER_DATABASE_INFO: "db;3306;arguscore;arguscore;characters"
+  TC_HOTFIX_DATABASE_INFO: "db;3306;arguscore;arguscore;hotfixes"
+  TC_SOURCE_DIRECTORY: /opt/arguscore/src
+  TC_LOGS_DIR: /srv/arguscore/logs
+
+services:
+  db:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-arguscore}
+    volumes:
+      - db:/var/lib/mysql
+      - ./contrib/Docker/mysql-init.sql:/docker-entrypoint-initdb.d/create_mysql.sql:ro
+    ports:
+      - "${DB_BIND:-127.0.0.1}:3306:3306"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  worldserver:
+    <<: *server
+    command: worldserver
+    # worldserver reads commands from its console; attach with
+    # `docker attach arguscore-worldserver-1` (detach: ctrl-p ctrl-q)
+    stdin_open: true
+    tty: true
+    environment:
+      <<: *database-env
+      TC_DATA_DIR: /srv/arguscore/data
+    ports:
+      - "8085:8085"
+
+  bnetserver:
+    <<: *server
+    command: bnetserver
+    environment:
+      <<: *database-env
+      TC_CERTIFICATES_FILE: /opt/arguscore/certs/bnetserver.cert.pem
+      TC_PRIVATE_KEY_FILE: /opt/arguscore/certs/bnetserver.key.pem
+      # Address clients are told to use for the login REST service
+      TC_LOGIN_REST_EXTERNAL_ADDRESS: ${EXTERNAL_ADDRESS:-127.0.0.1}
+      TC_LOGIN_REST_LOCAL_ADDRESS: ${EXTERNAL_ADDRESS:-127.0.0.1}
+    ports:
+      - "1119:1119"
+      - "8081:8081"
+
+volumes:
+  db:
