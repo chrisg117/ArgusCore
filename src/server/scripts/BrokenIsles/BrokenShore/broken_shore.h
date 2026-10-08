@@ -120,6 +120,10 @@ enum BrokenShoreCreatureIds
     // Krosus (Alliance)
     NPC_KROSUS                          = 90544,
 
+    // Stop Gul'dan (Alliance)
+    NPC_GULDAN                          = 94276,
+    NPC_MOARG_SPINEBREAKER              = 105205,
+
     NPC_FINALE_KILL_CREDIT              = 90918, // quest objective "Broken Shore assaulted"
     NPC_CAPTAIN_ANGELICA                = 108920 // Stormwind Harbor, quest objective "Ship taken to the Broken Shore"
 };
@@ -128,7 +132,8 @@ enum BrokenShoreCreatureIds
 enum BrokenShoreDataTypes
 {
     DATA_KING_VARIAN_WRYNN              = 0,
-    DATA_HIGHLORD_TIRION_FORDRING       = 1
+    DATA_HIGHLORD_TIRION_FORDRING       = 1,
+    DATA_GULDAN                         = 2
 };
 
 // spawn_group_template. Each stage's spawns are one group, spawned when the stage starts.
@@ -140,7 +145,8 @@ enum BrokenShoreSpawnGroups
     SPAWN_GROUP_DESTROY_THE_PORTAL      = 14604,
     SPAWN_GROUP_RAZE_THE_BLACK_CITY     = 14605,
     SPAWN_GROUP_THE_HIGHLORD            = 14606,
-    SPAWN_GROUP_KROSUS                  = 14607
+    SPAWN_GROUP_KROSUS                  = 14607,
+    SPAWN_GROUP_STOP_GULDAN             = 14608
 };
 
 // WorldSafeLocs.db2. The "Start" locations are relative to the faction's ship, not to the map.

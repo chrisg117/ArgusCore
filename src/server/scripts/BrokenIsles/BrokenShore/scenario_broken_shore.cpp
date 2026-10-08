@@ -31,6 +31,7 @@ ObjectData const creatureData[] =
 {
     { NPC_KING_VARIAN_WRYNN,        DATA_KING_VARIAN_WRYNN        },
     { NPC_HIGHLORD_TIRION_FORDRING, DATA_HIGHLORD_TIRION_FORDRING },
+    { NPC_GULDAN,                   DATA_GULDAN                   },
     { 0,                            0                             }  // END
 };
 
@@ -39,6 +40,9 @@ static constexpr float VarianFoundDistance = 30.0f;
 
 // The same for Highlord Tirion Fordring, who hangs about 27 yards out from the ledge players arrive on
 static constexpr float TirionFoundDistance = 40.0f;
+
+// How close to Gul'dan a player dies
+static constexpr float GuldanDeathDistance = 5.0f;
 
 // "The Battle for Broken Shore". The scenario itself is attached to the map by the `scenarios` table
 // and advances when its criteria receive the game events listed in broken_shore.h.
@@ -57,7 +61,7 @@ public:
 
             // Where players go when they release after dying; without one the core falls back to the
             // default graveyard in Westfall.
-            // TODO: the Horde's locations, and those of the stages after "The Highlord".
+            // TODO: the Horde's locations.
             SetEntranceLocation(WORLD_SAFE_LOC_ALLIANCE_BEACH);
         }
 
@@ -96,6 +100,9 @@ public:
                     break;
                 case STAGE_THE_HIGHLORD:
                     UpdateTheHighlord(diff);
+                    break;
+                case STAGE_STOP_GULDAN:
+                    UpdateStopGuldan(diff);
                     break;
                 default:
                     break;
@@ -161,6 +168,9 @@ public:
                     break;
                 case NPC_KROSUS:
                     SendScenarioEvent(GAME_EVENT_KROSUS_SLAIN);
+                    break;
+                case NPC_MOARG_SPINEBREAKER:
+                    SendScenarioEvent(GAME_EVENT_GULDAN_CONFRONTED);
                     break;
                 default:
                     break;
@@ -290,6 +300,10 @@ public:
                 case STAGE_KROSUS:
                     instance->SetSpawnGroupInactive(SPAWN_GROUP_KROSUS);
                     break;
+                // The same goes for the Mo'arg Spinebreaker, and Gul'dan stays as well
+                case STAGE_STOP_GULDAN:
+                    instance->SetSpawnGroupInactive(SPAWN_GROUP_STOP_GULDAN);
+                    break;
                 default:
                     break;
             }
@@ -385,9 +399,35 @@ public:
             instance->SpawnGroupSpawn(SPAWN_GROUP_KROSUS, true);
         }
 
-        // "Stop Gul'dan from summoning the Legion." Needs GAME_EVENT_GULDAN_CONFRONTED.
-        // TODO: Gul'dan's summoning event (the Horde holds the ridge instead).
-        void StartStopGuldan() { }
+        // "Stop Gul'dan from summoning the Legion." Needs GAME_EVENT_GULDAN_CONFRONTED, sent from
+        // OnUnitDeath when the Mo'arg Spinebreaker dies. It is the last stage of the scenario.
+        // TODO: the demons Gul'dan summons, what is said, the Alliance being surrounded and the Horde
+        // on the ridge.
+        void StartStopGuldan()
+        {
+            instance->SpawnGroupSpawn(SPAWN_GROUP_STOP_GULDAN, true);
+
+            // Players who release from here on go to the graveyard before the tomb
+            SetEntranceLocation(WORLD_SAFE_LOC_ALLIANCE_TOMB);
+        }
+
+        // Nobody gets to Gul'dan: a player who comes that close to him dies
+        void UpdateStopGuldan(uint32 diff)
+        {
+            if (!IsTimeToCheckPlayers(diff))
+                return;
+
+            Creature* guldan = GetCreature(DATA_GULDAN);
+            if (!guldan)
+                return;
+
+            for (MapReference const& ref : instance->GetPlayers())
+            {
+                Player* player = ref.GetSource();
+                if (player && !player->IsGameMaster() && player->IsAlive() && player->GetExactDist(guldan) <= GuldanDeathDistance)
+                    Unit::Kill(guldan, player);
+            }
+        }
 
         // TODO: the finale cinematic and the return to Stormwind.
         void CompleteScenario()
