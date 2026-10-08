@@ -1219,6 +1219,7 @@ bool CriteriaHandler::IsCompletedCriteria(Criteria const* criteria, uint64 requi
         case CriteriaType::CompleteAnyReplayQuest:
         case CriteriaType::BuyItemsFromVendors:
         case CriteriaType::SellItemsToVendors:
+        case CriteriaType::AnyoneTriggerGameEventScenario:
             return progress->Counter >= requiredAmount;
         case CriteriaType::EarnAchievement:
         case CriteriaType::CompleteQuest:
