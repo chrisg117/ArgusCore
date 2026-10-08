@@ -128,6 +128,12 @@ enum BrokenShoreCreatureIds
     NPC_CAPTAIN_ANGELICA                = 108920 // Stormwind Harbor, quest objective "Ship taken to the Broken Shore"
 };
 
+enum BrokenShoreGameObjectIds
+{
+    // A custom template: the object Blizzard spawns for Jaina's bridge of ice is not known
+    GO_ICE_BRIDGE                       = 1460001
+};
+
 // Creatures the instance script keeps track of (ObjectData)
 enum BrokenShoreDataTypes
 {
@@ -146,7 +152,11 @@ enum BrokenShoreSpawnGroups
     SPAWN_GROUP_RAZE_THE_BLACK_CITY     = 14605,
     SPAWN_GROUP_THE_HIGHLORD            = 14606,
     SPAWN_GROUP_KROSUS                  = 14607,
-    SPAWN_GROUP_STOP_GULDAN             = 14608
+    SPAWN_GROUP_STOP_GULDAN             = 14608,
+
+    // The bridges that Jaina makes are groups of their own, because they stay when their stage ends
+    SPAWN_GROUP_BRIDGE_TO_THE_HIGHLORD  = 14609,
+    SPAWN_GROUP_BRIDGE_TO_GULDAN        = 14610
 };
 
 // WorldSafeLocs.db2. The "Start" locations are relative to the faction's ship, not to the map.

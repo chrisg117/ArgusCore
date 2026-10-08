@@ -18,6 +18,7 @@
 #include "ScriptMgr.h"
 #include "DB2Stores.h"
 #include "GameEventSender.h"
+#include "GameObject.h"
 #include "InstanceScenario.h"
 #include "InstanceScript.h"
 #include "Log.h"
@@ -25,6 +26,7 @@
 #include "Player.h"
 #include "ScriptedCreature.h"
 #include "ScriptedGossip.h"
+#include "TaskScheduler.h"
 #include "broken_shore.h"
 
 ObjectData const creatureData[] =
@@ -43,6 +45,10 @@ static constexpr float TirionFoundDistance = 40.0f;
 
 // How close to Gul'dan a player dies
 static constexpr float GuldanDeathDistance = 5.0f;
+
+// How far into a stage Jaina's bridge of ice appears, and how long after that it starts to form
+static constexpr Seconds BridgeSpawnDelay = 3s;
+static constexpr Milliseconds BridgeFormDelay = 500ms;
 
 // Where players are taken when the Black City has been razed: the edge of the city, facing the gap to the crevasse
 Position const BlackCityRazedPosition = { 1410.2959f, 2162.2405f, 21.252392f, 4.92f };
@@ -71,6 +77,8 @@ public:
         // The core has no script hook for scenario step changes, so the current step is polled.
         void Update(uint32 diff) override
         {
+            _scheduler.Update(diff);
+
             ResurrectReleasedPlayers();
 
             InstanceScenario const* scenario = instance->GetInstanceScenario();
@@ -180,6 +188,23 @@ public:
             }
         }
 
+        // A bridge of ice is spawned as a closed door and opened a moment after it appears. The model's
+        // animation for a door that opens is the ice forming, and a client only plays it for a door it
+        // already has; an open door then shows the finished bridge.
+        void OnGameObjectCreate(GameObject* go) override
+        {
+            InstanceScript::OnGameObjectCreate(go);
+
+            if (go->GetEntry() != GO_ICE_BRIDGE)
+                return;
+
+            _scheduler.Schedule(BridgeFormDelay, [this, guid = go->GetGUID()](TaskContext /*context*/)
+            {
+                if (GameObject* bridge = instance->GetGameObject(guid))
+                    bridge->SetGoState(GO_STATE_ACTIVE);
+            });
+        }
+
         // The core only passes a game event on to the scenario when a player is its source,
         // and never for a player in GM mode.
         void SendScenarioEvent(uint32 gameEventId)
@@ -242,6 +267,15 @@ public:
                 GameEvents::Trigger(gameEventId, player, nullptr);
                 return;
             }
+        }
+
+        // TODO: Jaina, who makes the bridges; for now they form by themselves.
+        void SpawnBridge(uint32 spawnGroupId)
+        {
+            _scheduler.Schedule(BridgeSpawnDelay, [this, spawnGroupId](TaskContext /*context*/)
+            {
+                instance->SpawnGroupSpawn(spawnGroupId, true);
+            });
         }
 
         void StartStage(BrokenShoreStages stage)
@@ -379,12 +413,14 @@ public:
 
         // "Get to Tirion." Needs GAME_EVENT_TIRION_FOUND, sent when a player reaches the ledge he hangs
         // in front of. He stays where he is until the next stage starts.
-        // Players start the stage together at the edge of the city, facing the gap to the crevasse.
-        // TODO: the cinematic that plays before players are moved, Jaina's bridge of ice across the gap,
-        // Gul'dan and what he says, Tirion's chains, the demons on the way from the city and Varian's forces.
+        // Players start the stage together at the edge of the city, where a bridge of ice forms across the
+        // gap to the crevasse.
+        // TODO: the cinematic that plays before players are moved, Gul'dan and what he says, Tirion's
+        // chains, the demons on the way from the city and Varian's forces.
         void StartTheHighlord()
         {
             instance->SpawnGroupSpawn(SPAWN_GROUP_THE_HIGHLORD, true);
+            SpawnBridge(SPAWN_GROUP_BRIDGE_TO_THE_HIGHLORD);
 
             // Players who release from here on go to the graveyard at the crevasse
             SetEntranceLocation(WORLD_SAFE_LOC_ALLIANCE_CREVASSE);
@@ -411,11 +447,13 @@ public:
 
         // "Stop Gul'dan from summoning the Legion." Needs GAME_EVENT_GULDAN_CONFRONTED, sent from
         // OnUnitDeath when the Mo'arg Spinebreaker dies. It is the last stage of the scenario.
+        // A bridge of ice forms from the ledge where Krosus was fought to the path before the tomb.
         // TODO: the demons Gul'dan summons, what is said, the Alliance being surrounded and the Horde
         // on the ridge.
         void StartStopGuldan()
         {
             instance->SpawnGroupSpawn(SPAWN_GROUP_STOP_GULDAN, true);
+            SpawnBridge(SPAWN_GROUP_BRIDGE_TO_GULDAN);
 
             // Players who release from here on go to the graveyard before the tomb
             SetEntranceLocation(WORLD_SAFE_LOC_ALLIANCE_TOMB);
@@ -451,6 +489,7 @@ public:
     private:
         ScenarioStepEntry const* _currentStep;
         uint32 _checkTimer;
+        TaskScheduler _scheduler;
     };
 
     InstanceScript* GetInstanceScript(InstanceMap* map) const override
