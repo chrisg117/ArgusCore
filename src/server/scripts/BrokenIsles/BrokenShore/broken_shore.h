@@ -83,7 +83,9 @@ enum BrokenShoreCreatureIds
     NPC_FELGUARD_LEGIONNAIRE_2          = 109592,
     NPC_FELGUARD_LEGIONNAIRE_3          = 109604,
 
+    // Defeat the Commander (Alliance)
     NPC_DREAD_COMMANDER_ARGANOTH        = 90705,
+
     NPC_FINALE_KILL_CREDIT              = 90918, // quest objective "Broken Shore assaulted"
     NPC_CAPTAIN_ANGELICA                = 108920 // Stormwind Harbor, quest objective "Ship taken to the Broken Shore"
 };
@@ -91,7 +93,8 @@ enum BrokenShoreCreatureIds
 // spawn_group_template. Each stage's spawns are one group, spawned while the stage is in progress.
 enum BrokenShoreSpawnGroups
 {
-    SPAWN_GROUP_STORM_THE_BEACH         = 14601
+    SPAWN_GROUP_STORM_THE_BEACH         = 14601,
+    SPAWN_GROUP_DEFEAT_THE_COMMANDER    = 14602
 };
 
 // WorldSafeLocs.db2. The "Start" locations are relative to the faction's ship, not to the map.

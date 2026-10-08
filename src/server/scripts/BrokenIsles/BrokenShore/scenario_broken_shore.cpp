@@ -94,6 +94,9 @@ public:
                 case NPC_ANCHORING_CRYSTAL:
                     SendScenarioEvent(GAME_EVENT_SPIRE_OF_WOE_DESTROYED);
                     break;
+                case NPC_DREAD_COMMANDER_ARGANOTH:
+                    SendScenarioEvent(GAME_EVENT_ARGANOTH_SLAIN);
+                    break;
                 default:
                     break;
             }
@@ -159,6 +162,10 @@ public:
                 case STAGE_STORM_THE_BEACH:
                     instance->SpawnGroupDespawn(SPAWN_GROUP_STORM_THE_BEACH, true);
                     break;
+                // His death ends the stage, so only respawning is stopped and his corpse stays
+                case STAGE_DEFEAT_THE_COMMANDER:
+                    instance->SetSpawnGroupInactive(SPAWN_GROUP_DEFEAT_THE_COMMANDER);
+                    break;
                 default:
                     break;
             }
@@ -190,9 +197,12 @@ public:
             instance->SpawnGroupSpawn(SPAWN_GROUP_STORM_THE_BEACH, true);
         }
 
-        // "Slay Dread Commander Arganoth." Needs GAME_EVENT_ARGANOTH_SLAIN.
-        // TODO: NPC_DREAD_COMMANDER_ARGANOTH (Fel Commander Azgalor for the Horde).
-        void StartDefeatTheCommander() { }
+        // "Slay Dread Commander Arganoth." Needs GAME_EVENT_ARGANOTH_SLAIN, sent from OnUnitDeath.
+        // TODO: his arrival, lines and abilities, and Fel Commander Azgalor for the Horde.
+        void StartDefeatTheCommander()
+        {
+            instance->SpawnGroupSpawn(SPAWN_GROUP_DEFEAT_THE_COMMANDER, true);
+        }
 
         // "Locate King Varian Wrynn." Needs GAME_EVENT_VARIAN_FOUND.
         // TODO: the faction leaders and the trigger for reaching them.
