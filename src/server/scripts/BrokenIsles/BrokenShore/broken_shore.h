@@ -86,15 +86,25 @@ enum BrokenShoreCreatureIds
     // Defeat the Commander (Alliance)
     NPC_DREAD_COMMANDER_ARGANOTH        = 90705,
 
+    // Find Varian (Alliance)
+    NPC_KING_VARIAN_WRYNN               = 90713,
+
     NPC_FINALE_KILL_CREDIT              = 90918, // quest objective "Broken Shore assaulted"
     NPC_CAPTAIN_ANGELICA                = 108920 // Stormwind Harbor, quest objective "Ship taken to the Broken Shore"
 };
 
-// spawn_group_template. Each stage's spawns are one group, spawned while the stage is in progress.
+// Creatures the instance script keeps track of (ObjectData)
+enum BrokenShoreDataTypes
+{
+    DATA_KING_VARIAN_WRYNN              = 0
+};
+
+// spawn_group_template. Each stage's spawns are one group, spawned when the stage starts.
 enum BrokenShoreSpawnGroups
 {
     SPAWN_GROUP_STORM_THE_BEACH         = 14601,
-    SPAWN_GROUP_DEFEAT_THE_COMMANDER    = 14602
+    SPAWN_GROUP_DEFEAT_THE_COMMANDER    = 14602,
+    SPAWN_GROUP_FIND_VARIAN             = 14603
 };
 
 // WorldSafeLocs.db2. The "Start" locations are relative to the faction's ship, not to the map.

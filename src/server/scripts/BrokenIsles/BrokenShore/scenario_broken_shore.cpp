@@ -27,6 +27,15 @@
 #include "ScriptedGossip.h"
 #include "broken_shore.h"
 
+ObjectData const creatureData[] =
+{
+    { NPC_KING_VARIAN_WRYNN, DATA_KING_VARIAN_WRYNN },
+    { 0,                     0                      }  // END
+};
+
+// How close a player has to come to King Varian Wrynn to have found him
+static constexpr float VarianFoundDistance = 30.0f;
+
 // "The Battle for Broken Shore". The scenario itself is attached to the map by the `scenarios` table
 // and advances when its criteria receive the game events listed in broken_shore.h.
 // The stages are being filled in one at a time; those that are still stubs say what they need.
@@ -37,13 +46,14 @@ public:
 
     struct instance_broken_shore_scenario_InstanceMapScript : public InstanceScript
     {
-        instance_broken_shore_scenario_InstanceMapScript(InstanceMap* map) : InstanceScript(map), _currentStep(nullptr), _arrivalTimer(0)
+        instance_broken_shore_scenario_InstanceMapScript(InstanceMap* map) : InstanceScript(map), _currentStep(nullptr), _checkTimer(0)
         {
             SetHeaders(DataHeader);
+            LoadObjectData(creatureData, nullptr);
 
             // Where players go when they release after dying; without one the core falls back to the
             // default graveyard in Westfall.
-            // TODO: the Horde beach, and moving on to the later locations as the stages progress.
+            // TODO: the Horde's locations, and those of the stages after "Find Varian".
             SetEntranceLocation(WORLD_SAFE_LOC_ALLIANCE_BEACH);
         }
 
@@ -67,8 +77,20 @@ public:
                     CompleteScenario();
             }
 
-            if (step && step->OrderIndex == STAGE_THE_BROKEN_SHORE)
-                UpdateTheBrokenShore(diff);
+            if (!step)
+                return;
+
+            switch (step->OrderIndex)
+            {
+                case STAGE_THE_BROKEN_SHORE:
+                    UpdateTheBrokenShore(diff);
+                    break;
+                case STAGE_FIND_VARIAN:
+                    UpdateFindVarian(diff);
+                    break;
+                default:
+                    break;
+            }
         }
 
         void OnUnitDeath(Unit* unit) override
@@ -115,6 +137,19 @@ public:
                 GameEvents::Trigger(gameEventId, player, nullptr);
                 return;
             }
+        }
+
+        // The stages that wait for players to get somewhere look for them once a second
+        bool IsTimeToCheckPlayers(uint32 diff)
+        {
+            if (_checkTimer > diff)
+            {
+                _checkTimer -= diff;
+                return false;
+            }
+
+            _checkTimer = 1 * IN_MILLISECONDS;
+            return true;
         }
 
         void StartStage(BrokenShoreStages stage)
@@ -178,14 +213,8 @@ public:
         // Until there is a ship to arrive on, a player being on the map counts as having arrived
         void UpdateTheBrokenShore(uint32 diff)
         {
-            if (_arrivalTimer > diff)
-            {
-                _arrivalTimer -= diff;
-                return;
-            }
-
-            _arrivalTimer = 1 * IN_MILLISECONDS;
-            SendScenarioEvent(GAME_EVENT_ARRIVED_AT_BROKEN_SHORE);
+            if (IsTimeToCheckPlayers(diff))
+                SendScenarioEvent(GAME_EVENT_ARRIVED_AT_BROKEN_SHORE);
         }
 
         // "Destroy all demons and structures on the beach." Needs 33 GAME_EVENT_BEACH_DEMON_SLAIN,
@@ -204,9 +233,37 @@ public:
             instance->SpawnGroupSpawn(SPAWN_GROUP_DEFEAT_THE_COMMANDER, true);
         }
 
-        // "Locate King Varian Wrynn." Needs GAME_EVENT_VARIAN_FOUND.
-        // TODO: the faction leaders and the trigger for reaching them.
-        void StartFindVarian() { }
+        // "Locate King Varian Wrynn." Needs GAME_EVENT_VARIAN_FOUND, sent when a player reaches him.
+        // He stays where he is afterwards, because the next stage opens with him.
+        // TODO: Genn and Jaina leading the way over the hill, the cutscene at its crest, the bombardment
+        // on the way down, the forces fighting at Varian's side and the Horde's "Find The Others".
+        void StartFindVarian()
+        {
+            instance->SpawnGroupSpawn(SPAWN_GROUP_FIND_VARIAN, true);
+
+            // Players who release from here on go to the graveyard at Varian's camp
+            SetEntranceLocation(WORLD_SAFE_LOC_ALLIANCE_PORTAL);
+        }
+
+        void UpdateFindVarian(uint32 diff)
+        {
+            if (!IsTimeToCheckPlayers(diff))
+                return;
+
+            Creature* varian = GetCreature(DATA_KING_VARIAN_WRYNN);
+            if (!varian)
+                return;
+
+            for (MapReference const& ref : instance->GetPlayers())
+            {
+                Player* player = ref.GetSource();
+                if (!player || player->IsGameMaster() || !player->IsAlive() || !player->IsWithinDist(varian, VarianFoundDistance))
+                    continue;
+
+                GameEvents::Trigger(GAME_EVENT_VARIAN_FOUND, player, nullptr);
+                return;
+            }
+        }
 
         // "Destroy the demon portal to stop reinforcements." Needs 4 GAME_EVENT_ANCHOR_SHATTERED.
         // TODO: the portal, its four shielded anchors and their guards.
@@ -240,7 +297,7 @@ public:
 
     private:
         ScenarioStepEntry const* _currentStep;
-        uint32 _arrivalTimer;
+        uint32 _checkTimer;
     };
 
     InstanceScript* GetInstanceScript(InstanceMap* map) const override
