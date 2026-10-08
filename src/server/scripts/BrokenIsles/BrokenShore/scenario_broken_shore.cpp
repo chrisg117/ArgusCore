@@ -64,6 +64,8 @@ public:
         // The core has no script hook for scenario step changes, so the current step is polled.
         void Update(uint32 diff) override
         {
+            ResurrectReleasedPlayers();
+
             InstanceScenario const* scenario = instance->GetInstanceScenario();
             if (!scenario)
                 return;
@@ -174,6 +176,21 @@ public:
 
                 GameEvents::Trigger(gameEventId, player, nullptr);
                 return;
+            }
+        }
+
+        // A player who releases is taken to the graveyard of the stage, which is the entrance location,
+        // as a ghost. The scenario has no running back to a corpse: the player comes back to life there.
+        void ResurrectReleasedPlayers()
+        {
+            for (MapReference const& ref : instance->GetPlayers())
+            {
+                Player* player = ref.GetSource();
+                if (!player || !player->HasPlayerFlag(PLAYER_FLAGS_GHOST) || player->IsBeingTeleported())
+                    continue;
+
+                player->ResurrectPlayer(1.0f);
+                player->SpawnCorpseBones();
             }
         }
 
