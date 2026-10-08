@@ -159,6 +159,9 @@ public:
                 case NPC_MALIFICUS:
                     SendScenarioEvent(GAME_EVENT_BLACK_CITY_4);
                     break;
+                case NPC_KROSUS:
+                    SendScenarioEvent(GAME_EVENT_KROSUS_SLAIN);
+                    break;
                 default:
                     break;
             }
@@ -283,6 +286,10 @@ public:
                 case STAGE_RAZE_THE_BLACK_CITY:
                     instance->SpawnGroupDespawn(SPAWN_GROUP_RAZE_THE_BLACK_CITY, true);
                     break;
+                // As with the commander, his death ends the stage and his corpse stays
+                case STAGE_KROSUS:
+                    instance->SetSpawnGroupInactive(SPAWN_GROUP_KROSUS);
+                    break;
                 default:
                     break;
             }
@@ -354,7 +361,7 @@ public:
         }
 
         // "Get to Tirion." Needs GAME_EVENT_TIRION_FOUND, sent when a player reaches the ledge he hangs
-        // in front of. He stays where he is afterwards, because the next stage opens with him.
+        // in front of. He stays where he is until the next stage starts.
         // TODO: Gul'dan and what he says, Tirion's chains, the demons on the way from the city and Varian's forces.
         void StartTheHighlord()
         {
@@ -369,9 +376,14 @@ public:
             SendScenarioEventWhenFound(diff, DATA_HIGHLORD_TIRION_FORDRING, TirionFoundDistance, GAME_EVENT_TIRION_FOUND);
         }
 
-        // "Kill Krosus." Needs GAME_EVENT_KROSUS_SLAIN.
-        // TODO: Krosus.
-        void StartKrosus() { }
+        // "Kill Krosus." Needs GAME_EVENT_KROSUS_SLAIN, sent from OnUnitDeath.
+        // Tirion goes when Krosus comes: Gul'dan drops him into the pool that Krosus rises from.
+        // TODO: Krosus rising from the pool, his abilities, what is said and the faction leaders.
+        void StartKrosus()
+        {
+            instance->SpawnGroupDespawn(SPAWN_GROUP_THE_HIGHLORD, true);
+            instance->SpawnGroupSpawn(SPAWN_GROUP_KROSUS, true);
+        }
 
         // "Stop Gul'dan from summoning the Legion." Needs GAME_EVENT_GULDAN_CONFRONTED.
         // TODO: Gul'dan's summoning event (the Horde holds the ridge instead).
