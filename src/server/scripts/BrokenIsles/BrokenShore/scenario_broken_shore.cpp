@@ -44,6 +44,9 @@ static constexpr float TirionFoundDistance = 40.0f;
 // How close to Gul'dan a player dies
 static constexpr float GuldanDeathDistance = 5.0f;
 
+// Where players are taken when the Black City has been razed: the edge of the city, facing the gap to the crevasse
+Position const BlackCityRazedPosition = { 1410.2959f, 2162.2405f, 21.252392f, 4.92f };
+
 // "The Battle for Broken Shore". The scenario itself is attached to the map by the `scenarios` table
 // and advances when its criteria receive the game events listed in broken_shore.h.
 // The stages are being filled in one at a time; those that are still stubs say what they need.
@@ -376,13 +379,20 @@ public:
 
         // "Get to Tirion." Needs GAME_EVENT_TIRION_FOUND, sent when a player reaches the ledge he hangs
         // in front of. He stays where he is until the next stage starts.
-        // TODO: Gul'dan and what he says, Tirion's chains, the demons on the way from the city and Varian's forces.
+        // Players start the stage together at the edge of the city, facing the gap to the crevasse.
+        // TODO: the cinematic that plays before players are moved, Jaina's bridge of ice across the gap,
+        // Gul'dan and what he says, Tirion's chains, the demons on the way from the city and Varian's forces.
         void StartTheHighlord()
         {
             instance->SpawnGroupSpawn(SPAWN_GROUP_THE_HIGHLORD, true);
 
             // Players who release from here on go to the graveyard at the crevasse
             SetEntranceLocation(WORLD_SAFE_LOC_ALLIANCE_CREVASSE);
+
+            instance->DoOnPlayers([](Player* player)
+            {
+                player->NearTeleportTo(BlackCityRazedPosition);
+            });
         }
 
         void UpdateTheHighlord(uint32 diff)
