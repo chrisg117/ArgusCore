@@ -61,7 +61,8 @@ enum BrokenShoreGameEvents
     GAME_EVENT_VARIAN_FOUND             = 45228,
     GAME_EVENT_ANCHOR_SHATTERED         = 45288, // 4
     // "Raze the Black City" is a progress bar ("Black City razed") that fills at 300 points.
-    // Its four criteria have no description in the client; each event is worth the points noted.
+    // Its four criteria have no description in the client; each event is worth the points noted
+    // and is sent for a demon slain in the city, the stronger the demon the more points.
     GAME_EVENT_BLACK_CITY_1             = 44384, // 1 point
     GAME_EVENT_BLACK_CITY_2             = 53062, // 2 points
     GAME_EVENT_BLACK_CITY_3             = 53063, // 5 points
@@ -92,6 +93,27 @@ enum BrokenShoreCreatureIds
     // Destroy the Portal (Alliance)
     NPC_SHIELDED_ANCHOR                 = 101667,
 
+    // Raze the Black City (Alliance)
+    NPC_INFERNAL_SIEGEBREAKER           = 91967,
+    NPC_FELGUARD_INVADER                = 91970,
+    NPC_LIVING_FELBLAZE                 = 94189,
+    NPC_BURNING_SENTRY                  = 94190,
+    NPC_BURNING_TERRORHOUND             = 94191,
+    NPC_SOULBOUND_DESTRUCTOR            = 97510,
+    NPC_MOTHER_VIRILA                   = 100621,
+    NPC_MOARG_PAINBRINGER               = 102701,
+    NPC_WRATHGUARD_DREADBLADE           = 102702,
+    NPC_FEL_LORD_DUKAZ                  = 102703,
+    NPC_FEL_LORD_ZARNOZ                 = 102704,
+    NPC_FEL_LORD_RAKAZ                  = 102705,
+    NPC_GRINNING_SHADOWSTALKER          = 102706,
+    NPC_FELFIRE_IMP                     = 103896,
+    NPC_FIERY_TRICKSTER                 = 103897,
+    NPC_SHADOWFLAME_IMP                 = 103899,
+    NPC_MALIFICUS                       = 110614,
+    NPC_DARK_WORSHIPPER                 = 110616,
+    NPC_SHADOWSWORN_HARBINGER           = 110617,
+
     NPC_FINALE_KILL_CREDIT              = 90918, // quest objective "Broken Shore assaulted"
     NPC_CAPTAIN_ANGELICA                = 108920 // Stormwind Harbor, quest objective "Ship taken to the Broken Shore"
 };
@@ -108,7 +130,8 @@ enum BrokenShoreSpawnGroups
     SPAWN_GROUP_STORM_THE_BEACH         = 14601,
     SPAWN_GROUP_DEFEAT_THE_COMMANDER    = 14602,
     SPAWN_GROUP_FIND_VARIAN             = 14603,
-    SPAWN_GROUP_DESTROY_THE_PORTAL      = 14604
+    SPAWN_GROUP_DESTROY_THE_PORTAL      = 14604,
+    SPAWN_GROUP_RAZE_THE_BLACK_CITY     = 14605
 };
 
 // WorldSafeLocs.db2. The "Start" locations are relative to the faction's ship, not to the map.

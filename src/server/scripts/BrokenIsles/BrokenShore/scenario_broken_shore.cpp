@@ -53,7 +53,7 @@ public:
 
             // Where players go when they release after dying; without one the core falls back to the
             // default graveyard in Westfall.
-            // TODO: the Horde's locations, and those of the stages after "Find Varian".
+            // TODO: the Horde's locations, and those of the stages after "Raze the Black City".
             SetEntranceLocation(WORLD_SAFE_LOC_ALLIANCE_BEACH);
         }
 
@@ -121,6 +121,34 @@ public:
                     break;
                 case NPC_SHIELDED_ANCHOR:
                     SendScenarioEvent(GAME_EVENT_ANCHOR_SHATTERED);
+                    break;
+                // The demons of the Black City, by how much health they have
+                case NPC_GRINNING_SHADOWSTALKER:
+                case NPC_FELFIRE_IMP:
+                case NPC_FIERY_TRICKSTER:
+                case NPC_SHADOWFLAME_IMP:
+                    SendScenarioEvent(GAME_EVENT_BLACK_CITY_1);
+                    break;
+                case NPC_FELGUARD_INVADER:
+                case NPC_LIVING_FELBLAZE:
+                case NPC_BURNING_TERRORHOUND:
+                case NPC_WRATHGUARD_DREADBLADE:
+                    SendScenarioEvent(GAME_EVENT_BLACK_CITY_2);
+                    break;
+                case NPC_BURNING_SENTRY:
+                case NPC_SOULBOUND_DESTRUCTOR:
+                case NPC_DARK_WORSHIPPER:
+                case NPC_SHADOWSWORN_HARBINGER:
+                    SendScenarioEvent(GAME_EVENT_BLACK_CITY_3);
+                    break;
+                case NPC_INFERNAL_SIEGEBREAKER:
+                case NPC_MOTHER_VIRILA:
+                case NPC_MOARG_PAINBRINGER:
+                case NPC_FEL_LORD_DUKAZ:
+                case NPC_FEL_LORD_ZARNOZ:
+                case NPC_FEL_LORD_RAKAZ:
+                case NPC_MALIFICUS:
+                    SendScenarioEvent(GAME_EVENT_BLACK_CITY_4);
                     break;
                 default:
                     break;
@@ -207,6 +235,9 @@ public:
                 case STAGE_DESTROY_THE_PORTAL:
                     instance->SpawnGroupDespawn(SPAWN_GROUP_DESTROY_THE_PORTAL, true);
                     break;
+                case STAGE_RAZE_THE_BLACK_CITY:
+                    instance->SpawnGroupDespawn(SPAWN_GROUP_RAZE_THE_BLACK_CITY, true);
+                    break;
                 default:
                     break;
             }
@@ -280,9 +311,17 @@ public:
         }
 
         // "Assault the demon city." A progress bar: 300 points from GAME_EVENT_BLACK_CITY_1 to _4,
-        // worth 1, 2, 5 and 10 points each.
-        // TODO: identify what each of the four events is sent by, then the city's demons.
-        void StartRazeTheBlackCity() { }
+        // worth 1, 2, 5 and 10 points each and sent from OnUnitDeath. The city's demons respawn,
+        // because killing each of them once does not fill the bar. The Unattended Cannons that players
+        // can fight from are spawned with them and need no scripting.
+        // TODO: the city's Anchoring Crystals and Varian's forces.
+        void StartRazeTheBlackCity()
+        {
+            instance->SpawnGroupSpawn(SPAWN_GROUP_RAZE_THE_BLACK_CITY, true);
+
+            // Players who release from here on go to the graveyard at the edge of the city
+            SetEntranceLocation(WORLD_SAFE_LOC_ALLIANCE_CITY);
+        }
 
         // "Get to Tirion." Needs GAME_EVENT_TIRION_FOUND.
         // TODO: Tirion, Gul'dan and the trigger for reaching them.
