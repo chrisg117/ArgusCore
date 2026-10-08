@@ -119,6 +119,9 @@ public:
                 case NPC_DREAD_COMMANDER_ARGANOTH:
                     SendScenarioEvent(GAME_EVENT_ARGANOTH_SLAIN);
                     break;
+                case NPC_SHIELDED_ANCHOR:
+                    SendScenarioEvent(GAME_EVENT_ANCHOR_SHATTERED);
+                    break;
                 default:
                     break;
             }
@@ -201,6 +204,9 @@ public:
                 case STAGE_DEFEAT_THE_COMMANDER:
                     instance->SetSpawnGroupInactive(SPAWN_GROUP_DEFEAT_THE_COMMANDER);
                     break;
+                case STAGE_DESTROY_THE_PORTAL:
+                    instance->SpawnGroupDespawn(SPAWN_GROUP_DESTROY_THE_PORTAL, true);
+                    break;
                 default:
                     break;
             }
@@ -265,9 +271,13 @@ public:
             }
         }
 
-        // "Destroy the demon portal to stop reinforcements." Needs 4 GAME_EVENT_ANCHOR_SHATTERED.
-        // TODO: the portal, its four shielded anchors and their guards.
-        void StartDestroyThePortal() { }
+        // "Destroy the demon portal to stop reinforcements." Needs 4 GAME_EVENT_ANCHOR_SHATTERED,
+        // sent from OnUnitDeath.
+        // TODO: the portal itself, the shield an anchor has until its guard dies, and Varian's forces.
+        void StartDestroyThePortal()
+        {
+            instance->SpawnGroupSpawn(SPAWN_GROUP_DESTROY_THE_PORTAL, true);
+        }
 
         // "Assault the demon city." A progress bar: 300 points from GAME_EVENT_BLACK_CITY_1 to _4,
         // worth 1, 2, 5 and 10 points each.

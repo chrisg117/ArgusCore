@@ -89,6 +89,9 @@ enum BrokenShoreCreatureIds
     // Find Varian (Alliance)
     NPC_KING_VARIAN_WRYNN               = 90713,
 
+    // Destroy the Portal (Alliance)
+    NPC_SHIELDED_ANCHOR                 = 101667,
+
     NPC_FINALE_KILL_CREDIT              = 90918, // quest objective "Broken Shore assaulted"
     NPC_CAPTAIN_ANGELICA                = 108920 // Stormwind Harbor, quest objective "Ship taken to the Broken Shore"
 };
@@ -104,7 +107,8 @@ enum BrokenShoreSpawnGroups
 {
     SPAWN_GROUP_STORM_THE_BEACH         = 14601,
     SPAWN_GROUP_DEFEAT_THE_COMMANDER    = 14602,
-    SPAWN_GROUP_FIND_VARIAN             = 14603
+    SPAWN_GROUP_FIND_VARIAN             = 14603,
+    SPAWN_GROUP_DESTROY_THE_PORTAL      = 14604
 };
 
 // WorldSafeLocs.db2. The "Start" locations are relative to the faction's ship, not to the map.
