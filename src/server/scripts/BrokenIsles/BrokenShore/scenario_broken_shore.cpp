@@ -17,6 +17,7 @@
 
 #include "ScriptMgr.h"
 #include "DB2Stores.h"
+#include "GameEventSender.h"
 #include "InstanceScenario.h"
 #include "InstanceScript.h"
 #include "Log.h"
@@ -26,9 +27,9 @@
 #include "ScriptedGossip.h"
 #include "broken_shore.h"
 
-// Scaffold for "The Battle for Broken Shore". The scenario itself is attached to the map by the
-// `scenarios` table and advances when its criteria receive the game events listed in broken_shore.h.
-// Nothing is spawned yet: each stage below is a stub to be filled in with its spawns and scripting.
+// "The Battle for Broken Shore". The scenario itself is attached to the map by the `scenarios` table
+// and advances when its criteria receive the game events listed in broken_shore.h.
+// The stages are being filled in one at a time; those that are still stubs say what they need.
 class instance_broken_shore_scenario : public InstanceMapScript
 {
 public:
@@ -36,27 +37,81 @@ public:
 
     struct instance_broken_shore_scenario_InstanceMapScript : public InstanceScript
     {
-        instance_broken_shore_scenario_InstanceMapScript(InstanceMap* map) : InstanceScript(map), _currentStep(nullptr)
+        instance_broken_shore_scenario_InstanceMapScript(InstanceMap* map) : InstanceScript(map), _currentStep(nullptr), _arrivalTimer(0)
         {
             SetHeaders(DataHeader);
+
+            // Where players go when they release after dying; without one the core falls back to the
+            // default graveyard in Westfall.
+            // TODO: the Horde beach, and moving on to the later locations as the stages progress.
+            SetEntranceLocation(WORLD_SAFE_LOC_ALLIANCE_BEACH);
         }
 
         // The core has no script hook for scenario step changes, so the current step is polled.
-        void Update(uint32 /*diff*/) override
+        void Update(uint32 diff) override
         {
             InstanceScenario const* scenario = instance->GetInstanceScenario();
             if (!scenario)
                 return;
 
             ScenarioStepEntry const* step = scenario->GetStep();
-            if (step == _currentStep)
+            if (step != _currentStep)
+            {
+                if (_currentStep)
+                    EndStage(BrokenShoreStages(_currentStep->OrderIndex));
+
+                _currentStep = step;
+                if (step)
+                    StartStage(BrokenShoreStages(step->OrderIndex));
+                else if (scenario->IsComplete())
+                    CompleteScenario();
+            }
+
+            if (step && step->OrderIndex == STAGE_THE_BROKEN_SHORE)
+                UpdateTheBrokenShore(diff);
+        }
+
+        void OnUnitDeath(Unit* unit) override
+        {
+            Creature* creature = unit->ToCreature();
+            if (!creature)
                 return;
 
-            _currentStep = step;
-            if (step)
-                StartStage(BrokenShoreStages(step->OrderIndex));
-            else if (scenario->IsComplete())
-                CompleteScenario();
+            switch (creature->GetEntry())
+            {
+                case NPC_FELSTALKER_DREADHOUND:
+                case NPC_FELGUARD_LEGIONNAIRE_1:
+                case NPC_FELGUARD_LEGIONNAIRE_2:
+                case NPC_FELGUARD_LEGIONNAIRE_3:
+                    SendScenarioEvent(GAME_EVENT_BEACH_DEMON_SLAIN);
+                    break;
+                case NPC_FEL_LORD_KURDUZ:
+                case NPC_FEL_LORD_RAKKAN:
+                case NPC_FEL_LORD_ZARDAK:
+                    SendScenarioEvent(GAME_EVENT_FEL_LORD_SLAIN);
+                    break;
+                // TODO: a spire is held by several crystals and should fall with the last of them
+                case NPC_ANCHORING_CRYSTAL:
+                    SendScenarioEvent(GAME_EVENT_SPIRE_OF_WOE_DESTROYED);
+                    break;
+                default:
+                    break;
+            }
+        }
+
+        // The core only passes a game event on to the scenario when a player is its source,
+        // and never for a player in GM mode.
+        void SendScenarioEvent(uint32 gameEventId)
+        {
+            for (MapReference const& ref : instance->GetPlayers())
+            {
+                Player* player = ref.GetSource();
+                if (!player || player->IsGameMaster())
+                    continue;
+
+                GameEvents::Trigger(gameEventId, player, nullptr);
+                return;
+            }
         }
 
         void StartStage(BrokenShoreStages stage)
@@ -97,14 +152,43 @@ public:
             }
         }
 
+        void EndStage(BrokenShoreStages stage)
+        {
+            switch (stage)
+            {
+                case STAGE_STORM_THE_BEACH:
+                    instance->SpawnGroupDespawn(SPAWN_GROUP_STORM_THE_BEACH, true);
+                    break;
+                default:
+                    break;
+            }
+        }
+
         // "Travel to the Broken Shore." Needs GAME_EVENT_ARRIVED_AT_BROKEN_SHORE.
         // TODO: the faction ship and its arrival; players currently land straight on the beach.
         void StartTheBrokenShore() { }
 
+        // Until there is a ship to arrive on, a player being on the map counts as having arrived
+        void UpdateTheBrokenShore(uint32 diff)
+        {
+            if (_arrivalTimer > diff)
+            {
+                _arrivalTimer -= diff;
+                return;
+            }
+
+            _arrivalTimer = 1 * IN_MILLISECONDS;
+            SendScenarioEvent(GAME_EVENT_ARRIVED_AT_BROKEN_SHORE);
+        }
+
         // "Destroy all demons and structures on the beach." Needs 33 GAME_EVENT_BEACH_DEMON_SLAIN,
-        // 3 GAME_EVENT_FEL_LORD_SLAIN and 3 GAME_EVENT_SPIRE_OF_WOE_DESTROYED.
-        // TODO: beach demons, Fel Lords, Spires of Woe and the allied landing force.
-        void StartStormTheBeach() { }
+        // 3 GAME_EVENT_FEL_LORD_SLAIN and 3 GAME_EVENT_SPIRE_OF_WOE_DESTROYED, sent from OnUnitDeath.
+        // TODO: the Spires of Woe themselves, the allied landing force and the demons' abilities.
+        // The beach demons respawn in place of the reinforcements that should keep arriving.
+        void StartStormTheBeach()
+        {
+            instance->SpawnGroupSpawn(SPAWN_GROUP_STORM_THE_BEACH, true);
+        }
 
         // "Slay Dread Commander Arganoth." Needs GAME_EVENT_ARGANOTH_SLAIN.
         // TODO: NPC_DREAD_COMMANDER_ARGANOTH (Fel Commander Azgalor for the Horde).
@@ -146,6 +230,7 @@ public:
 
     private:
         ScenarioStepEntry const* _currentStep;
+        uint32 _arrivalTimer;
     };
 
     InstanceScript* GetInstanceScript(InstanceMap* map) const override

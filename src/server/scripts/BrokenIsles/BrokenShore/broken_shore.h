@@ -73,9 +73,25 @@ enum BrokenShoreGameEvents
 
 enum BrokenShoreCreatureIds
 {
+    // Storm the Beach (Alliance)
+    NPC_FELSTALKER_DREADHOUND           = 90686,
+    NPC_FEL_LORD_KURDUZ                 = 91588,
+    NPC_ANCHORING_CRYSTAL               = 91704, // holds a Spire of Woe in place
+    NPC_FEL_LORD_RAKKAN                 = 109586,
+    NPC_FEL_LORD_ZARDAK                 = 109587,
+    NPC_FELGUARD_LEGIONNAIRE_1          = 109591,
+    NPC_FELGUARD_LEGIONNAIRE_2          = 109592,
+    NPC_FELGUARD_LEGIONNAIRE_3          = 109604,
+
     NPC_DREAD_COMMANDER_ARGANOTH        = 90705,
     NPC_FINALE_KILL_CREDIT              = 90918, // quest objective "Broken Shore assaulted"
     NPC_CAPTAIN_ANGELICA                = 108920 // Stormwind Harbor, quest objective "Ship taken to the Broken Shore"
+};
+
+// spawn_group_template. Each stage's spawns are one group, spawned while the stage is in progress.
+enum BrokenShoreSpawnGroups
+{
+    SPAWN_GROUP_STORM_THE_BEACH         = 14601
 };
 
 // WorldSafeLocs.db2. The "Start" locations are relative to the faction's ship, not to the map.
