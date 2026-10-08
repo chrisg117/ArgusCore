@@ -29,12 +29,16 @@
 
 ObjectData const creatureData[] =
 {
-    { NPC_KING_VARIAN_WRYNN, DATA_KING_VARIAN_WRYNN },
-    { 0,                     0                      }  // END
+    { NPC_KING_VARIAN_WRYNN,        DATA_KING_VARIAN_WRYNN        },
+    { NPC_HIGHLORD_TIRION_FORDRING, DATA_HIGHLORD_TIRION_FORDRING },
+    { 0,                            0                             }  // END
 };
 
 // How close a player has to come to King Varian Wrynn to have found him
 static constexpr float VarianFoundDistance = 30.0f;
+
+// The same for Highlord Tirion Fordring, who hangs about 27 yards out from the ledge players arrive on
+static constexpr float TirionFoundDistance = 40.0f;
 
 // "The Battle for Broken Shore". The scenario itself is attached to the map by the `scenarios` table
 // and advances when its criteria receive the game events listed in broken_shore.h.
@@ -53,7 +57,7 @@ public:
 
             // Where players go when they release after dying; without one the core falls back to the
             // default graveyard in Westfall.
-            // TODO: the Horde's locations, and those of the stages after "Raze the Black City".
+            // TODO: the Horde's locations, and those of the stages after "The Highlord".
             SetEntranceLocation(WORLD_SAFE_LOC_ALLIANCE_BEACH);
         }
 
@@ -87,6 +91,9 @@ public:
                     break;
                 case STAGE_FIND_VARIAN:
                     UpdateFindVarian(diff);
+                    break;
+                case STAGE_THE_HIGHLORD:
+                    UpdateTheHighlord(diff);
                     break;
                 default:
                     break;
@@ -181,6 +188,27 @@ public:
 
             _checkTimer = 1 * IN_MILLISECONDS;
             return true;
+        }
+
+        // Sends the game event once a living player who is not in GM mode is close enough to the creature
+        void SendScenarioEventWhenFound(uint32 diff, uint32 creatureDataType, float distance, uint32 gameEventId)
+        {
+            if (!IsTimeToCheckPlayers(diff))
+                return;
+
+            Creature* creature = GetCreature(creatureDataType);
+            if (!creature)
+                return;
+
+            for (MapReference const& ref : instance->GetPlayers())
+            {
+                Player* player = ref.GetSource();
+                if (!player || player->IsGameMaster() || !player->IsAlive() || !player->IsWithinDist(creature, distance))
+                    continue;
+
+                GameEvents::Trigger(gameEventId, player, nullptr);
+                return;
+            }
         }
 
         void StartStage(BrokenShoreStages stage)
@@ -284,22 +312,7 @@ public:
 
         void UpdateFindVarian(uint32 diff)
         {
-            if (!IsTimeToCheckPlayers(diff))
-                return;
-
-            Creature* varian = GetCreature(DATA_KING_VARIAN_WRYNN);
-            if (!varian)
-                return;
-
-            for (MapReference const& ref : instance->GetPlayers())
-            {
-                Player* player = ref.GetSource();
-                if (!player || player->IsGameMaster() || !player->IsAlive() || !player->IsWithinDist(varian, VarianFoundDistance))
-                    continue;
-
-                GameEvents::Trigger(GAME_EVENT_VARIAN_FOUND, player, nullptr);
-                return;
-            }
+            SendScenarioEventWhenFound(diff, DATA_KING_VARIAN_WRYNN, VarianFoundDistance, GAME_EVENT_VARIAN_FOUND);
         }
 
         // "Destroy the demon portal to stop reinforcements." Needs 4 GAME_EVENT_ANCHOR_SHATTERED,
@@ -323,9 +336,21 @@ public:
             SetEntranceLocation(WORLD_SAFE_LOC_ALLIANCE_CITY);
         }
 
-        // "Get to Tirion." Needs GAME_EVENT_TIRION_FOUND.
-        // TODO: Tirion, Gul'dan and the trigger for reaching them.
-        void StartTheHighlord() { }
+        // "Get to Tirion." Needs GAME_EVENT_TIRION_FOUND, sent when a player reaches the ledge he hangs
+        // in front of. He stays where he is afterwards, because the next stage opens with him.
+        // TODO: Gul'dan and what he says, Tirion's chains, the demons on the way from the city and Varian's forces.
+        void StartTheHighlord()
+        {
+            instance->SpawnGroupSpawn(SPAWN_GROUP_THE_HIGHLORD, true);
+
+            // Players who release from here on go to the graveyard at the crevasse
+            SetEntranceLocation(WORLD_SAFE_LOC_ALLIANCE_CREVASSE);
+        }
+
+        void UpdateTheHighlord(uint32 diff)
+        {
+            SendScenarioEventWhenFound(diff, DATA_HIGHLORD_TIRION_FORDRING, TirionFoundDistance, GAME_EVENT_TIRION_FOUND);
+        }
 
         // "Kill Krosus." Needs GAME_EVENT_KROSUS_SLAIN.
         // TODO: Krosus.

@@ -114,6 +114,9 @@ enum BrokenShoreCreatureIds
     NPC_DARK_WORSHIPPER                 = 110616,
     NPC_SHADOWSWORN_HARBINGER           = 110617,
 
+    // The Highlord (Alliance)
+    NPC_HIGHLORD_TIRION_FORDRING        = 91951,
+
     NPC_FINALE_KILL_CREDIT              = 90918, // quest objective "Broken Shore assaulted"
     NPC_CAPTAIN_ANGELICA                = 108920 // Stormwind Harbor, quest objective "Ship taken to the Broken Shore"
 };
@@ -121,7 +124,8 @@ enum BrokenShoreCreatureIds
 // Creatures the instance script keeps track of (ObjectData)
 enum BrokenShoreDataTypes
 {
-    DATA_KING_VARIAN_WRYNN              = 0
+    DATA_KING_VARIAN_WRYNN              = 0,
+    DATA_HIGHLORD_TIRION_FORDRING       = 1
 };
 
 // spawn_group_template. Each stage's spawns are one group, spawned when the stage starts.
@@ -131,7 +135,8 @@ enum BrokenShoreSpawnGroups
     SPAWN_GROUP_DEFEAT_THE_COMMANDER    = 14602,
     SPAWN_GROUP_FIND_VARIAN             = 14603,
     SPAWN_GROUP_DESTROY_THE_PORTAL      = 14604,
-    SPAWN_GROUP_RAZE_THE_BLACK_CITY     = 14605
+    SPAWN_GROUP_RAZE_THE_BLACK_CITY     = 14605,
+    SPAWN_GROUP_THE_HIGHLORD            = 14606
 };
 
 // WorldSafeLocs.db2. The "Start" locations are relative to the faction's ship, not to the map.
