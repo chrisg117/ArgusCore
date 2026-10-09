@@ -103,6 +103,7 @@ enum BrokenShoreCreatureIds
 
     // Find Varian (Alliance)
     NPC_KING_VARIAN_WRYNN               = 90713,
+    NPC_FEL_METEOR_STALKER              = 54020, // "General Purpose Bunny JMF (Look 2 - Flying, Huge AOI)"
 
     // Destroy the Portal (Alliance)
     NPC_SHIELDED_ANCHOR                 = 101667,
@@ -170,9 +171,32 @@ enum BrokenShoreSpells
     SPELL_SUMMON_FELBLAZE_INFERNAL      = 183956,
     SPELL_FEL_CRACK                     = 200465,
 
+    // Find Varian, which these spells call stage 2. A player has the stage's cutscene for as long as
+    // "Stage 2 Scene" is on them. The other two are what the cutscene asks for while it plays: a look at
+    // Varian's forces, and to be taken to the hilltop it looks out from. Where that look goes and where the
+    // hilltop is, is in spell_target_position.
+    SPELL_STAGE_2_SCENE                 = 218626,
+    SPELL_STAGE_2_FAR_SIGHT             = 218636,
+    SPELL_STAGE_2_TELEPORT              = 227791,
+
+    // What a Fel Meteor on the way to Varian does where it lands. The client has the effects of two more
+    // spells to go with it, but not the spells themselves, so the core does not know them: the bearer of
+    // 199044 casts 199031 every three seconds, a missile that lands within ten yards of the ground below
+    // its caster after two seconds' wait and a flight at ten yards a second, and triggers this one. The
+    // instance script does that in their place. That these are the scenario's is not known: they were made
+    // when its other spells were, and they do what a video of the retail scenario shows. Who casts them
+    // there is not known either; here it is a stalker in the air that cannot be seen.
+    SPELL_FEL_METEOR                    = 199036,
+
     // The Alliance's forces
     SPELL_WRATH                         = 171773, // Gilnean Druid
     SPELL_FROSTFIRE_BOLT                = 199219  // Kirin Tor Battle-Mage
+};
+
+enum BrokenShoreSpellVisuals
+{
+    // The missile of 199031, the spell that sends a Fel Meteor down
+    SPELL_VISUAL_FEL_METEOR             = 51706
 };
 
 enum BrokenShoreSpellVisualKits
@@ -195,6 +219,7 @@ enum BrokenShoreLeaderTexts
     SAY_JAINA_INFERNALS                 = 6,
     SAY_JAINA_IS_EVERYONE_ALRIGHT       = 7,
     SAY_JAINA_MOURN_THEM_LATER          = 8,
+    SAY_JAINA_VARIAN                    = 9,
 
     SAY_GENN_JUST_IN_TIME               = 1,
     SAY_GENN_CHARGE                     = 2,
@@ -203,7 +228,10 @@ enum BrokenShoreLeaderTexts
     SAY_GENN_ONE_MORE                   = 5,
     SAY_GENN_ENOUGH_OF_YOUR_CHATTER     = 6,
     SAY_GENN_SINGED_BUT_ALIVE           = 7,
-    SAY_GENN_AGREED                     = 8
+    SAY_GENN_AGREED                     = 8,
+    SAY_GENN_AROUND_THIS_HILL           = 9,
+    SAY_GENN_LETS_GO                    = 10,
+    SAY_GENN_AND_YOU                    = 11
 };
 
 // creature_text groups of Dread Commander Arganoth
@@ -216,6 +244,12 @@ enum BrokenShoreArganothTexts
     SAY_ARGANOTH_DEATH                  = 4
 };
 
+// creature_text groups of King Varian Wrynn
+enum BrokenShoreVarianTexts
+{
+    SAY_VARIAN_GOOD_TO_SEE_YOU_SAFE     = 0
+};
+
 // What the instance script has Dread Commander Arganoth do
 enum BrokenShoreActions
 {
@@ -223,7 +257,8 @@ enum BrokenShoreActions
     ACTION_ARGANOTH_FIGHT               = 2
 };
 
-// Creatures the instance script keeps track of (ObjectData), and what it can be asked with GetData
+// Creatures the instance script keeps track of (ObjectData), what it can be asked with GetData and what it can
+// be told with SetGuidData
 enum BrokenShoreDataTypes
 {
     DATA_KING_VARIAN_WRYNN              = 0,
@@ -237,7 +272,10 @@ enum BrokenShoreDataTypes
     DATA_ALLIANCE_FORCES_CHARGING       = 6,
 
     // Whether Dread Commander Arganoth has come down on the beach and can be fought (1) or not yet (0)
-    DATA_COMMANDER_ARRIVED              = 7
+    DATA_COMMANDER_ARRIVED              = 7,
+
+    // Told with a player's GUID: the cutscene of "Find Varian" is over for that player
+    DATA_PLAYER_LEFT_FIND_VARIAN_SCENE  = 8
 };
 
 // spawn_group_template. Each stage's spawns are one group, spawned when the stage starts.

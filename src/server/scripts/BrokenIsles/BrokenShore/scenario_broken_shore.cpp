@@ -29,13 +29,16 @@
 #include "MotionMaster.h"
 #include "ObjectAccessor.h"
 #include "PassiveAI.h"
+#include "PathGenerator.h"
 #include "Player.h"
 #include "Random.h"
 #include "ScriptedCreature.h"
 #include "ScriptedGossip.h"
+#include "SpellMgr.h"
 #include "SpellScript.h"
 #include "TaskScheduler.h"
 #include "TemporarySummon.h"
+#include "World.h"
 #include "broken_shore.h"
 
 ObjectData const creatureData[] =
@@ -51,6 +54,43 @@ ObjectData const creatureData[] =
 
 // How close a player has to come to King Varian Wrynn to have found him
 static constexpr float VarianFoundDistance = 30.0f;
+
+// How far into "Find Varian" its cutscene starts. All that is known of it is that on retail players have the
+// time to ride all the way to Varian before it does.
+static constexpr Seconds FindVarianSceneDelay = 60s;
+
+// The cutscene lasts 20 seconds. A player whose client has not said by then that it is over is taken out of it.
+static constexpr Seconds FindVarianSceneTimeout = 30s;
+
+// Where Jaina and Genn are put on the hilltop and at Varian's side: this far from where players arrive or
+// from Varian, and at this angle to either side
+static constexpr float LeaderPlaceDistance = 6.0f;
+static constexpr float LeaderPlaceAngle = 0.6f;
+
+// The Fel Meteors on the way from the hilltop to Varian come from stalkers in the air above it. The stalkers
+// are this far apart along the way and this high above it, and none of them is this close to the hilltop,
+// where players arrive, or to Varian. All of that is a guess: a video of the retail scenario shows several
+// meteors at a time on the way, which come from high up.
+static constexpr float FelMeteorSpacing = 15.0f;
+static constexpr float FelMeteorHeight = 40.0f;
+static constexpr float FelMeteorHilltopDistance = 25.0f;
+static constexpr float FelMeteorVarianDistance = 45.0f;
+
+// A stalker sends a meteor down this often, to land this far at most from the ground below it, after this
+// long a wait and a flight at this speed, in yards a second. The spells that the core does not have say
+// every three seconds and ten yards a second; with those a player on foot does not get through, so there
+// are half as many meteors and they take twice as long to come down. Each stalker starts at a moment of its
+// own, so that the meteors do not all land at once.
+static constexpr Milliseconds FelMeteorPeriod = 6s;
+static constexpr float FelMeteorSpread = 10.0f;
+static constexpr Milliseconds FelMeteorLaunchDelay = 2s;
+static constexpr float FelMeteorSpeed = 5.0f;
+
+// What a Fel Meteor costs a player, in percent of the player's health
+static constexpr int32 FelMeteorDamagePct = 200;
+
+// The map's navigation mesh gives a long way a part at a time; no more parts than this are asked for
+static constexpr uint8 WayToVarianParts = 8;
 
 // The same for Highlord Tirion Fordring, who hangs about 27 yards out from the ledge players arrive on
 static constexpr float TirionFoundDistance = 40.0f;
@@ -105,7 +145,9 @@ enum BrokenShoreTaskGroups
     TASK_GROUP_CRYSTALS                 = 2, // what they make of the Anchoring Crystals, which is late once a spire has fallen
     TASK_GROUP_CRYSTAL_ARROWS           = 3, // the arrows over the Anchoring Crystals, which go when the first of them is destroyed
     TASK_GROUP_COMMANDER                = 4, // how Dread Commander Arganoth arrives
-    TASK_GROUP_COMMANDER_SLAIN          = 5  // what the leaders say when he has fallen, which nothing calls off
+    TASK_GROUP_COMMANDER_SLAIN          = 5, // what the leaders say when he has fallen, which nothing calls off
+    TASK_GROUP_FIND_VARIAN              = 6, // the way over the hill to King Varian Wrynn, its cutscene and its Fel Meteors
+    TASK_GROUP_VARIAN_FOUND             = 7  // what is said when he is found, which nothing calls off
 };
 
 // "The Battle for Broken Shore". The scenario itself is attached to the map by the `scenarios` table
@@ -119,7 +161,7 @@ public:
     struct instance_broken_shore_scenario_InstanceMapScript : public InstanceScript
     {
         instance_broken_shore_scenario_InstanceMapScript(InstanceMap* map) : InstanceScript(map), _currentStep(nullptr), _checkTimer(0),
-            _spiresDestroyed(0), _allianceForcesCharging(false), _commanderArrived(false)
+            _spiresDestroyed(0), _allianceForcesCharging(false), _commanderArrived(false), _varianCanBeFound(false)
         {
             SetHeaders(DataHeader);
             LoadObjectData(creatureData, nullptr);
@@ -257,6 +299,15 @@ public:
             }
         }
 
+        void SetGuidData(uint32 type, ObjectGuid data) override
+        {
+            if (type != DATA_PLAYER_LEFT_FIND_VARIAN_SCENE)
+                return;
+
+            if (Player* player = instance->GetPlayer(data))
+                LeaveFindVarianScene(player);
+        }
+
         void OnGameObjectCreate(GameObject* go) override
         {
             InstanceScript::OnGameObjectCreate(go);
@@ -369,6 +420,26 @@ public:
                 if (Creature* creature = GetCreature(creatureDataType))
                     creature->AI()->Talk(textGroup);
             });
+        }
+
+        // Puts Jaina or Genn on the ground a few yards from somewhere, in the given direction from there, to
+        // stay. TODO: they should walk.
+        void PlaceLeader(uint32 creatureDataType, Position const& from, float angle, float orientation)
+        {
+            Creature* leader = GetCreature(creatureDataType);
+            if (!leader || !leader->IsAlive())
+                return;
+
+            float x = from.GetPositionX() + LeaderPlaceDistance * std::cos(angle);
+            float y = from.GetPositionY() + LeaderPlaceDistance * std::sin(angle);
+
+            // A creature that is moved to where nothing is loaded is put back where it spawned
+            instance->LoadGrid(x, y);
+
+            Position place(x, y, leader->GetMapHeight(x, y, MAX_HEIGHT), orientation);
+            leader->GetMotionMaster()->Clear();
+            leader->NearTeleportTo(place);
+            leader->SetHomePosition(place);
         }
 
         // The Anchoring Crystals that circle a Spire of Woe. A gameobject measures a distance from the edges
@@ -530,6 +601,11 @@ public:
                     instance->SetSpawnGroupInactive(SPAWN_GROUP_DEFEAT_THE_COMMANDER);
                     _scheduler.CancelGroup(TASK_GROUP_COMMANDER);
                     break;
+                case STAGE_FIND_VARIAN:
+                    _scheduler.CancelGroup(TASK_GROUP_FIND_VARIAN);
+                    StopFelMeteors();
+                    VarianFound();
+                    break;
                 case STAGE_DESTROY_THE_PORTAL:
                     instance->SpawnGroupDespawn(SPAWN_GROUP_DESTROY_THE_PORTAL, true);
                     break;
@@ -624,21 +700,243 @@ public:
             });
         }
 
-        // "Locate King Varian Wrynn." Needs GAME_EVENT_VARIAN_FOUND, sent when a player reaches him.
-        // He stays where he is afterwards, because the next stage opens with him.
-        // TODO: Genn and Jaina leading the way over the hill, the cutscene at its crest, the bombardment
-        // on the way down, the forces fighting at Varian's side and the Horde's "Find The Others".
+        // "Locate King Varian Wrynn." Needs GAME_EVENT_VARIAN_FOUND, sent when a player reaches him once the
+        // stage's cutscene has been seen: players can ride all the way to him before it starts, which does
+        // not count, and it leaves them on the hilltop between the beach and him. He stays where he is
+        // afterwards, because the next stage opens with him.
+        // The cutscene, what it asks for and where it leaves players are Blizzard's. That it only counts
+        // afterwards, what is said outside the cutscene, and that Fel Meteors come down on the way from the
+        // hilltop, is from a video of the retail scenario; when the cutscene starts is a guess. On retail the
+        // cutscene cannot be skipped and the meteors start after it. Here it can be, so they start with it.
+        // TODO: Genn and Jaina leading the way over the hill (they are put on the hilltop while the cutscene
+        // plays, and at Varian's side when he is found), the forces fighting at Varian's side and the
+        // Horde's "Find The Others".
         void StartFindVarian()
         {
             instance->SpawnGroupSpawn(SPAWN_GROUP_FIND_VARIAN, true);
 
-            // Players who release from here on go to the graveyard at Varian's camp
-            SetEntranceLocation(WORLD_SAFE_LOC_ALLIANCE_PORTAL);
+            // By then the leaders have said their piece over the fallen commander
+            TalkLater(20500ms, TASK_GROUP_FIND_VARIAN, DATA_GENN_GREYMANE, SAY_GENN_AROUND_THIS_HILL);
+
+            _scheduler.Schedule(FindVarianSceneDelay, TASK_GROUP_FIND_VARIAN, [this](TaskContext context)
+            {
+                // It waits for someone to see it
+                if (instance->GetPlayers().empty())
+                {
+                    context.Repeat(5s);
+                    return;
+                }
+
+                PlayFindVarianScene();
+            });
+        }
+
+        void PlayFindVarianScene()
+        {
+            // A player who skips the cutscene finds the Fel Meteors on the way already
+            StartFelMeteors();
+
+            instance->DoOnPlayers([](Player* player)
+            {
+                player->CastSpell(player, SPELL_STAGE_2_SCENE, true);
+            });
+
+            _scheduler.Schedule(FindVarianSceneTimeout, TASK_GROUP_FIND_VARIAN, [this](TaskContext /*context*/)
+            {
+                instance->DoOnPlayers([this](Player* player)
+                {
+                    player->RemoveAurasDueToSpell(SPELL_STAGE_2_SCENE);
+                    LeaveFindVarianScene(player);
+                });
+            });
+        }
+
+        // The cutscene is over for the player, who is taken to the hilltop. With the first of them the
+        // leaders are there too, and Varian can be found.
+        void LeaveFindVarianScene(Player* player)
+        {
+            if (!_playersOnTheHilltop.insert(player->GetGUID()).second)
+                return;
+
+            if (!_varianCanBeFound)
+            {
+                _varianCanBeFound = true;
+                PutLeadersOnTheHilltop();
+                TalkLater(2s, TASK_GROUP_FIND_VARIAN, DATA_LADY_JAINA_PROUDMOORE, SAY_JAINA_VARIAN);
+                TalkLater(3200ms, TASK_GROUP_FIND_VARIAN, DATA_GENN_GREYMANE, SAY_GENN_LETS_GO);
+            }
+
+            player->CastSpell(player, SPELL_STAGE_2_TELEPORT, true);
+        }
+
+        // Jaina and Genn stand in front of where players arrive, to either side of the way to Varian's
+        // forces, which is where the cutscene had players look
+        void PutLeadersOnTheHilltop()
+        {
+            SpellTargetPosition const* hilltop = sSpellMgr->GetSpellTargetPosition(SPELL_STAGE_2_TELEPORT, EFFECT_0);
+            SpellTargetPosition const* view = sSpellMgr->GetSpellTargetPosition(SPELL_STAGE_2_FAR_SIGHT, EFFECT_0);
+            if (!hilltop || !view)
+                return;
+
+            float direction = hilltop->GetAbsoluteAngle(view);
+            PlaceLeader(DATA_LADY_JAINA_PROUDMOORE, *hilltop, direction + LeaderPlaceAngle, direction);
+            PlaceLeader(DATA_GENN_GREYMANE, *hilltop, direction - LeaderPlaceAngle, direction);
+        }
+
+        // The way a player takes from the hilltop to King Varian Wrynn: its corners, the hilltop first, from
+        // the map's navigation mesh. Where the mesh has no way, the rest is a straight line.
+        std::vector<Position> GetWayToVarian(Creature const* varian)
+        {
+            std::vector<Position> way;
+
+            SpellTargetPosition const* hilltop = sSpellMgr->GetSpellTargetPosition(SPELL_STAGE_2_TELEPORT, EFFECT_0);
+            if (!hilltop)
+                return way;
+
+            // The mesh is loaded with the map
+            instance->LoadGrid(hilltop->GetPositionX(), hilltop->GetPositionY());
+            instance->LoadGrid(varian->GetPositionX(), varian->GetPositionY());
+
+            way.push_back(hilltop->GetPosition());
+            for (uint8 part = 0; part < WayToVarianParts; ++part)
+            {
+                Position from = way.back();
+
+                PathGenerator path(varian);
+                path.SetUseStraightPath(true);
+                path.CalculatePath(from.GetPositionX(), from.GetPositionY(), from.GetPositionZ(), varian->GetPositionX(), varian->GetPositionY(), varian->GetPositionZ());
+
+                uint32 type = path.GetPathType();
+                Movement::PointsArray const& corners = path.GetPath();
+                if (!(type & (PATHFIND_NORMAL | PATHFIND_INCOMPLETE)) || (type & (PATHFIND_SHORTCUT | PATHFIND_NOPATH | PATHFIND_NOT_USING_PATH | PATHFIND_SHORT)) || corners.size() < 2)
+                    break;
+
+                for (std::size_t i = 1; i < corners.size(); ++i)
+                    way.emplace_back(corners[i].x, corners[i].y, corners[i].z);
+
+                if (!(type & PATHFIND_INCOMPLETE))
+                    return way;
+
+                // A part that leads nowhere is the last
+                if (way.back().GetExactDist2d(from) < 1.0f)
+                    break;
+            }
+
+            way.push_back(varian->GetPosition());
+            return way;
+        }
+
+        // Fel Meteors come down on the way from the hilltop to Varian until he is found. The stalkers that
+        // send them are put in the air above the way.
+        void StartFelMeteors()
+        {
+            Creature* varian = GetCreature(DATA_KING_VARIAN_WRYNN);
+            if (!varian || !_felMeteorStalkers.empty())
+                return;
+
+            std::vector<Position> way = GetWayToVarian(varian);
+
+            float length = 0.0f;
+            for (std::size_t i = 1; i < way.size(); ++i)
+                length += way[i - 1].GetExactDist2d(way[i]);
+
+            // How far along the way the part at hand starts, and how far along it the next stalker goes
+            float start = 0.0f;
+            float next = FelMeteorHilltopDistance;
+            for (std::size_t i = 1; i < way.size(); ++i)
+            {
+                float part = way[i - 1].GetExactDist2d(way[i]);
+                for (; part > 0.0f && next <= start + part && next <= length - FelMeteorVarianDistance; next += FelMeteorSpacing)
+                {
+                    float along = (next - start) / part;
+                    SummonFelMeteorStalker(varian,
+                        way[i - 1].GetPositionX() + along * (way[i].GetPositionX() - way[i - 1].GetPositionX()),
+                        way[i - 1].GetPositionY() + along * (way[i].GetPositionY() - way[i - 1].GetPositionY()));
+                }
+
+                start += part;
+            }
+
+        }
+
+        void SummonFelMeteorStalker(Creature const* varian, float x, float y)
+        {
+            TempSummon* stalker = instance->SummonCreature(NPC_FEL_METEOR_STALKER, { x, y, varian->GetMapHeight(x, y, MAX_HEIGHT) + FelMeteorHeight });
+            if (!stalker)
+                return;
+
+            // It is of level 1, and would miss players for theirs
+            stalker->SetLevel(uint8(sWorld->getIntConfig(CONFIG_MAX_PLAYER_LEVEL)));
+
+            _felMeteorStalkers.push_back(stalker->GetGUID());
+            _scheduler.Schedule(randtime(0ms, FelMeteorPeriod), TASK_GROUP_FIND_VARIAN, [this, guid = stalker->GetGUID()](TaskContext context)
+            {
+                Creature* stalker = instance->GetCreature(guid);
+                if (!stalker)
+                    return;
+
+                // Nobody is there to see it
+                if (!instance->GetPlayers().empty())
+                    SendFelMeteor(stalker);
+
+                context.Repeat(FelMeteorPeriod);
+            });
+        }
+
+        // The stalker sends a Fel Meteor down to somewhere on the ground below it: first what the meteor
+        // looks like on its way, then what it does where it lands
+        void SendFelMeteor(Creature* stalker)
+        {
+            float angle = frand(0.0f, 2.0f * float(M_PI));
+            float distance = FelMeteorSpread * std::sqrt(frand(0.0f, 1.0f));
+            float x = stalker->GetPositionX() + distance * std::cos(angle);
+            float y = stalker->GetPositionY() + distance * std::sin(angle);
+            Position place(x, y, stalker->GetMapHeight(x, y, MAX_HEIGHT));
+
+            Milliseconds flight = Milliseconds(int64(stalker->GetExactDist(place) / FelMeteorSpeed * float(IN_MILLISECONDS)));
+            _scheduler.Schedule(FelMeteorLaunchDelay, TASK_GROUP_FIND_VARIAN, [this, guid = stalker->GetGUID(), place, flight](TaskContext /*context*/)
+            {
+                Creature* stalker = instance->GetCreature(guid);
+                if (!stalker)
+                    return;
+
+                stalker->SendPlaySpellVisual(place, SPELL_VISUAL_FEL_METEOR, 0, 0, FelMeteorSpeed);
+                _scheduler.Schedule(flight, TASK_GROUP_FIND_VARIAN, [this, guid, place](TaskContext /*context*/)
+                {
+                    if (Creature* stalker = instance->GetCreature(guid))
+                        stalker->CastSpell(place, SPELL_FEL_METEOR, true);
+                });
+            });
+        }
+
+        void StopFelMeteors()
+        {
+            for (ObjectGuid const& guid : _felMeteorStalkers)
+                if (Creature* stalker = instance->GetCreature(guid))
+                    stalker->DespawnOrUnsummon();
+
+            _felMeteorStalkers.clear();
+        }
+
+        // Jaina and Genn stand in front of Varian, to either side, facing him, and he greets them
+        void VarianFound()
+        {
+            if (Creature* varian = GetCreature(DATA_KING_VARIAN_WRYNN))
+            {
+                float jaina = varian->GetOrientation() + LeaderPlaceAngle;
+                float genn = varian->GetOrientation() - LeaderPlaceAngle;
+                PlaceLeader(DATA_LADY_JAINA_PROUDMOORE, *varian, jaina, Position::NormalizeOrientation(jaina + float(M_PI)));
+                PlaceLeader(DATA_GENN_GREYMANE, *varian, genn, Position::NormalizeOrientation(genn + float(M_PI)));
+            }
+
+            TalkLater(1s, TASK_GROUP_VARIAN_FOUND, DATA_KING_VARIAN_WRYNN, SAY_VARIAN_GOOD_TO_SEE_YOU_SAFE);
+            TalkLater(5s, TASK_GROUP_VARIAN_FOUND, DATA_GENN_GREYMANE, SAY_GENN_AND_YOU);
         }
 
         void UpdateFindVarian(uint32 diff)
         {
-            SendScenarioEventWhenFound(diff, DATA_KING_VARIAN_WRYNN, VarianFoundDistance, GAME_EVENT_VARIAN_FOUND);
+            if (_varianCanBeFound)
+                SendScenarioEventWhenFound(diff, DATA_KING_VARIAN_WRYNN, VarianFoundDistance, GAME_EVENT_VARIAN_FOUND);
         }
 
         // "Destroy the demon portal to stop reinforcements." Needs 4 GAME_EVENT_ANCHOR_SHATTERED,
@@ -647,6 +945,10 @@ public:
         void StartDestroyThePortal()
         {
             instance->SpawnGroupSpawn(SPAWN_GROUP_DESTROY_THE_PORTAL, true);
+
+            // Players who release from here on go to the graveyard at Varian's camp. Until he was found it
+            // was still the one on the beach: his camp is where the way under the Fel Meteors leads.
+            SetEntranceLocation(WORLD_SAFE_LOC_ALLIANCE_PORTAL);
         }
 
         // "Assault the demon city." A progress bar: 300 points from GAME_EVENT_BLACK_CITY_1 to _4,
@@ -744,6 +1046,9 @@ public:
         uint8 _spiresDestroyed;
         bool _allianceForcesCharging;
         bool _commanderArrived;
+        bool _varianCanBeFound;
+        GuidUnorderedSet _playersOnTheHilltop;
+        GuidVector _felMeteorStalkers;
         GuidVector _spireGUIDs;
         std::unordered_set<ObjectGuid::LowType> _fallenSpires;
     };
@@ -932,11 +1237,86 @@ class spell_broken_shore_fel_beam : public SpellScript
     }
 };
 
+// 199036 - Fel Meteor
+// What lands where a stalker above the way to King Varian Wrynn has sent a meteor. The spell takes whatever
+// is around; whom Blizzard has it take is not known, and here it is players, but for those who are watching
+// the stage's cutscene: they may have ridden on towards Varian before it started. Its own 146,249 damage
+// leaves a player at full health standing, while a video of the retail scenario shows a hit to be the end of
+// one, so it costs a player more health than the player has.
+class spell_broken_shore_fel_meteor : public SpellScript
+{
+    void FilterTargets(std::list<WorldObject*>& targets)
+    {
+        targets.remove_if([](WorldObject const* target)
+        {
+            Player const* player = target->ToPlayer();
+            return !player || player->HasAura(SPELL_STAGE_2_SCENE);
+        });
+    }
+
+    void HandleDamage(SpellEffIndex /*effIndex*/)
+    {
+        if (Player const* player = GetHitPlayer())
+            SetHitDamage(std::max(GetHitDamage(), int32(player->CountPctFromMaxHealth(FelMeteorDamagePct))));
+    }
+
+    void Register() override
+    {
+        OnObjectAreaTargetSelect += SpellObjectAreaTargetSelectFn(spell_broken_shore_fel_meteor::FilterTargets, EFFECT_0, TARGET_UNIT_DEST_AREA_ENTRY);
+        OnEffectHitTarget += SpellEffectFn(spell_broken_shore_fel_meteor::HandleDamage, EFFECT_0, SPELL_EFFECT_SCHOOL_DAMAGE);
+    }
+};
+
+// 1356 - Broken Shore Scenario - Alliance - Stage 2
+// The cutscene of "Find Varian", which "Stage 2 Scene" (218626) plays: from the hill behind the beach the
+// leaders see Varian's forces beset at the demons' portal. As it starts it asks for a look at them, and
+// before it ends for the player to be taken to that hill.
+class scene_broken_shore_alliance_stage_2 : public SceneScript
+{
+public:
+    scene_broken_shore_alliance_stage_2() : SceneScript("scene_broken_shore_alliance_stage_2") { }
+
+    void OnSceneTriggerEvent(Player* player, uint32 /*sceneInstanceID*/, SceneTemplate const* /*sceneTemplate*/, std::string const& triggerName) override
+    {
+        if (triggerName == "farsight")
+            player->CastSpell(player, SPELL_STAGE_2_FAR_SIGHT, true);
+        else if (triggerName == "teleport")
+            Leave(player);
+    }
+
+    // A cutscene that ends without having asked is over all the same
+    void OnSceneComplete(Player* player, uint32 /*sceneInstanceID*/, SceneTemplate const* /*sceneTemplate*/) override
+    {
+        Leave(player);
+    }
+
+    void OnSceneCancel(Player* player, uint32 /*sceneInstanceID*/, SceneTemplate const* /*sceneTemplate*/) override
+    {
+        Leave(player);
+    }
+
+private:
+    static void Leave(Player* player)
+    {
+        // The look at Varian's forces ends with the cutscene
+        player->RemoveAurasDueToSpell(SPELL_STAGE_2_FAR_SIGHT);
+        player->RemoveDynObject(SPELL_STAGE_2_FAR_SIGHT);
+
+        if (player->GetMapId() != MAP_BROKEN_SHORE_SCENARIO)
+            return;
+
+        if (InstanceScript* instance = player->GetInstanceScript())
+            instance->SetGuidData(DATA_PLAYER_LEFT_FIND_VARIAN_SCENE, player->GetGUID());
+    }
+};
+
 void AddSC_scenario_broken_shore()
 {
     new instance_broken_shore_scenario();
+    new scene_broken_shore_alliance_stage_2();
     RegisterCreatureAI(npc_captain_angelica_broken_shore);
     RegisterBrokenShoreCreatureAI(npc_broken_shore_anchoring_crystal);
     RegisterBrokenShoreCreatureAI(npc_broken_shore_spire_of_woe);
     RegisterSpellScript(spell_broken_shore_fel_beam);
+    RegisterSpellScript(spell_broken_shore_fel_meteor);
 }
