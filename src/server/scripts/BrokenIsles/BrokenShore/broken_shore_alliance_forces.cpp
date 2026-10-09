@@ -19,6 +19,7 @@
 #include "CellImpl.h"
 #include "Creature.h"
 #include "DB2Stores.h"
+#include "GameObject.h"
 #include "GridNotifiersImpl.h"
 #include "InstanceScript.h"
 #include "MotionMaster.h"
@@ -39,11 +40,11 @@ static constexpr float SpireSearchDistance = 300.0f;
 // number of them spread out.
 static constexpr float FighterDirectionStep = 2.3999632f;
 
-// Where a fighter waits at a spire: on an arc this wide around its Anchoring Crystal, on the side that
-// players land on, and at a distance of its own between these two
+// Where a fighter waits at a spire: on an arc this wide around it, on the side that players land on, and at
+// a distance of its own between these two, which is outside the circle of its Anchoring Crystals
 static constexpr float SpireStandArc = 5.0f * float(M_PI) / 6.0f;
-static constexpr float SpireStandDistanceMin = 8.0f;
-static constexpr float SpireStandDistanceMax = 16.0f;
+static constexpr float SpireStandDistanceMin = 19.0f;
+static constexpr float SpireStandDistanceMax = 27.0f;
 
 // How near to its place at a spire a fighter has to be to stay put
 static constexpr float SpireStandTolerance = 2.0f;
@@ -78,8 +79,8 @@ enum BrokenShoreFighterPoints
 // 97486 - Gilnean Royal Guard
 // 114466 - Darnassus Sentinel
 // The Alliance's forces on the beach. While the instance script has them charge they go for a Spire of Woe
-// and fight the demons around it, and move on to the next when its Anchoring Crystal is gone. The crystals
-// themselves are left to players.
+// and fight the demons around it, and move on to the next when it has fallen. The Anchoring Crystals that
+// hold it are left to players.
 // TODO: their weapons and abilities, and what they do in the stages after the beach.
 struct npc_broken_shore_alliance_soldier : public ScriptedAI
 {
@@ -122,14 +123,14 @@ struct npc_broken_shore_alliance_soldier : public ScriptedAI
         if (!IsCharging())
             return;
 
-        Creature* crystal = FindNextSpire();
-        if (Unit* demon = FindNearestDemon(crystal))
+        GameObject* spire = FindNextSpire();
+        if (Unit* demon = FindNearestDemon(spire))
             TakeOn(demon);
-        else if (crystal)
+        else if (spire)
         {
-            Position place = GetPlaceAtSpire(crystal);
+            Position place = GetPlaceAtSpire(spire);
             if (me->GetExactDist2d(place) > SpireStandTolerance && me->GetMotionMaster()->GetCurrentMovementGeneratorType() != POINT_MOTION_TYPE)
-                me->GetMotionMaster()->MovePoint(POINT_SPIRE, place, true, place.GetAbsoluteAngle(crystal));
+                me->GetMotionMaster()->MovePoint(POINT_SPIRE, place, true, place.GetAbsoluteAngle(spire));
         }
     }
 
@@ -156,26 +157,26 @@ private:
         return instance && instance->GetData(DATA_ALLIANCE_FORCES_CHARGING);
     }
 
-    // The Anchoring Crystal of the spire to go for: of those that still stand, the one nearest to where
-    // players land, so that all fighters go for the same spire and take them in the same order
-    Creature* FindNextSpire() const
+    // The Spire of Woe to go for: of those that still stand, the one nearest to where players land, so
+    // that all fighters go for the same spire and take them in the same order
+    GameObject* FindNextSpire() const
     {
-        std::vector<Creature*> crystals;
-        me->GetCreatureListWithEntryInGrid(crystals, NPC_ANCHORING_CRYSTAL, SpireSearchDistance);
+        std::vector<GameObject*> spires;
+        me->GetGameObjectListWithEntryInGrid(spires, GO_SPIRE_OF_WOE, SpireSearchDistance);
 
         WorldSafeLocsEntry const* landing = sWorldSafeLocsStore.AssertEntry(WORLD_SAFE_LOC_ALLIANCE_BEACH);
 
-        Creature* next = nullptr;
+        GameObject* next = nullptr;
         float nextDistance = 0.0f;
-        for (Creature* crystal : crystals)
+        for (GameObject* spire : spires)
         {
-            if (!crystal->IsAlive())
+            if (spire->GetGoState() != GO_STATE_READY)
                 continue;
 
-            float distance = crystal->GetExactDist2d(landing->Loc.X, landing->Loc.Y);
+            float distance = spire->GetExactDist2d(landing->Loc.X, landing->Loc.Y);
             if (!next || distance < nextDistance)
             {
-                next = crystal;
+                next = spire;
                 nextDistance = distance;
             }
         }
@@ -183,22 +184,22 @@ private:
         return next;
     }
 
-    // Where the fighter waits at a spire, facing its Anchoring Crystal
-    Position GetPlaceAtSpire(Creature* crystal) const
+    // Where the fighter waits at a spire, facing it
+    Position GetPlaceAtSpire(GameObject* spire) const
     {
         WorldSafeLocsEntry const* landing = sWorldSafeLocsStore.AssertEntry(WORLD_SAFE_LOC_ALLIANCE_BEACH);
 
-        float angle = crystal->GetAbsoluteAngle(landing->Loc.X, landing->Loc.Y) + (GetDirectionFraction() - 0.5f) * SpireStandArc;
-        return crystal->GetFirstCollisionPosition(_standDistance, crystal->ToRelativeAngle(angle));
+        float angle = spire->GetAbsoluteAngle(landing->Loc.X, landing->Loc.Y) + (GetDirectionFraction() - 0.5f) * SpireStandArc;
+        return spire->GetFirstCollisionPosition(_standDistance, spire->ToRelativeAngle(angle));
     }
 
     // The demon nearest to the fighter among those around the spire, or around the fighter itself once
     // no spire stands
-    Unit* FindNearestDemon(Creature* crystal) const
+    Unit* FindNearestDemon(GameObject* spire) const
     {
         WorldObject const* center = me;
-        if (crystal)
-            center = crystal;
+        if (spire)
+            center = spire;
 
         std::vector<Unit*> units;
         Trinity::AnyUnfriendlyUnitInObjectRangeCheck check(center, me, SpireFightDistance);

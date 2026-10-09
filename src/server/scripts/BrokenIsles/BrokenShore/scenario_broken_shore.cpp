@@ -23,6 +23,8 @@
 #include "InstanceScript.h"
 #include "Log.h"
 #include "Map.h"
+#include "MotionMaster.h"
+#include "PassiveAI.h"
 #include "Player.h"
 #include "ScriptedCreature.h"
 #include "ScriptedGossip.h"
@@ -52,6 +54,22 @@ static constexpr float GuldanDeathDistance = 5.0f;
 static constexpr Seconds BridgeSpawnDelay = 3s;
 static constexpr Milliseconds BridgeFormDelay = 500ms;
 
+// How far from a Spire of Woe its Anchoring Crystals are at most, and the other way round. They circle it
+// about 15 yards out, and the spires stand more than 50 yards apart.
+static constexpr float SpireCrystalDistance = 30.0f;
+
+// How long an Anchoring Crystal takes to go round its spire, which is a guess, and how many points its
+// circle is made of. The core leaves out the point a crystal starts at, which shows the less the more there are.
+static constexpr float CrystalLapTime = 20.0f;
+static constexpr uint8 CrystalCircleSteps = 32;
+
+// The core ends a circle after one lap unless it is told how long the circling is to last
+static constexpr Milliseconds CrystalCirclingTime = 12h;
+
+// How long the arrows over the Anchoring Crystals stay if none of the crystals is destroyed before that. A
+// video of the retail scenario shows them from when Jaina speaks of the crystals, for about this long.
+static constexpr Seconds CrystalArrowTime = 60s;
+
 // Where players are taken when the Black City has been razed: the edge of the city, facing the gap to the crevasse
 Position const BlackCityRazedPosition = { 1410.2959f, 2162.2405f, 21.252392f, 4.92f };
 
@@ -59,7 +77,8 @@ Position const BlackCityRazedPosition = { 1410.2959f, 2162.2405f, 21.252392f, 4.
 enum BrokenShoreTaskGroups
 {
     TASK_GROUP_BEACH                    = 1, // what the leaders say and do on the beach
-    TASK_GROUP_CRYSTALS                 = 2  // what they make of the Anchoring Crystals, which is late once a spire has fallen
+    TASK_GROUP_CRYSTALS                 = 2, // what they make of the Anchoring Crystals, which is late once a spire has fallen
+    TASK_GROUP_CRYSTAL_ARROWS           = 3  // the arrows over the Anchoring Crystals, which go when the first of them is destroyed
 };
 
 // "The Battle for Broken Shore". The scenario itself is attached to the map by the `scenarios` table
@@ -149,10 +168,8 @@ public:
                 case NPC_FEL_LORD_ZARDAK:
                     SendScenarioEvent(GAME_EVENT_FEL_LORD_SLAIN);
                     break;
-                // TODO: a spire is held by several crystals and should fall with the last of them
                 case NPC_ANCHORING_CRYSTAL:
-                    SendScenarioEvent(GAME_EVENT_SPIRE_OF_WOE_DESTROYED);
-                    SpireDestroyed();
+                    CrystalDestroyed(creature);
                     break;
                 case NPC_DREAD_COMMANDER_ARGANOTH:
                     SendScenarioEvent(GAME_EVENT_ARGANOTH_SLAIN);
@@ -207,21 +224,32 @@ public:
             return 0;
         }
 
-        // A bridge of ice is spawned as a closed door and opened a moment after it appears. The model's
-        // animation for a door that opens is the ice forming, and a client only plays it for a door it
-        // already has; an open door then shows the finished bridge.
         void OnGameObjectCreate(GameObject* go) override
         {
             InstanceScript::OnGameObjectCreate(go);
 
-            if (go->GetEntry() != GO_ICE_BRIDGE)
-                return;
-
-            _scheduler.Schedule(BridgeFormDelay, [this, guid = go->GetGUID()](TaskContext /*context*/)
+            switch (go->GetEntry())
             {
-                if (GameObject* bridge = instance->GetGameObject(guid))
-                    bridge->SetGoState(GO_STATE_ACTIVE);
-            });
+                // A fallen spire that is loaded again, as happens when players leave the scenario and come
+                // back, would stand
+                case GO_SPIRE_OF_WOE:
+                    _spireGUIDs.push_back(go->GetGUID());
+                    if (_fallenSpires.contains(go->GetSpawnId()))
+                        go->SetGoState(GO_STATE_DESTROYED);
+                    break;
+                // A bridge of ice is spawned as a closed door and opened a moment after it appears. The
+                // model's animation for a door that opens is the ice forming, and a client only plays it
+                // for a door it already has; an open door then shows the finished bridge.
+                case GO_ICE_BRIDGE:
+                    _scheduler.Schedule(BridgeFormDelay, [this, guid = go->GetGUID()](TaskContext /*context*/)
+                    {
+                        if (GameObject* bridge = instance->GetGameObject(guid))
+                            bridge->SetGoState(GO_STATE_ACTIVE);
+                    });
+                    break;
+                default:
+                    break;
+            }
         }
 
         // The core only passes a game event on to the scenario when a player is its source,
@@ -310,6 +338,63 @@ public:
             });
         }
 
+        // The Anchoring Crystals that circle a Spire of Woe. A gameobject measures a distance from the edges
+        // of its model's box, which lets a search around a spire reach the crystals of the next one, so
+        // every crystal found is measured again from the spire's centre.
+        std::vector<Creature*> GetCrystals(GameObject const* spire) const
+        {
+            std::vector<Creature*> crystals;
+            spire->GetCreatureListWithEntryInGrid(crystals, NPC_ANCHORING_CRYSTAL, SpireCrystalDistance);
+            std::erase_if(crystals, [spire](Creature const* crystal) { return spire->GetExactDist2d(crystal) > SpireCrystalDistance; });
+            return crystals;
+        }
+
+        // Puts an arrow over every Anchoring Crystal, or takes the arrows away again
+        void ShowCrystalArrows(bool show)
+        {
+            for (ObjectGuid const& guid : _spireGUIDs)
+            {
+                GameObject* spire = instance->GetGameObject(guid);
+                if (!spire)
+                    continue;
+
+                for (Creature* crystal : GetCrystals(spire))
+                {
+                    if (!show)
+                        crystal->RemoveAurasDueToSpell(SPELL_GREEN_CAT_MARK_STATE);
+                    else if (crystal->IsAlive())
+                        crystal->AddAura(SPELL_GREEN_CAT_MARK_STATE, crystal);
+                }
+            }
+        }
+
+        // A Spire of Woe is held in place by the Anchoring Crystals that circle it and falls with the last
+        // of them: its model has an animation of that, which a client plays for a destroyed gameobject.
+        // A crystal without a spire counts as one, so that the stage can still be finished.
+        void CrystalDestroyed(Creature* crystal)
+        {
+            _scheduler.CancelGroup(TASK_GROUP_CRYSTAL_ARROWS);
+            ShowCrystalArrows(false);
+
+            if (GameObject* spire = crystal->FindNearestGameObject(GO_SPIRE_OF_WOE, SpireCrystalDistance))
+            {
+                for (Creature const* other : GetCrystals(spire))
+                    if (other != crystal && other->IsAlive())
+                        return;
+
+                DestroySpire(spire);
+            }
+
+            SendScenarioEvent(GAME_EVENT_SPIRE_OF_WOE_DESTROYED);
+            SpireDestroyed();
+        }
+
+        void DestroySpire(GameObject* spire)
+        {
+            _fallenSpires.insert(spire->GetSpawnId());
+            spire->SetGoState(GO_STATE_DESTROYED);
+        }
+
         // What the leaders say as the Spires of Woe fall
         void SpireDestroyed()
         {
@@ -388,7 +473,14 @@ public:
                     instance->SpawnGroupDespawn(SPAWN_GROUP_STORM_THE_BEACH, true);
                     _scheduler.CancelGroup(TASK_GROUP_BEACH);
                     _scheduler.CancelGroup(TASK_GROUP_CRYSTALS);
+                    _scheduler.CancelGroup(TASK_GROUP_CRYSTAL_ARROWS);
                     _allianceForcesCharging = false;
+
+                    // A spire that still stands, which takes a GM skipping the stage, falls with the rest
+                    for (ObjectGuid const& guid : _spireGUIDs)
+                        if (GameObject* spire = instance->GetGameObject(guid))
+                            if (spire->GetGoState() == GO_STATE_READY)
+                                DestroySpire(spire);
                     break;
                 // His death ends the stage, so only respawning is stopped and his corpse stays
                 case STAGE_DEFEAT_THE_COMMANDER:
@@ -428,10 +520,11 @@ public:
         // 3 GAME_EVENT_FEL_LORD_SLAIN and 3 GAME_EVENT_SPIRE_OF_WOE_DESTROYED, sent from OnUnitDeath.
         // Jaina and Genn greet the players and then charge the spires with the forces they landed with.
         // When they say what is a guess at retail's pacing.
-        // TODO: the Spires of Woe themselves, the Alliance's cannons, and the demons' abilities.
+        // TODO: the Alliance's cannons, and the demons' abilities.
         // The beach demons respawn in place of the reinforcements that should keep arriving.
         void StartStormTheBeach()
         {
+            instance->SpawnGroupSpawn(SPAWN_GROUP_SPIRES_OF_WOE, true);
             instance->SpawnGroupSpawn(SPAWN_GROUP_STORM_THE_BEACH, true);
             instance->SpawnGroupSpawn(SPAWN_GROUP_ALLIANCE_LEADERS, true);
             instance->SpawnGroupSpawn(SPAWN_GROUP_ALLIANCE_LANDING_FORCE, true);
@@ -448,6 +541,16 @@ public:
             // By then they are among the spires
             TalkLater(36s, TASK_GROUP_CRYSTALS, DATA_LADY_JAINA_PROUDMOORE, SAY_JAINA_CRYSTALS);
             TalkLater(43s, TASK_GROUP_CRYSTALS, DATA_GENN_GREYMANE, SAY_GENN_HOPE_YOU_ARE_RIGHT);
+
+            // As Jaina speaks of the crystals, arrows point them out for a while
+            _scheduler.Schedule(36s, TASK_GROUP_CRYSTAL_ARROWS, [this](TaskContext /*context*/)
+            {
+                ShowCrystalArrows(true);
+            });
+            _scheduler.Schedule(36s + CrystalArrowTime, TASK_GROUP_CRYSTAL_ARROWS, [this](TaskContext /*context*/)
+            {
+                ShowCrystalArrows(false);
+            });
         }
 
         // "Slay Dread Commander Arganoth." Needs GAME_EVENT_ARGANOTH_SLAIN, sent from OnUnitDeath.
@@ -576,6 +679,8 @@ public:
         TaskScheduler _scheduler;
         uint8 _spiresDestroyed;
         bool _allianceForcesCharging;
+        GuidVector _spireGUIDs;
+        std::unordered_set<ObjectGuid::LowType> _fallenSpires;
     };
 
     InstanceScript* GetInstanceScript(InstanceMap* map) const override
@@ -603,8 +708,45 @@ struct npc_captain_angelica_broken_shore : public ScriptedAI
     }
 };
 
+// 91704 - Anchoring Crystal
+// Circles the Spire of Woe it is spawned at, at the distance and height it is spawned at, and does nothing
+// else. It floats (CREATURE_STATIC_FLAG_FLOATING), which makes the circle a level one. For a creature on the
+// ground the core looks up the ground under every point of the circle, finds none where that is more than
+// half a yard above the height it is given, and sends the creature down through the beach.
+struct npc_broken_shore_anchoring_crystal : public NullCreatureAI
+{
+    npc_broken_shore_anchoring_crystal(Creature* creature) : NullCreatureAI(creature), _radius(0.0f) { }
+
+    // The circling is started here and not when the crystal appears, because its spire may appear after it,
+    // and started again when something has stopped it
+    void UpdateAI(uint32 /*diff*/) override
+    {
+        if (me->GetMotionMaster()->GetCurrentMovementGeneratorType() == EFFECT_MOTION_TYPE
+            || me->HasUnitState(UNIT_STATE_ROOT | UNIT_STATE_STUNNED | UNIT_STATE_CONFUSED | UNIT_STATE_FLEEING))
+            return;
+
+        if (!_radius)
+        {
+            GameObject* spire = me->FindNearestGameObject(GO_SPIRE_OF_WOE, SpireCrystalDistance);
+            if (!spire)
+                return;
+
+            _circleCentre.Relocate(spire->GetPositionX(), spire->GetPositionY(), me->GetPositionZ());
+            _radius = me->GetExactDist2d(spire);
+        }
+
+        me->GetMotionMaster()->MoveCirclePath(_circleCentre.GetPositionX(), _circleCentre.GetPositionY(), _circleCentre.GetPositionZ(), _radius, false,
+            CrystalCircleSteps, CrystalCirclingTime, 2.0f * float(M_PI) * _radius / CrystalLapTime);
+    }
+
+private:
+    Position _circleCentre;
+    float _radius;
+};
+
 void AddSC_scenario_broken_shore()
 {
     new instance_broken_shore_scenario();
     RegisterCreatureAI(npc_captain_angelica_broken_shore);
+    RegisterBrokenShoreCreatureAI(npc_broken_shore_anchoring_crystal);
 }

@@ -88,7 +88,7 @@ enum BrokenShoreCreatureIds
     // Storm the Beach (Alliance)
     NPC_FELSTALKER_DREADHOUND           = 90686,
     NPC_FEL_LORD_KURDUZ                 = 91588,
-    NPC_ANCHORING_CRYSTAL               = 91704, // holds a Spire of Woe in place
+    NPC_ANCHORING_CRYSTAL               = 91704, // circles a Spire of Woe; three of them hold it in place
     NPC_FEL_LORD_RAKKAN                 = 109586,
     NPC_FEL_LORD_ZARDAK                 = 109587,
     NPC_FELGUARD_LEGIONNAIRE_1          = 109591,
@@ -141,6 +141,9 @@ enum BrokenShoreCreatureIds
 
 enum BrokenShoreGameObjectIds
 {
+    // Storm the Beach. Which of the templates of that name Blizzard spawns is not known
+    GO_SPIRE_OF_WOE                     = 240194,
+
     // A custom template: the object Blizzard spawns for Jaina's bridge of ice is not known
     GO_ICE_BRIDGE                       = 1460001
 };
@@ -150,6 +153,10 @@ enum BrokenShoreSpells
     // Players are given one stack of it by the instance script. On retail it is one of Genn Greymane's
     // abilities; when he casts it is not known.
     SPELL_FOR_THE_ALLIANCE              = 185265,
+
+    // "Cosmetic - Green Cat Mark State (5.00)": a large green arrow that points down at a unit. A video of
+    // the retail scenario shows such arrows over the Anchoring Crystals; which spell they are is not known.
+    SPELL_GREEN_CAT_MARK_STATE          = 151205,
 
     // The Alliance's forces
     SPELL_WRATH                         = 171773, // Gilnean Druid
@@ -204,7 +211,10 @@ enum BrokenShoreSpawnGroups
 
     // So are the Alliance's leaders and the forces that land with them, who go on from stage to stage
     SPAWN_GROUP_ALLIANCE_LEADERS        = 14611,
-    SPAWN_GROUP_ALLIANCE_LANDING_FORCE  = 14612
+    SPAWN_GROUP_ALLIANCE_LANDING_FORCE  = 14612,
+
+    // And the Spires of Woe, whose wreckage stays
+    SPAWN_GROUP_SPIRES_OF_WOE           = 14613
 };
 
 // WorldSafeLocs.db2. The "Start" locations are relative to the faction's ship, not to the map.
