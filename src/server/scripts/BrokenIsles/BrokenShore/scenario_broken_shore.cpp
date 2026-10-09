@@ -34,6 +34,8 @@ ObjectData const creatureData[] =
     { NPC_KING_VARIAN_WRYNN,        DATA_KING_VARIAN_WRYNN        },
     { NPC_HIGHLORD_TIRION_FORDRING, DATA_HIGHLORD_TIRION_FORDRING },
     { NPC_GULDAN,                   DATA_GULDAN                   },
+    { NPC_LADY_JAINA_PROUDMOORE,    DATA_LADY_JAINA_PROUDMOORE    },
+    { NPC_GENN_GREYMANE,            DATA_GENN_GREYMANE            },
     { 0,                            0                             }  // END
 };
 
@@ -53,6 +55,13 @@ static constexpr Milliseconds BridgeFormDelay = 500ms;
 // Where players are taken when the Black City has been razed: the edge of the city, facing the gap to the crevasse
 Position const BlackCityRazedPosition = { 1410.2959f, 2162.2405f, 21.252392f, 4.92f };
 
+// The scheduled tasks that can be called off
+enum BrokenShoreTaskGroups
+{
+    TASK_GROUP_BEACH                    = 1, // what the leaders say and do on the beach
+    TASK_GROUP_CRYSTALS                 = 2  // what they make of the Anchoring Crystals, which is late once a spire has fallen
+};
+
 // "The Battle for Broken Shore". The scenario itself is attached to the map by the `scenarios` table
 // and advances when its criteria receive the game events listed in broken_shore.h.
 // The stages are being filled in one at a time; those that are still stubs say what they need.
@@ -63,7 +72,8 @@ public:
 
     struct instance_broken_shore_scenario_InstanceMapScript : public InstanceScript
     {
-        instance_broken_shore_scenario_InstanceMapScript(InstanceMap* map) : InstanceScript(map), _currentStep(nullptr), _checkTimer(0)
+        instance_broken_shore_scenario_InstanceMapScript(InstanceMap* map) : InstanceScript(map), _currentStep(nullptr), _checkTimer(0),
+            _spiresDestroyed(0), _allianceForcesCharging(false)
         {
             SetHeaders(DataHeader);
             LoadObjectData(creatureData, nullptr);
@@ -142,6 +152,7 @@ public:
                 // TODO: a spire is held by several crystals and should fall with the last of them
                 case NPC_ANCHORING_CRYSTAL:
                     SendScenarioEvent(GAME_EVENT_SPIRE_OF_WOE_DESTROYED);
+                    SpireDestroyed();
                     break;
                 case NPC_DREAD_COMMANDER_ARGANOTH:
                     SendScenarioEvent(GAME_EVENT_ARGANOTH_SLAIN);
@@ -186,6 +197,14 @@ public:
                 default:
                     break;
             }
+        }
+
+        uint32 GetData(uint32 type) const override
+        {
+            if (type == DATA_ALLIANCE_FORCES_CHARGING)
+                return _allianceForcesCharging ? 1 : 0;
+
+            return 0;
         }
 
         // A bridge of ice is spawned as a closed door and opened a moment after it appears. The model's
@@ -269,6 +288,47 @@ public:
             }
         }
 
+        // "For the Alliance!" is given at the start of every stage from the beach on to players who do not
+        // have it: one stack, which lasts an hour and is lost on death. The spell could stack, and on retail
+        // someone casts it; a video of the retail scenario shows a single stack, and not who that is.
+        void GiveForTheAlliance()
+        {
+            instance->DoOnPlayers([](Player* player)
+            {
+                if (player->IsAlive() && !player->HasAura(SPELL_FOR_THE_ALLIANCE))
+                    player->AddAura(SPELL_FOR_THE_ALLIANCE, player);
+            });
+        }
+
+        // Has one of the creatures the script keeps track of say a line after a delay
+        void TalkLater(Seconds delay, uint32 taskGroup, uint32 creatureDataType, uint8 textGroup)
+        {
+            _scheduler.Schedule(delay, taskGroup, [this, creatureDataType, textGroup](TaskContext /*context*/)
+            {
+                if (Creature* creature = GetCreature(creatureDataType))
+                    creature->AI()->Talk(textGroup);
+            });
+        }
+
+        // What the leaders say as the Spires of Woe fall
+        void SpireDestroyed()
+        {
+            _scheduler.CancelGroup(TASK_GROUP_CRYSTALS);
+
+            switch (++_spiresDestroyed)
+            {
+                case 1:
+                    TalkLater(1s, TASK_GROUP_BEACH, DATA_LADY_JAINA_PROUDMOORE, SAY_JAINA_IT_WORKED);
+                    TalkLater(3s, TASK_GROUP_BEACH, DATA_GENN_GREYMANE, SAY_GENN_ONE_DOWN);
+                    break;
+                case 2:
+                    TalkLater(1s, TASK_GROUP_BEACH, DATA_GENN_GREYMANE, SAY_GENN_ONE_MORE);
+                    break;
+                default:
+                    break;
+            }
+        }
+
         // TODO: Jaina, who makes the bridges; for now they form by themselves.
         void SpawnBridge(uint32 spawnGroupId)
         {
@@ -281,6 +341,9 @@ public:
         void StartStage(BrokenShoreStages stage)
         {
             TC_LOG_DEBUG("scripts", "Broken Shore scenario: stage {} started (instance {})", uint32(stage), instance->GetInstanceId());
+
+            if (stage >= STAGE_STORM_THE_BEACH)
+                GiveForTheAlliance();
 
             switch (stage)
             {
@@ -320,8 +383,12 @@ public:
         {
             switch (stage)
             {
+                // The Alliance's forces stay where they are. TODO: what they do in the stages that follow.
                 case STAGE_STORM_THE_BEACH:
                     instance->SpawnGroupDespawn(SPAWN_GROUP_STORM_THE_BEACH, true);
+                    _scheduler.CancelGroup(TASK_GROUP_BEACH);
+                    _scheduler.CancelGroup(TASK_GROUP_CRYSTALS);
+                    _allianceForcesCharging = false;
                     break;
                 // His death ends the stage, so only respawning is stopped and his corpse stays
                 case STAGE_DEFEAT_THE_COMMANDER:
@@ -359,11 +426,28 @@ public:
 
         // "Destroy all demons and structures on the beach." Needs 33 GAME_EVENT_BEACH_DEMON_SLAIN,
         // 3 GAME_EVENT_FEL_LORD_SLAIN and 3 GAME_EVENT_SPIRE_OF_WOE_DESTROYED, sent from OnUnitDeath.
-        // TODO: the Spires of Woe themselves, the allied landing force and the demons' abilities.
+        // Jaina and Genn greet the players and then charge the spires with the forces they landed with.
+        // When they say what is a guess at retail's pacing.
+        // TODO: the Spires of Woe themselves, the Alliance's cannons, and the demons' abilities.
         // The beach demons respawn in place of the reinforcements that should keep arriving.
         void StartStormTheBeach()
         {
             instance->SpawnGroupSpawn(SPAWN_GROUP_STORM_THE_BEACH, true);
+            instance->SpawnGroupSpawn(SPAWN_GROUP_ALLIANCE_LEADERS, true);
+            instance->SpawnGroupSpawn(SPAWN_GROUP_ALLIANCE_LANDING_FORCE, true);
+
+            TalkLater(2s, TASK_GROUP_BEACH, DATA_LADY_JAINA_PROUDMOORE, SAY_JAINA_REINFORCEMENTS);
+            TalkLater(5s, TASK_GROUP_BEACH, DATA_GENN_GREYMANE, SAY_GENN_JUST_IN_TIME);
+            TalkLater(11s, TASK_GROUP_BEACH, DATA_LADY_JAINA_PROUDMOORE, SAY_JAINA_NOW_OR_NEVER);
+            TalkLater(14s, TASK_GROUP_BEACH, DATA_GENN_GREYMANE, SAY_GENN_CHARGE);
+            _scheduler.Schedule(22s, TASK_GROUP_BEACH, [this](TaskContext /*context*/)
+            {
+                _allianceForcesCharging = true;
+            });
+
+            // By then they are among the spires
+            TalkLater(36s, TASK_GROUP_CRYSTALS, DATA_LADY_JAINA_PROUDMOORE, SAY_JAINA_CRYSTALS);
+            TalkLater(43s, TASK_GROUP_CRYSTALS, DATA_GENN_GREYMANE, SAY_GENN_HOPE_YOU_ARE_RIGHT);
         }
 
         // "Slay Dread Commander Arganoth." Needs GAME_EVENT_ARGANOTH_SLAIN, sent from OnUnitDeath.
@@ -490,6 +574,8 @@ public:
         ScenarioStepEntry const* _currentStep;
         uint32 _checkTimer;
         TaskScheduler _scheduler;
+        uint8 _spiresDestroyed;
+        bool _allianceForcesCharging;
     };
 
     InstanceScript* GetInstanceScript(InstanceMap* map) const override

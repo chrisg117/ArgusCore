@@ -74,6 +74,17 @@ enum BrokenShoreGameEvents
 
 enum BrokenShoreCreatureIds
 {
+    // The Alliance's leaders, who fight alongside players
+    NPC_LADY_JAINA_PROUDMOORE           = 90714,
+    NPC_GENN_GREYMANE                   = 90717,
+
+    // The forces that land with them
+    NPC_KIRIN_TOR_BATTLE_MAGE_1         = 91353,
+    NPC_KIRIN_TOR_BATTLE_MAGE_2         = 97496,
+    NPC_GILNEAN_ROYAL_GUARD             = 97486,
+    NPC_GILNEAN_DRUID                   = 110627,
+    NPC_DARNASSUS_SENTINEL              = 114466,
+
     // Storm the Beach (Alliance)
     NPC_FELSTALKER_DREADHOUND           = 90686,
     NPC_FEL_LORD_KURDUZ                 = 91588,
@@ -134,12 +145,45 @@ enum BrokenShoreGameObjectIds
     GO_ICE_BRIDGE                       = 1460001
 };
 
-// Creatures the instance script keeps track of (ObjectData)
+enum BrokenShoreSpells
+{
+    // Players are given one stack of it by the instance script. On retail it is one of Genn Greymane's
+    // abilities; when he casts it is not known.
+    SPELL_FOR_THE_ALLIANCE              = 185265,
+
+    // The Alliance's forces
+    SPELL_WRATH                         = 171773, // Gilnean Druid
+    SPELL_FROSTFIRE_BOLT                = 199219  // Kirin Tor Battle-Mage
+};
+
+// creature_text groups of the Alliance's leaders. Group 0 is the same for both.
+enum BrokenShoreLeaderTexts
+{
+    SAY_LEADER_IN_A_FIGHT               = 0,
+
+    SAY_JAINA_REINFORCEMENTS            = 1,
+    SAY_JAINA_NOW_OR_NEVER              = 2,
+    SAY_JAINA_CRYSTALS                  = 3,
+    SAY_JAINA_IT_WORKED                 = 4,
+
+    SAY_GENN_JUST_IN_TIME               = 1,
+    SAY_GENN_CHARGE                     = 2,
+    SAY_GENN_HOPE_YOU_ARE_RIGHT         = 3,
+    SAY_GENN_ONE_DOWN                   = 4,
+    SAY_GENN_ONE_MORE                   = 5
+};
+
+// Creatures the instance script keeps track of (ObjectData), and what it can be asked with GetData
 enum BrokenShoreDataTypes
 {
     DATA_KING_VARIAN_WRYNN              = 0,
     DATA_HIGHLORD_TIRION_FORDRING       = 1,
-    DATA_GULDAN                         = 2
+    DATA_GULDAN                         = 2,
+    DATA_LADY_JAINA_PROUDMOORE          = 3,
+    DATA_GENN_GREYMANE                  = 4,
+
+    // Whether the Alliance's forces are to charge the Spires of Woe (1) or to stay where they are (0)
+    DATA_ALLIANCE_FORCES_CHARGING       = 5
 };
 
 // spawn_group_template. Each stage's spawns are one group, spawned when the stage starts.
@@ -156,7 +200,11 @@ enum BrokenShoreSpawnGroups
 
     // The bridges that Jaina makes are groups of their own, because they stay when their stage ends
     SPAWN_GROUP_BRIDGE_TO_THE_HIGHLORD  = 14609,
-    SPAWN_GROUP_BRIDGE_TO_GULDAN        = 14610
+    SPAWN_GROUP_BRIDGE_TO_GULDAN        = 14610,
+
+    // So are the Alliance's leaders and the forces that land with them, who go on from stage to stage
+    SPAWN_GROUP_ALLIANCE_LEADERS        = 14611,
+    SPAWN_GROUP_ALLIANCE_LANDING_FORCE  = 14612
 };
 
 // WorldSafeLocs.db2. The "Start" locations are relative to the faction's ship, not to the map.

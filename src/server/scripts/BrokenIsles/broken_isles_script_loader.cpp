@@ -33,6 +33,7 @@ void AddSC_boss_amalgam_of_souls();
 void AddSC_instance_black_rook_hold();
 
 // Broken Shore scenario
+void AddSC_broken_shore_alliance_forces();
 void AddSC_scenario_broken_shore();
 
 // Orderhalls
@@ -59,6 +60,7 @@ void AddBrokenIslesScripts()
     AddSC_instance_black_rook_hold();
 
     // Broken Shore scenario
+    AddSC_broken_shore_alliance_forces();
     AddSC_scenario_broken_shore();
 
     // Orderhalls
