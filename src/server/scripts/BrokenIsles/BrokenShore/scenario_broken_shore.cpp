@@ -45,6 +45,7 @@ ObjectData const creatureData[] =
     { NPC_GULDAN,                   DATA_GULDAN                   },
     { NPC_LADY_JAINA_PROUDMOORE,    DATA_LADY_JAINA_PROUDMOORE    },
     { NPC_GENN_GREYMANE,            DATA_GENN_GREYMANE            },
+    { NPC_DREAD_COMMANDER_ARGANOTH, DATA_DREAD_COMMANDER_ARGANOTH },
     { 0,                            0                             }  // END
 };
 
@@ -102,7 +103,9 @@ enum BrokenShoreTaskGroups
 {
     TASK_GROUP_BEACH                    = 1, // what the leaders say and do on the beach
     TASK_GROUP_CRYSTALS                 = 2, // what they make of the Anchoring Crystals, which is late once a spire has fallen
-    TASK_GROUP_CRYSTAL_ARROWS           = 3  // the arrows over the Anchoring Crystals, which go when the first of them is destroyed
+    TASK_GROUP_CRYSTAL_ARROWS           = 3, // the arrows over the Anchoring Crystals, which go when the first of them is destroyed
+    TASK_GROUP_COMMANDER                = 4, // how Dread Commander Arganoth arrives
+    TASK_GROUP_COMMANDER_SLAIN          = 5  // what the leaders say when he has fallen, which nothing calls off
 };
 
 // "The Battle for Broken Shore". The scenario itself is attached to the map by the `scenarios` table
@@ -116,7 +119,7 @@ public:
     struct instance_broken_shore_scenario_InstanceMapScript : public InstanceScript
     {
         instance_broken_shore_scenario_InstanceMapScript(InstanceMap* map) : InstanceScript(map), _currentStep(nullptr), _checkTimer(0),
-            _spiresDestroyed(0), _allianceForcesCharging(false)
+            _spiresDestroyed(0), _allianceForcesCharging(false), _commanderArrived(false)
         {
             SetHeaders(DataHeader);
             LoadObjectData(creatureData, nullptr);
@@ -197,6 +200,7 @@ public:
                     break;
                 case NPC_DREAD_COMMANDER_ARGANOTH:
                     SendScenarioEvent(GAME_EVENT_ARGANOTH_SLAIN);
+                    CommanderSlain();
                     break;
                 case NPC_SHIELDED_ANCHOR:
                     SendScenarioEvent(GAME_EVENT_ANCHOR_SHATTERED);
@@ -242,10 +246,15 @@ public:
 
         uint32 GetData(uint32 type) const override
         {
-            if (type == DATA_ALLIANCE_FORCES_CHARGING)
-                return _allianceForcesCharging ? 1 : 0;
-
-            return 0;
+            switch (type)
+            {
+                case DATA_ALLIANCE_FORCES_CHARGING:
+                    return _allianceForcesCharging ? 1 : 0;
+                case DATA_COMMANDER_ARRIVED:
+                    return _commanderArrived ? 1 : 0;
+                default:
+                    return 0;
+            }
         }
 
         void OnGameObjectCreate(GameObject* go) override
@@ -353,7 +362,7 @@ public:
         }
 
         // Has one of the creatures the script keeps track of say a line after a delay
-        void TalkLater(Seconds delay, uint32 taskGroup, uint32 creatureDataType, uint8 textGroup)
+        void TalkLater(Milliseconds delay, uint32 taskGroup, uint32 creatureDataType, uint8 textGroup)
         {
             _scheduler.Schedule(delay, taskGroup, [this, creatureDataType, textGroup](TaskContext /*context*/)
             {
@@ -411,6 +420,16 @@ public:
 
             SendScenarioEvent(GAME_EVENT_SPIRE_OF_WOE_DESTROYED);
             SpireDestroyed();
+        }
+
+        // What the leaders say when Dread Commander Arganoth has fallen, once he has had his last words,
+        // which take him five seconds
+        void CommanderSlain()
+        {
+            TalkLater(6s, TASK_GROUP_COMMANDER_SLAIN, DATA_LADY_JAINA_PROUDMOORE, SAY_JAINA_IS_EVERYONE_ALRIGHT);
+            TalkLater(7500ms, TASK_GROUP_COMMANDER_SLAIN, DATA_GENN_GREYMANE, SAY_GENN_SINGED_BUT_ALIVE);
+            TalkLater(13500ms, TASK_GROUP_COMMANDER_SLAIN, DATA_LADY_JAINA_PROUDMOORE, SAY_JAINA_MOURN_THEM_LATER);
+            TalkLater(18s, TASK_GROUP_COMMANDER_SLAIN, DATA_GENN_GREYMANE, SAY_GENN_AGREED);
         }
 
         void DestroySpire(GameObject* spire)
@@ -509,6 +528,7 @@ public:
                 // His death ends the stage, so only respawning is stopped and his corpse stays
                 case STAGE_DEFEAT_THE_COMMANDER:
                     instance->SetSpawnGroupInactive(SPAWN_GROUP_DEFEAT_THE_COMMANDER);
+                    _scheduler.CancelGroup(TASK_GROUP_COMMANDER);
                     break;
                 case STAGE_DESTROY_THE_PORTAL:
                     instance->SpawnGroupDespawn(SPAWN_GROUP_DESTROY_THE_PORTAL, true);
@@ -578,10 +598,30 @@ public:
         }
 
         // "Slay Dread Commander Arganoth." Needs GAME_EVENT_ARGANOTH_SLAIN, sent from OnUnitDeath.
-        // TODO: his arrival, lines and abilities, and Fel Commander Azgalor for the Horde.
+        // He is heard before he is seen: he is there from the start, unseen, and crashes down on the beach
+        // when he has said his piece, which takes him ten seconds. Genn has an answer to it, and with what
+        // Jaina says next he can be fought and the Alliance's forces go for him. That is how a video of the
+        // retail scenario has it; how long the pauses are is a guess.
+        // TODO: Fel Commander Azgalor for the Horde.
         void StartDefeatTheCommander()
         {
             instance->SpawnGroupSpawn(SPAWN_GROUP_DEFEAT_THE_COMMANDER, true);
+
+            TalkLater(2s, TASK_GROUP_COMMANDER, DATA_DREAD_COMMANDER_ARGANOTH, SAY_ARGANOTH_ARRIVES);
+            _scheduler.Schedule(12500ms, TASK_GROUP_COMMANDER, [this](TaskContext /*context*/)
+            {
+                if (Creature* arganoth = GetCreature(DATA_DREAD_COMMANDER_ARGANOTH))
+                    arganoth->AI()->DoAction(ACTION_ARGANOTH_CRASH_DOWN);
+            });
+            TalkLater(15500ms, TASK_GROUP_COMMANDER, DATA_GENN_GREYMANE, SAY_GENN_ENOUGH_OF_YOUR_CHATTER);
+            TalkLater(19s, TASK_GROUP_COMMANDER, DATA_LADY_JAINA_PROUDMOORE, SAY_JAINA_FOCUS_ON_THE_COMMANDER);
+            _scheduler.Schedule(19s, TASK_GROUP_COMMANDER, [this](TaskContext /*context*/)
+            {
+                _commanderArrived = true;
+                _allianceForcesCharging = true;
+                if (Creature* arganoth = GetCreature(DATA_DREAD_COMMANDER_ARGANOTH))
+                    arganoth->AI()->DoAction(ACTION_ARGANOTH_FIGHT);
+            });
         }
 
         // "Locate King Varian Wrynn." Needs GAME_EVENT_VARIAN_FOUND, sent when a player reaches him.
@@ -703,6 +743,7 @@ public:
         TaskScheduler _scheduler;
         uint8 _spiresDestroyed;
         bool _allianceForcesCharging;
+        bool _commanderArrived;
         GuidVector _spireGUIDs;
         std::unordered_set<ObjectGuid::LowType> _fallenSpires;
     };

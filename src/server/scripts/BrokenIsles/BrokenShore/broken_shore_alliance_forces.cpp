@@ -80,7 +80,7 @@ enum BrokenShoreFighterPoints
 // 114466 - Darnassus Sentinel
 // The Alliance's forces on the beach. While the instance script has them charge they go for a Spire of Woe
 // and fight the demons around it, and move on to the next when it has fallen. The Anchoring Crystals that
-// hold it are left to players.
+// hold it are left to players. When the demons' commander has come they go for him.
 // TODO: their weapons and abilities, and what they do in the stages after the beach.
 struct npc_broken_shore_alliance_soldier : public ScriptedAI
 {
@@ -123,6 +123,13 @@ struct npc_broken_shore_alliance_soldier : public ScriptedAI
         if (!IsCharging())
             return;
 
+        // Once the demons' commander is on the beach they all go for him
+        if (Unit* commander = FindCommander())
+        {
+            TakeOn(commander);
+            return;
+        }
+
         GameObject* spire = FindNextSpire();
         if (Unit* demon = FindNearestDemon(spire))
             TakeOn(demon);
@@ -155,6 +162,14 @@ private:
     {
         InstanceScript const* instance = me->GetInstanceScript();
         return instance && instance->GetData(DATA_ALLIANCE_FORCES_CHARGING);
+    }
+
+    // Dread Commander Arganoth, once he can be fought
+    Unit* FindCommander() const
+    {
+        InstanceScript* instance = me->GetInstanceScript();
+        Creature* commander = instance ? instance->GetCreature(DATA_DREAD_COMMANDER_ARGANOTH) : nullptr;
+        return commander && commander->IsAlive() && me->IsValidAttackTarget(commander) ? commander : nullptr;
     }
 
     // The Spire of Woe to go for: of those that still stand, the one nearest to where players land, so

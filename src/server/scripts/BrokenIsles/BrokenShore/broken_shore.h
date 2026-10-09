@@ -99,6 +99,7 @@ enum BrokenShoreCreatureIds
 
     // Defeat the Commander (Alliance)
     NPC_DREAD_COMMANDER_ARGANOTH        = 90705,
+    NPC_FELBLAZE_INFERNAL               = 93060, // called down by him
 
     // Find Varian (Alliance)
     NPC_KING_VARIAN_WRYNN               = 90713,
@@ -165,6 +166,10 @@ enum BrokenShoreSpells
     // spell they are is not known.
     SPELL_FEL_BEAM                      = 192664,
 
+    // Dread Commander Arganoth
+    SPELL_SUMMON_FELBLAZE_INFERNAL      = 183956,
+    SPELL_FEL_CRACK                     = 200465,
+
     // The Alliance's forces
     SPELL_WRATH                         = 171773, // Gilnean Druid
     SPELL_FROSTFIRE_BOLT                = 199219  // Kirin Tor Battle-Mage
@@ -186,12 +191,36 @@ enum BrokenShoreLeaderTexts
     SAY_JAINA_NOW_OR_NEVER              = 2,
     SAY_JAINA_CRYSTALS                  = 3,
     SAY_JAINA_IT_WORKED                 = 4,
+    SAY_JAINA_FOCUS_ON_THE_COMMANDER    = 5,
+    SAY_JAINA_INFERNALS                 = 6,
+    SAY_JAINA_IS_EVERYONE_ALRIGHT       = 7,
+    SAY_JAINA_MOURN_THEM_LATER          = 8,
 
     SAY_GENN_JUST_IN_TIME               = 1,
     SAY_GENN_CHARGE                     = 2,
     SAY_GENN_HOPE_YOU_ARE_RIGHT         = 3,
     SAY_GENN_ONE_DOWN                   = 4,
-    SAY_GENN_ONE_MORE                   = 5
+    SAY_GENN_ONE_MORE                   = 5,
+    SAY_GENN_ENOUGH_OF_YOUR_CHATTER     = 6,
+    SAY_GENN_SINGED_BUT_ALIVE           = 7,
+    SAY_GENN_AGREED                     = 8
+};
+
+// creature_text groups of Dread Commander Arganoth
+enum BrokenShoreArganothTexts
+{
+    SAY_ARGANOTH_ARRIVES                = 0,
+    SAY_ARGANOTH_INFERNO                = 1,
+    SAY_ARGANOTH_IN_THE_FIGHT           = 2,
+    SAY_ARGANOTH_LOW_HEALTH             = 3,
+    SAY_ARGANOTH_DEATH                  = 4
+};
+
+// What the instance script has Dread Commander Arganoth do
+enum BrokenShoreActions
+{
+    ACTION_ARGANOTH_CRASH_DOWN          = 1,
+    ACTION_ARGANOTH_FIGHT               = 2
 };
 
 // Creatures the instance script keeps track of (ObjectData), and what it can be asked with GetData
@@ -202,9 +231,13 @@ enum BrokenShoreDataTypes
     DATA_GULDAN                         = 2,
     DATA_LADY_JAINA_PROUDMOORE          = 3,
     DATA_GENN_GREYMANE                  = 4,
+    DATA_DREAD_COMMANDER_ARGANOTH       = 5,
 
-    // Whether the Alliance's forces are to charge the Spires of Woe (1) or to stay where they are (0)
-    DATA_ALLIANCE_FORCES_CHARGING       = 5
+    // Whether the Alliance's forces are to charge (1) or to stay where they are (0)
+    DATA_ALLIANCE_FORCES_CHARGING       = 6,
+
+    // Whether Dread Commander Arganoth has come down on the beach and can be fought (1) or not yet (0)
+    DATA_COMMANDER_ARRIVED              = 7
 };
 
 // spawn_group_template. Each stage's spawns are one group, spawned when the stage starts.
