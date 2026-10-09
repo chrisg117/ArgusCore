@@ -706,8 +706,9 @@ public:
         // afterwards, because the next stage opens with him.
         // The cutscene, what it asks for and where it leaves players are Blizzard's. That it only counts
         // afterwards, what is said outside the cutscene, and that Fel Meteors come down on the way from the
-        // hilltop, is from a video of the retail scenario; when the cutscene starts is a guess. On retail the
-        // cutscene cannot be skipped and the meteors start after it. Here it can be, so they start with it.
+        // hilltop, is from a video of the retail scenario; when the cutscene starts is a guess. The player in
+        // that video skips the cutscene, as every other of the scenario. When the meteors start on retail is
+        // not known for certain; here it is with the cutscene, so that a player who skips it finds them.
         // TODO: Genn and Jaina leading the way over the hill (they are put on the hilltop while the cutscene
         // plays, and at Varian's side when he is found), the forces fighting at Varian's side and the
         // Horde's "Find The Others".

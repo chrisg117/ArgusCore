@@ -3,8 +3,8 @@
 --
 -- The cutscene is scene 1356, which the spell "Stage 2 Scene" (218626) plays. It asks for a look at Varian's
 -- forces and for the player to be taken to the hilltop it looks out from, which its script sees to.
--- Blizzard has it so that it cannot be skipped (flag 0x04); here it can be, and a player who skips it is
--- taken to the hilltop at once.
+-- Its flags, which were sniffed, say that it cannot be skipped (0x04), but a video of the retail scenario
+-- shows a player skip it, so that flag is taken off. A player who skips it is taken to the hilltop at once.
 UPDATE `scene_template` SET `Flags`=`Flags`&~0x04, `ScriptName`='scene_broken_shore_alliance_stage_2' WHERE `SceneId`=1356;
 
 -- Text, emote and sound are those of each line's broadcast text. Whose a line is, is not in the data: it
