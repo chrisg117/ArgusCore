@@ -16,19 +16,26 @@
  */
 
 #include "ScriptMgr.h"
+#include "CellImpl.h"
+#include "Containers.h"
 #include "DB2Stores.h"
 #include "GameEventSender.h"
 #include "GameObject.h"
+#include "GridNotifiersImpl.h"
 #include "InstanceScenario.h"
 #include "InstanceScript.h"
 #include "Log.h"
 #include "Map.h"
 #include "MotionMaster.h"
+#include "ObjectAccessor.h"
 #include "PassiveAI.h"
 #include "Player.h"
+#include "Random.h"
 #include "ScriptedCreature.h"
 #include "ScriptedGossip.h"
+#include "SpellScript.h"
 #include "TaskScheduler.h"
+#include "TemporarySummon.h"
 #include "broken_shore.h"
 
 ObjectData const creatureData[] =
@@ -69,6 +76,23 @@ static constexpr Milliseconds CrystalCirclingTime = 12h;
 // How long the arrows over the Anchoring Crystals stay if none of the crystals is destroyed before that. A
 // video of the retail scenario shows them from when Jaina speaks of the crystals, for about this long.
 static constexpr Seconds CrystalArrowTime = 60s;
+
+// A Spire of Woe fires a beam at the ground for this long, with a pause of this length between two beams;
+// both are guesses from a video of the retail scenario. A beam's target is there a moment before the beam,
+// because a client shows nothing at a creature it does not know yet.
+static constexpr Milliseconds SpireBeamTime = 3s;
+static constexpr Milliseconds SpireBeamPauseMin = 6s;
+static constexpr Milliseconds SpireBeamPauseMax = 10s;
+static constexpr Milliseconds SpireBeamAimTime = 500ms;
+
+// How far from its spire a beam comes down, and how wide the arc towards the landing is in which it does
+// when it has no one to fire at
+static constexpr float SpireBeamDistanceMin = 12.0f;
+static constexpr float SpireBeamDistanceMax = 40.0f;
+static constexpr float SpireBeamArc = 2.0f * float(M_PI) / 3.0f;
+
+// How far the creature at the top of a Spire of Woe is from the spire at most
+static constexpr float SpireTopDistance = 40.0f;
 
 // Where players are taken when the Black City has been razed: the edge of the city, facing the gap to the crevasse
 Position const BlackCityRazedPosition = { 1410.2959f, 2162.2405f, 21.252392f, 4.92f };
@@ -744,9 +768,134 @@ private:
     float _radius;
 };
 
+// 97624 - Spire of Woe
+// The creature at the top of a Spire of Woe, which itself is a gameobject. It fires the spire's beam at the
+// ground under one of those who storm the beach, or towards the landing when none of them is near.
+// TODO: on retail the end of a beam wanders about on the ground and leaves fire there, which burns those
+// who stand in it; here it stays where it is and is for show.
+struct npc_broken_shore_spire_of_woe : public NullCreatureAI
+{
+    npc_broken_shore_spire_of_woe(Creature* creature) : NullCreatureAI(creature) { }
+
+    void JustAppeared() override
+    {
+        _scheduler.Schedule(randtime(SpireBeamPauseMin, SpireBeamPauseMax), [this](TaskContext context)
+        {
+            GameObject const* spire = GetSpire();
+            if (spire && spire->GetGoState() == GO_STATE_READY)
+                Fire(spire);
+
+            context.Repeat(SpireBeamAimTime + SpireBeamTime + randtime(SpireBeamPauseMin, SpireBeamPauseMax));
+        });
+
+        // A spire that has fallen fires no more
+        _scheduler.Schedule(500ms, [this](TaskContext context)
+        {
+            GameObject const* spire = GetSpire();
+            if (!spire || spire->GetGoState() == GO_STATE_READY)
+            {
+                context.Repeat();
+                return;
+            }
+
+            if (Creature* target = ObjectAccessor::GetCreature(*me, _targetGUID))
+                target->DespawnOrUnsummon();
+
+            me->DespawnOrUnsummon();
+        });
+    }
+
+    void UpdateAI(uint32 diff) override
+    {
+        _scheduler.Update(diff);
+    }
+
+private:
+    GameObject* GetSpire() const
+    {
+        return me->FindNearestGameObject(GO_SPIRE_OF_WOE, SpireTopDistance);
+    }
+
+    void Fire(GameObject const* spire)
+    {
+        TempSummon* target = me->SummonCreature(NPC_SPIRE_OF_WOE_BEAM_TARGET, GetGround(spire), TEMPSUMMON_TIMED_DESPAWN, SpireBeamAimTime + SpireBeamTime);
+        if (!target)
+            return;
+
+        _targetGUID = target->GetGUID();
+        _scheduler.Schedule(SpireBeamAimTime, [this](TaskContext /*context*/)
+        {
+            Creature* target = ObjectAccessor::GetCreature(*me, _targetGUID);
+            if (!target)
+                return;
+
+            target->SendPlaySpellVisualKit(SPELL_VISUAL_KIT_SPIRE_OF_WOE_FIRE, 0, uint32(SpireBeamTime.count()));
+            DoCastAOE(SPELL_FEL_BEAM);
+        });
+    }
+
+    // Where the next beam comes down
+    Position GetGround(GameObject const* spire) const
+    {
+        Map::PlayerList const& players = me->GetMap()->GetPlayers();
+        if (!players.empty())
+        {
+            // Those who storm the beach are the players and whoever is on their side
+            std::vector<Unit*> units;
+            Trinity::AnyFriendlyUnitInObjectRangeCheck check(me, players.begin()->GetSource(), SpireTopDistance + SpireBeamDistanceMax);
+            Trinity::UnitListSearcher<Trinity::AnyFriendlyUnitInObjectRangeCheck> searcher(me, units, check);
+            Cell::VisitAllObjects(me, searcher, SpireTopDistance + SpireBeamDistanceMax);
+            std::erase_if(units, [spire](Unit const* unit)
+            {
+                float distance = spire->GetExactDist2d(unit);
+                return distance < SpireBeamDistanceMin || distance > SpireBeamDistanceMax;
+            });
+
+            if (!units.empty())
+                return Trinity::Containers::SelectRandomContainerElement(units)->GetPosition();
+        }
+
+        WorldSafeLocsEntry const* landing = sWorldSafeLocsStore.AssertEntry(WORLD_SAFE_LOC_ALLIANCE_BEACH);
+        float angle = spire->GetAbsoluteAngle(landing->Loc.X, landing->Loc.Y) + frand(-SpireBeamArc / 2.0f, SpireBeamArc / 2.0f);
+        float distance = frand(SpireBeamDistanceMin, SpireBeamDistanceMax);
+        float x = spire->GetPositionX() + distance * std::cos(angle);
+        float y = spire->GetPositionY() + distance * std::sin(angle);
+        return { x, y, me->GetMapHeight(x, y, me->GetPositionZ()) };
+    }
+
+    TaskScheduler _scheduler;
+    ObjectGuid _targetGUID;
+};
+
+// 192664 - Before We're Overrun: Fel Beam
+// The spell takes every creature around its caster that its conditions let through. A Spire of Woe only
+// fires at the target it has summoned, and not at that of the next spire.
+class spell_broken_shore_fel_beam : public SpellScript
+{
+    void FilterTargets(std::list<WorldObject*>& targets)
+    {
+        Unit const* caster = GetCaster();
+        if (caster->GetEntry() != NPC_SPIRE_OF_WOE)
+            return;
+
+        targets.remove_if([caster](WorldObject const* target)
+        {
+            Creature const* creature = target->ToCreature();
+            return !creature || !creature->IsSummon() || creature->ToTempSummon()->GetSummonerGUID() != caster->GetGUID();
+        });
+    }
+
+    void Register() override
+    {
+        OnObjectAreaTargetSelect += SpellObjectAreaTargetSelectFn(spell_broken_shore_fel_beam::FilterTargets, EFFECT_0, TARGET_UNIT_SRC_AREA_ENTRY);
+    }
+};
+
 void AddSC_scenario_broken_shore()
 {
     new instance_broken_shore_scenario();
     RegisterCreatureAI(npc_captain_angelica_broken_shore);
     RegisterBrokenShoreCreatureAI(npc_broken_shore_anchoring_crystal);
+    RegisterBrokenShoreCreatureAI(npc_broken_shore_spire_of_woe);
+    RegisterSpellScript(spell_broken_shore_fel_beam);
 }

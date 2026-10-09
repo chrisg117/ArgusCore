@@ -89,6 +89,8 @@ enum BrokenShoreCreatureIds
     NPC_FELSTALKER_DREADHOUND           = 90686,
     NPC_FEL_LORD_KURDUZ                 = 91588,
     NPC_ANCHORING_CRYSTAL               = 91704, // circles a Spire of Woe; three of them hold it in place
+    NPC_SPIRE_OF_WOE                    = 97624, // at the top of a Spire of Woe, where its beam comes from
+    NPC_SPIRE_OF_WOE_BEAM_TARGET        = 97629, // of the same name; on the ground, where a beam comes down
     NPC_FEL_LORD_RAKKAN                 = 109586,
     NPC_FEL_LORD_ZARDAK                 = 109587,
     NPC_FELGUARD_LEGIONNAIRE_1          = 109591,
@@ -158,9 +160,21 @@ enum BrokenShoreSpells
     // the retail scenario shows such arrows over the Anchoring Crystals; which spell they are is not known.
     SPELL_GREEN_CAT_MARK_STATE          = 151205,
 
+    // "Before We're Overrun: Fel Beam", named after a quest of Mardum, where Spires of Woe stand too. A
+    // spire channels it at its target on the ground. A video of the retail scenario shows such beams; which
+    // spell they are is not known.
+    SPELL_FEL_BEAM                      = 192664,
+
     // The Alliance's forces
     SPELL_WRATH                         = 171773, // Gilnean Druid
     SPELL_FROSTFIRE_BOLT                = 199219  // Kirin Tor Battle-Mage
+};
+
+enum BrokenShoreSpellVisualKits
+{
+    // The burst of fel fire on the ground that the aura "Before We're Overrun: Spire of Woe - Area Trigger"
+    // (192604) shows on its bearer
+    SPELL_VISUAL_KIT_SPIRE_OF_WOE_FIRE  = 59267
 };
 
 // creature_text groups of the Alliance's leaders. Group 0 is the same for both.
