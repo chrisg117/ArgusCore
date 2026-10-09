@@ -106,6 +106,8 @@ enum BrokenShoreCreatureIds
     NPC_FEL_METEOR_STALKER              = 54020, // "General Purpose Bunny JMF (Look 2 - Flying, Huge AOI)"
 
     // Destroy the Portal (Alliance)
+    NPC_EREDAR_CHAOS_GUARD              = 90525, // one at each Shielded Anchor, which it shields
+    NPC_MOARG_PAINBRINGER_PORTAL        = 92564, // comes out of the portal
     NPC_SHIELDED_ANCHOR                 = 101667,
 
     // Raze the Black City (Alliance)
@@ -154,8 +156,8 @@ enum BrokenShoreGameObjectIds
 
 enum BrokenShoreSpells
 {
-    // Players are given one stack of it by the instance script. On retail it is one of Genn Greymane's
-    // abilities; when he casts it is not known.
+    // Players are given it by the instance script, a stack more as the scenario goes on. On retail it is
+    // one of Genn Greymane's abilities; that he is who casts it there is not known.
     SPELL_FOR_THE_ALLIANCE              = 185265,
 
     // "Cosmetic - Green Cat Mark State (5.00)": a large green arrow that points down at a unit. A video of
@@ -187,6 +189,12 @@ enum BrokenShoreSpells
     // when its other spells were, and they do what a video of the retail scenario shows. Who casts them
     // there is not known either; here it is a stalker in the air that cannot be seen.
     SPELL_FEL_METEOR                    = 199036,
+
+    // Destroy the Portal. An Eredar Chaos Guard channels it on its Shielded Anchor, which nothing harms
+    // while it lasts. The spell was made with the scenario's others; that the guards are who casts it,
+    // and that they fight once they are attacked, is from videos of the retail scenario.
+    SPELL_CHAOS_SHIELD                  = 181545,
+    SPELL_LEGION_INVASION_SPAWN         = 180433, // the Mo'arg Painbringer, as it appears in the portal; picked by eye against a video
 
     // The Alliance's forces
     SPELL_WRATH                         = 171773, // Gilnean Druid
@@ -220,6 +228,8 @@ enum BrokenShoreLeaderTexts
     SAY_JAINA_IS_EVERYONE_ALRIGHT       = 7,
     SAY_JAINA_MOURN_THEM_LATER          = 8,
     SAY_JAINA_VARIAN                    = 9,
+    SAY_JAINA_CRYSTALS_ARE_THE_KEY      = 10,
+    SAY_JAINA_FOCUS_ON_THE_CRYSTALS     = 11,
 
     SAY_GENN_JUST_IN_TIME               = 1,
     SAY_GENN_CHARGE                     = 2,
@@ -247,7 +257,9 @@ enum BrokenShoreArganothTexts
 // creature_text groups of King Varian Wrynn
 enum BrokenShoreVarianTexts
 {
-    SAY_VARIAN_GOOD_TO_SEE_YOU_SAFE     = 0
+    SAY_VARIAN_GOOD_TO_SEE_YOU_SAFE     = 0,
+    SAY_VARIAN_TAKE_DOWN_THIS_PORTAL    = 1,
+    SAY_VARIAN_FORM_UP                  = 2
 };
 
 // What the instance script has Dread Commander Arganoth do

@@ -92,6 +92,27 @@ static constexpr int32 FelMeteorDamagePct = 200;
 // The map's navigation mesh gives a long way a part at a time; no more parts than this are asked for
 static constexpr uint8 WayToVarianParts = 8;
 
+// How far from an Eredar Chaos Guard the Shielded Anchor it shields is at most. They are spawned four yards
+// apart, and the next anchor is more than seven yards away.
+static constexpr float ChaosGuardAnchorDistance = 6.0f;
+
+// How long into "Destroy the Portal" players get their second stack of "For the Alliance!": when the last
+// of the lines has been said
+static constexpr Seconds ForTheAllianceAtThePortalDelay = 24s;
+
+// How many of the Black City's 300 points earn the fourth stack of "For the Alliance!": half of them
+static constexpr uint32 ForTheAllianceBlackCityPoints = 150;
+
+// How near the portal a player has to be for the Mo'arg Painbringer to appear in it, which is a guess. The
+// anchors are up to 55 yards from the portal.
+static constexpr float PainbringerAppearDistance = 70.0f;
+
+// How long the Mo'arg Painbringer takes to appear: "Legion Invasion Spawn" stuns it for two seconds
+static constexpr Milliseconds PainbringerAppearTime = 2500ms;
+
+// How far around King Varian Wrynn the Mo'arg Painbringer is looked for
+static constexpr float PainbringerSearchDistance = 250.0f;
+
 // The same for Highlord Tirion Fordring, who hangs about 27 yards out from the ledge players arrive on
 static constexpr float TirionFoundDistance = 40.0f;
 
@@ -135,6 +156,10 @@ static constexpr float SpireBeamArc = 2.0f * float(M_PI) / 3.0f;
 // How far the creature at the top of a Spire of Woe is from the spire at most
 static constexpr float SpireTopDistance = 40.0f;
 
+// Where the Mo'arg Painbringer of "Destroy the Portal" goes when it has come out of the portal: in front of
+// King Varian Wrynn, which is where it was sniffed
+Position const PainbringerFightPosition = { 1137.1f, 2469.0f, 35.2f, 2.22f };
+
 // Where players are taken when the Black City has been razed: the edge of the city, facing the gap to the crevasse
 Position const BlackCityRazedPosition = { 1410.2959f, 2162.2405f, 21.252392f, 4.92f };
 
@@ -147,7 +172,8 @@ enum BrokenShoreTaskGroups
     TASK_GROUP_COMMANDER                = 4, // how Dread Commander Arganoth arrives
     TASK_GROUP_COMMANDER_SLAIN          = 5, // what the leaders say when he has fallen, which nothing calls off
     TASK_GROUP_FIND_VARIAN              = 6, // the way over the hill to King Varian Wrynn, its cutscene and its Fel Meteors
-    TASK_GROUP_VARIAN_FOUND             = 7  // what is said when he is found, which nothing calls off
+    TASK_GROUP_VARIAN_FOUND             = 7, // what is said when he is found, which nothing calls off
+    TASK_GROUP_DESTROY_THE_PORTAL       = 8  // what is said at the portal, and the Mo'arg Painbringer setting off
 };
 
 // "The Battle for Broken Shore". The scenario itself is attached to the map by the `scenarios` table
@@ -161,7 +187,8 @@ public:
     struct instance_broken_shore_scenario_InstanceMapScript : public InstanceScript
     {
         instance_broken_shore_scenario_InstanceMapScript(InstanceMap* map) : InstanceScript(map), _currentStep(nullptr), _checkTimer(0),
-            _spiresDestroyed(0), _allianceForcesCharging(false), _commanderArrived(false), _varianCanBeFound(false)
+            _spiresDestroyed(0), _forTheAllianceStacks(1), _blackCityPoints(0), _allianceForcesCharging(false), _commanderArrived(false),
+            _varianCanBeFound(false)
         {
             SetHeaders(DataHeader);
             LoadObjectData(creatureData, nullptr);
@@ -253,18 +280,21 @@ public:
                 case NPC_FIERY_TRICKSTER:
                 case NPC_SHADOWFLAME_IMP:
                     SendScenarioEvent(GAME_EVENT_BLACK_CITY_1);
+                    AddBlackCityPoints(1);
                     break;
                 case NPC_FELGUARD_INVADER:
                 case NPC_LIVING_FELBLAZE:
                 case NPC_BURNING_TERRORHOUND:
                 case NPC_WRATHGUARD_DREADBLADE:
                     SendScenarioEvent(GAME_EVENT_BLACK_CITY_2);
+                    AddBlackCityPoints(2);
                     break;
                 case NPC_BURNING_SENTRY:
                 case NPC_SOULBOUND_DESTRUCTOR:
                 case NPC_DARK_WORSHIPPER:
                 case NPC_SHADOWSWORN_HARBINGER:
                     SendScenarioEvent(GAME_EVENT_BLACK_CITY_3);
+                    AddBlackCityPoints(5);
                     break;
                 case NPC_INFERNAL_SIEGEBREAKER:
                 case NPC_MOTHER_VIRILA:
@@ -274,6 +304,7 @@ public:
                 case NPC_FEL_LORD_RAKAZ:
                 case NPC_MALIFICUS:
                     SendScenarioEvent(GAME_EVENT_BLACK_CITY_4);
+                    AddBlackCityPoints(10);
                     break;
                 case NPC_KROSUS:
                     SendScenarioEvent(GAME_EVENT_KROSUS_SLAIN);
@@ -401,15 +432,40 @@ public:
         }
 
         // "For the Alliance!" is given at the start of every stage from the beach on to players who do not
-        // have it: one stack, which lasts an hour and is lost on death. The spell could stack, and on retail
-        // someone casts it; a video of the retail scenario shows a single stack, and not who that is.
+        // have it, or have fewer stacks than the scenario has got to. It lasts an hour and is lost on death.
+        // Videos of the retail scenario show one stack on the beach and five at the end. On retail someone
+        // casts it; they do not show who.
         void GiveForTheAlliance()
         {
-            instance->DoOnPlayers([](Player* player)
+            instance->DoOnPlayers([this](Player* player)
             {
-                if (player->IsAlive() && !player->HasAura(SPELL_FOR_THE_ALLIANCE))
-                    player->AddAura(SPELL_FOR_THE_ALLIANCE, player);
+                if (!player->IsAlive())
+                    return;
+
+                Aura* aura = player->GetAura(SPELL_FOR_THE_ALLIANCE);
+                if (!aura)
+                    aura = player->AddAura(SPELL_FOR_THE_ALLIANCE, player);
+
+                if (aura && aura->GetStackAmount() < _forTheAllianceStacks)
+                    aura->SetStackAmount(_forTheAllianceStacks);
             });
+        }
+
+        // The stacks of "For the Alliance!" the scenario has got to, as videos of the retail scenario show
+        // them: a second when the lines at the portal have been said, a third when the Black City is
+        // reached, a fourth halfway through it and a fifth when Krosus comes.
+        void RaiseForTheAlliance(uint8 stacks)
+        {
+            _forTheAllianceStacks = std::max(_forTheAllianceStacks, stacks);
+            GiveForTheAlliance();
+        }
+
+        // Keeps count of the Black City's points, which the scenario's criteria count for themselves
+        void AddBlackCityPoints(uint32 points)
+        {
+            _blackCityPoints += points;
+            if (_blackCityPoints >= ForTheAllianceBlackCityPoints && _blackCityPoints - points < ForTheAllianceBlackCityPoints)
+                RaiseForTheAlliance(4);
         }
 
         // Has one of the creatures the script keeps track of say a line after a delay
@@ -608,6 +664,7 @@ public:
                     break;
                 case STAGE_DESTROY_THE_PORTAL:
                     instance->SpawnGroupDespawn(SPAWN_GROUP_DESTROY_THE_PORTAL, true);
+                    _scheduler.CancelGroup(TASK_GROUP_DESTROY_THE_PORTAL);
                     break;
                 case STAGE_RAZE_THE_BLACK_CITY:
                     instance->SpawnGroupDespawn(SPAWN_GROUP_RAZE_THE_BLACK_CITY, true);
@@ -942,7 +999,13 @@ public:
 
         // "Destroy the demon portal to stop reinforcements." Needs 4 GAME_EVENT_ANCHOR_SHATTERED,
         // sent from OnUnitDeath.
-        // TODO: the portal itself, the shield an anchor has until its guard dies, and Varian's forces.
+        // Each Shielded Anchor has an Eredar Chaos Guard that shields it, which the guard's script sees to.
+        // A Mo'arg Painbringer appears in the portal when players come near and makes for Varian. That it
+        // appears there and comes forth is how a video of the retail scenario has it; what makes it appear
+        // is a guess. The lines are the next four of the scenario's; that the first and third
+        // are Varian's, and when they are said, is a guess.
+        // TODO: the portal itself, how the Mo'arg Painbringer appears in it and that another follows when it
+        // has died, and Varian's forces.
         void StartDestroyThePortal()
         {
             instance->SpawnGroupSpawn(SPAWN_GROUP_DESTROY_THE_PORTAL, true);
@@ -950,6 +1013,64 @@ public:
             // Players who release from here on go to the graveyard at Varian's camp. Until he was found it
             // was still the one on the beach: his camp is where the way under the Fel Meteors leads.
             SetEntranceLocation(WORLD_SAFE_LOC_ALLIANCE_PORTAL);
+
+            // By then Varian has greeted Jaina and Genn
+            TalkLater(8s, TASK_GROUP_DESTROY_THE_PORTAL, DATA_KING_VARIAN_WRYNN, SAY_VARIAN_TAKE_DOWN_THIS_PORTAL);
+            TalkLater(10500ms, TASK_GROUP_DESTROY_THE_PORTAL, DATA_LADY_JAINA_PROUDMOORE, SAY_JAINA_CRYSTALS_ARE_THE_KEY);
+            TalkLater(15500ms, TASK_GROUP_DESTROY_THE_PORTAL, DATA_KING_VARIAN_WRYNN, SAY_VARIAN_FORM_UP);
+            TalkLater(22s, TASK_GROUP_DESTROY_THE_PORTAL, DATA_LADY_JAINA_PROUDMOORE, SAY_JAINA_FOCUS_ON_THE_CRYSTALS);
+
+            _scheduler.Schedule(ForTheAllianceAtThePortalDelay, TASK_GROUP_DESTROY_THE_PORTAL, [this](TaskContext /*context*/)
+            {
+                RaiseForTheAlliance(2);
+            });
+
+            _scheduler.Schedule(0s, TASK_GROUP_DESTROY_THE_PORTAL, [this](TaskContext context)
+            {
+                if (!UpdatePainbringer())
+                    context.Repeat(1s);
+            });
+        }
+
+        // The Mo'arg Painbringer is spawned at the portal and is not seen until a player is near it. Then it
+        // appears, runs to where Varian is and stays there. Returns whether it has appeared.
+        bool UpdatePainbringer()
+        {
+            Creature* varian = GetCreature(DATA_KING_VARIAN_WRYNN);
+            if (!varian)
+                return false;
+
+            Creature* painbringer = varian->FindNearestCreature(NPC_MOARG_PAINBRINGER_PORTAL, PainbringerSearchDistance);
+            if (!painbringer)
+                return false;
+
+            bool playerNear = false;
+            for (MapReference const& ref : instance->GetPlayers())
+                if (Player const* player = ref.GetSource())
+                    if (player->IsAlive() && painbringer->IsWithinDist(player, PainbringerAppearDistance))
+                        playerNear = true;
+
+            if (!playerNear)
+            {
+                painbringer->SetVisible(false);
+                return false;
+            }
+
+            painbringer->SetVisible(true);
+            painbringer->CastSpell(painbringer, SPELL_LEGION_INVASION_SPAWN, true);
+
+            ObjectGuid guid = painbringer->GetGUID();
+            _scheduler.Schedule(PainbringerAppearTime, TASK_GROUP_DESTROY_THE_PORTAL, [this, guid](TaskContext /*context*/)
+            {
+                Creature* painbringer = instance->GetCreature(guid);
+                if (!painbringer || !painbringer->IsAlive() || painbringer->IsInCombat())
+                    return;
+
+                painbringer->SetWalk(false);
+                painbringer->SetHomePosition(PainbringerFightPosition);
+                painbringer->GetMotionMaster()->MovePoint(0, PainbringerFightPosition);
+            });
+            return true;
         }
 
         // "Assault the demon city." A progress bar: 300 points from GAME_EVENT_BLACK_CITY_1 to _4,
@@ -960,6 +1081,11 @@ public:
         void StartRazeTheBlackCity()
         {
             instance->SpawnGroupSpawn(SPAWN_GROUP_RAZE_THE_BLACK_CITY, true);
+
+            _blackCityPoints = 0;
+
+            // TODO: the third stack comes somewhat into the stage, not as it starts; when is not settled
+            RaiseForTheAlliance(3);
 
             // Players who release from here on go to the graveyard at the edge of the city
             SetEntranceLocation(WORLD_SAFE_LOC_ALLIANCE_CITY);
@@ -997,6 +1123,7 @@ public:
         {
             instance->SpawnGroupDespawn(SPAWN_GROUP_THE_HIGHLORD, true);
             instance->SpawnGroupSpawn(SPAWN_GROUP_KROSUS, true);
+            RaiseForTheAlliance(5);
         }
 
         // "Stop Gul'dan from summoning the Legion." Needs GAME_EVENT_GULDAN_CONFRONTED, sent from
@@ -1045,6 +1172,8 @@ public:
         uint32 _checkTimer;
         TaskScheduler _scheduler;
         uint8 _spiresDestroyed;
+        uint8 _forTheAllianceStacks;
+        uint32 _blackCityPoints;
         bool _allianceForcesCharging;
         bool _commanderArrived;
         bool _varianCanBeFound;
@@ -1238,6 +1367,46 @@ class spell_broken_shore_fel_beam : public SpellScript
     }
 };
 
+// 90525 - Eredar Chaos Guard
+// Stands at a Shielded Anchor and channels "Chaos Shield" on it, which nothing harms meanwhile. Once it is
+// in combat it drops the channel and fights, and takes the channel up again if it gets out of combat.
+struct npc_broken_shore_eredar_chaos_guard : public ScriptedAI
+{
+    npc_broken_shore_eredar_chaos_guard(Creature* creature) : ScriptedAI(creature), _shieldTimer(0) { }
+
+    void JustEngagedWith(Unit* /*who*/) override
+    {
+        me->InterruptNonMeleeSpells(false);
+    }
+
+    void UpdateAI(uint32 diff) override
+    {
+        if (UpdateVictim())
+            return;
+
+        if (_shieldTimer > diff)
+            _shieldTimer -= diff;
+        else
+        {
+            _shieldTimer = 1 * IN_MILLISECONDS;
+            ShieldAnchor();
+        }
+    }
+
+private:
+    void ShieldAnchor()
+    {
+        if (me->HasUnitState(UNIT_STATE_CASTING))
+            return;
+
+        Creature* anchor = me->FindNearestCreature(NPC_SHIELDED_ANCHOR, ChaosGuardAnchorDistance);
+        if (anchor && !anchor->HasAura(SPELL_CHAOS_SHIELD))
+            DoCast(anchor, SPELL_CHAOS_SHIELD);
+    }
+
+    uint32 _shieldTimer;
+};
+
 // 199036 - Fel Meteor
 // What lands where a stalker above the way to King Varian Wrynn has sent a meteor. The spell takes whatever
 // is around; whom Blizzard has it take is not known, and here it is players, but for those who are watching
@@ -1318,6 +1487,7 @@ void AddSC_scenario_broken_shore()
     RegisterCreatureAI(npc_captain_angelica_broken_shore);
     RegisterBrokenShoreCreatureAI(npc_broken_shore_anchoring_crystal);
     RegisterBrokenShoreCreatureAI(npc_broken_shore_spire_of_woe);
+    RegisterBrokenShoreCreatureAI(npc_broken_shore_eredar_chaos_guard);
     RegisterSpellScript(spell_broken_shore_fel_beam);
     RegisterSpellScript(spell_broken_shore_fel_meteor);
 }
