@@ -35,6 +35,7 @@ void AddSC_instance_black_rook_hold();
 // Broken Shore scenario
 void AddSC_broken_shore_alliance_forces();
 void AddSC_broken_shore_dread_commander();
+void AddSC_broken_shore_krosus();
 void AddSC_scenario_broken_shore();
 
 // Orderhalls
@@ -63,6 +64,7 @@ void AddBrokenIslesScripts()
     // Broken Shore scenario
     AddSC_broken_shore_alliance_forces();
     AddSC_broken_shore_dread_commander();
+    AddSC_broken_shore_krosus();
     AddSC_scenario_broken_shore();
 
     // Orderhalls

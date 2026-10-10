@@ -143,8 +143,12 @@ enum BrokenShoreCreatureIds
     NPC_DARK_WORSHIPPER                 = 110616,
     NPC_SHADOWSWORN_HARBINGER           = 110617,
 
-    // The Highlord (Alliance)
+    // The Highlord (Alliance). The Horde's leaders watch from a ledge of their own across the pool.
     NPC_HIGHLORD_TIRION_FORDRING        = 91951,
+    NPC_LADY_SYLVANAS_WINDRUNNER        = 90709,
+    NPC_THRALL                          = 90711,
+    NPC_BAINE_BLOODHOOF                 = 90710,
+    NPC_VOLJIN                          = 90708,
 
     // Krosus (Alliance)
     NPC_KROSUS                          = 90544,
@@ -195,6 +199,34 @@ enum BrokenShoreSpells
 
     // The cutscene that plays when the Black City has been razed, for as long as the aura is on a player
     SPELL_STAGE_3_SCENE                 = 181926,
+
+    // "Dummy Cone of Cold": what Jaina casts as her bridge of ice forms. A video of the retail scenario
+    // shows her cast a cone of frost there; which spell it is is not known.
+    SPELL_DUMMY_CONE_OF_COLD            = 210120,
+
+    // What Gul'dan holds Tirion over the pool with, which he channels at him. It was picked by eye against
+    // a video of the retail scenario and is the nearest found, not a match.
+    // TODO: the green rings around Tirion that the video shows.
+    SPELL_GULDAN_CORRUPTION_BEAM        = 182542,
+
+    // Krosus rises from the pool with the first, which was made with the scenario's other spells, and
+    // breathes on Tirion with the second, which is a guess: a video of the retail scenario shows him
+    // breathe fel fire on Tirion, and this is a breath that reaches 60 yards.
+    SPELL_KROSUS_EMERGE                 = 208495,
+    SPELL_FEL_BREATH                    = 217946,
+
+    // What Krosus is seen to cast in a video of the retail scenario: "Slam", "Fel Storm" and "Orb of
+    // Destruction". Which of the spells of those names they are is a guess: the Slam is that of Krosus in
+    // the Nighthold, whose model he has, and does nothing by itself; the Fel Storm is a rain of fel, whose
+    // missiles the client has no spells for; the Orb is a ball of fel fire that stuns where it lands.
+    SPELL_KROSUS_SLAM                   = 205862,
+    SPELL_KROSUS_FEL_STORM              = 221080,
+    SPELL_ORB_OF_DESTRUCTION            = 183498,
+
+    // What the Burning Sentry and the Living Felblaze are seen to cast in videos of the retail scenario. Both
+    // are cones of fire, and were made with the scenario's other spells.
+    SPELL_FEL_ERUPTION                  = 218621,
+    SPELL_MASS_INCINERATION             = 218763,
 
     // What a Fel Meteor on the way to Varian does where it lands. The client has the effects of two more
     // spells to go with it, but not the spells themselves, so the core does not know them: the bearer of
@@ -247,6 +279,11 @@ enum BrokenShoreLeaderTexts
     SAY_JAINA_FOCUS_ON_THE_CRYSTALS     = 11,
     SAY_JAINA_WHAT_HAPPENED_HERE        = 12,
     SAY_JAINA_SURVIVORS                 = 13,
+    SAY_JAINA_IVE_GOT_THIS              = 14,
+    SAY_JAINA_NO                        = 15,
+    SAY_JAINA_BEASTS_FROM_THE_FELFIRE   = 16,
+    SAY_JAINA_PUT_THEM_ON_ICE           = 17,
+    SAY_JAINA_ANOTHER_WAVE              = 18,
 
     SAY_GENN_JUST_IN_TIME               = 1,
     SAY_GENN_CHARGE                     = 2,
@@ -282,7 +319,37 @@ enum BrokenShoreVarianTexts
     SAY_VARIAN_HALFWAY_THERE            = 5,
     SAY_VARIAN_IN_A_FIGHT               = 6,
     SAY_VARIAN_WHERE_IS_TIRION          = 7,
-    SAY_VARIAN_SAVE_YOUR_STRENGTH       = 8
+    SAY_VARIAN_SAVE_YOUR_STRENGTH       = 8,
+    SAY_VARIAN_TIRION                   = 9,
+    SAY_VARIAN_NEVER_GIVE_IN            = 10,
+    SAY_VARIAN_TOGETHER_FOR_AZEROTH     = 11,
+    SAY_VARIAN_BRACE_YOURSELVES         = 12,
+    SAY_VARIAN_FOCUS_YOUR_FIRE          = 13,
+    SAY_VARIAN_HEADING_YOUR_WAY         = 14,
+    SAY_VARIAN_WEVE_GOT_HIM             = 15,
+    SAY_VARIAN_ANOTHER_SHOT             = 16
+};
+
+// creature_text groups of Highlord Tirion Fordring, Gul'dan, the Horde's leaders and Krosus
+enum BrokenShoreTirionTexts
+{
+    SAY_TIRION_STAY_BACK                = 0,
+    SAY_TIRION_THE_LIGHT_WILL           = 1,
+
+    SAY_GULDAN_YOU_FOOL                 = 0,
+    SAY_GULDAN_DESTROY_HIM              = 1,
+    SAY_GULDAN_FALL_TO_ASH              = 2,
+    SAY_GULDAN_DESTROY_THEM             = 3,
+
+    SAY_SYLVANAS_YOU_WILL_PAY           = 0,
+    SAY_SYLVANAS_TOGETHER               = 1,
+    SAY_SYLVANAS_LETS_GO_HORDE          = 2,
+    SAY_SYLVANAS_ALL_YOURS              = 3,
+    SAY_SYLVANAS_JOB_DONE               = 4,
+
+    SAY_THRALL_FORDRING                 = 0,
+
+    SAY_KROSUS_YOU_WILL_KNOW_FEAR       = 0
 };
 
 // creature_text groups of the Argent Dawnbringer
@@ -294,7 +361,8 @@ enum BrokenShoreDawnbringerTexts
 // creature_text groups of Gelbin Mekkatorque. Group 0 is SAY_LEADER_IN_A_FIGHT.
 enum BrokenShoreGelbinTexts
 {
-    SAY_GELBIN_IT_HAPPENED_IN_SECONDS   = 1
+    SAY_GELBIN_IT_HAPPENED_IN_SECONDS   = 1,
+    SAY_GELBIN_HOW_TO_GET_ACROSS        = 2
 };
 
 // What the instance script has Dread Commander Arganoth do
@@ -304,7 +372,10 @@ enum BrokenShoreActions
     ACTION_ARGANOTH_FIGHT               = 2,
 
     // What a Legion Cage has the Argent Dawnbringer inside it do when a player opens it
-    ACTION_DAWNBRINGER_FREED            = 3
+    ACTION_DAWNBRINGER_FREED            = 3,
+
+    // What the instance script has Krosus do when Gul'dan has sent him: go to the Alliance's ledge and fight
+    ACTION_KROSUS_ADVANCE               = 4
 };
 
 // The faction of the Alliance's leaders and forces in the scenario, which a freed Argent Dawnbringer takes
@@ -342,7 +413,11 @@ enum BrokenShoreDataTypes
     DATA_DAWNBRINGER_FREED              = 11,
 
     // Told with a player's GUID: the cutscene after "Raze the Black City" is over for that player
-    DATA_PLAYER_LEFT_BLACK_CITY_SCENE   = 12
+    DATA_PLAYER_LEFT_BLACK_CITY_SCENE   = 12,
+
+    DATA_LADY_SYLVANAS_WINDRUNNER       = 13,
+    DATA_THRALL                         = 14,
+    DATA_KROSUS                         = 15
 };
 
 enum BrokenShoreRallyPoints
@@ -352,6 +427,8 @@ enum BrokenShoreRallyPoints
     RALLY_POINT_PORTAL_DESTROYED        = 2, // where they fall back to when the portal is destroyed
     RALLY_POINT_BLACK_CITY_GATE         = 3, // before the gate of the Black City, by way of BlackCityGateWay
     RALLY_POINT_BLACK_CITY              = 4, // the same place, but they go for the demons all over the city
+    RALLY_POINT_BRIDGE                  = 5, // the far end of Jaina's bridge to the crevasse
+    RALLY_POINT_TIRION                  = 6, // the ledge before the pool that Tirion hangs over
     RALLY_POINT_MAX
 };
 
@@ -375,7 +452,9 @@ static constexpr BrokenShoreRallyPoint AllianceRallyPoints[RALLY_POINT_MAX] =
     { 1188.6f, 2454.1f, 36.2f, 150.0f,  45.0f },
     { 1162.1f, 2452.9f, 33.6f, 150.0f,  45.0f },
     { 1110.8f, 2336.7f, 20.2f, 200.0f,  30.0f },
-    { 1108.1f, 2332.5f, 20.1f, 400.0f, 250.0f }
+    { 1108.1f, 2332.5f, 20.1f, 400.0f, 250.0f },
+    { 1419.9f, 2082.1f, 21.0f, 150.0f,  30.0f },
+    { 1495.8f, 1813.7f, 37.4f, 150.0f,  60.0f }
 };
 
 // The middle of the gateway into the Black City, from the same videos. The forces that gathered before the
@@ -410,7 +489,10 @@ enum BrokenShoreSpawnGroups
     SPAWN_GROUP_ALLIANCE_LANDING_FORCE  = 14612,
 
     // And the Spires of Woe, whose wreckage stays
-    SPAWN_GROUP_SPIRES_OF_WOE           = 14613
+    SPAWN_GROUP_SPIRES_OF_WOE           = 14613,
+
+    // The Horde's leaders, who are there from "The Highlord" on
+    SPAWN_GROUP_HORDE_LEADERS           = 14614
 };
 
 // WorldSafeLocs.db2. The "Start" locations are relative to the faction's ship, not to the map.

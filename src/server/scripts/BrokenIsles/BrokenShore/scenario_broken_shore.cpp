@@ -51,6 +51,9 @@ ObjectData const creatureData[] =
     { NPC_GENN_GREYMANE,            DATA_GENN_GREYMANE            },
     { NPC_DREAD_COMMANDER_ARGANOTH, DATA_DREAD_COMMANDER_ARGANOTH },
     { NPC_GELBIN_MEKKATORQUE,       DATA_GELBIN_MEKKATORQUE       },
+    { NPC_LADY_SYLVANAS_WINDRUNNER, DATA_LADY_SYLVANAS_WINDRUNNER },
+    { NPC_THRALL,                   DATA_THRALL                   },
+    { NPC_KROSUS,                   DATA_KROSUS                   },
     { 0,                            0                             }  // END
 };
 
@@ -116,6 +119,48 @@ static constexpr uint32 VarianForces[][VarianForcesRowSize] =
 // How long the cutscene after "Raze the Black City" may take before players are moved on without it having
 // said so. How long it is, is not known.
 static constexpr Seconds BlackCitySceneTimeout = 120s;
+
+// Where the leaders are when players come out of that cutscene. Jaina's place, from which she makes the
+// bridge of ice, is from a video of the retail scenario and was taken in game; the others' are guesses.
+Position const JainaBridgePosition  = { 1415.3f, 2137.7f, 21.8f, 4.78f };
+Position const VarianBridgePosition = { 1406.5f, 2146.0f, 21.5f, 4.78f };
+Position const GennBridgePosition   = { 1419.5f, 2147.5f, 21.5f, 4.78f };
+Position const GelbinBridgePosition = { 1412.0f, 2149.5f, 21.5f, 4.78f };
+
+// Varian's forces stand in rows behind them: where the middle of the first row is, and how far apart the
+// fighters of a row and the rows are
+Position const ForcesBridgePosition = { 1411.0f, 2153.0f, 21.5f, 4.78f };
+static constexpr float ForcesBridgeSpacing = 4.0f;
+static constexpr std::size_t ForcesBridgeRowSize = 6;
+
+// How long after the first player has come out of the cutscene Jaina makes the bridge, how long after
+// that the forces make for its far end, and how long after that they are put on the ledge before Tirion
+static constexpr Milliseconds JainaBridgeDelay = 6500ms;
+static constexpr Milliseconds ForcesCrossDelay = 3s;
+static constexpr Milliseconds ForcesLedgeDelay = 14s;
+
+// Where the leaders are on that ledge, from a video of the retail scenario and taken in game, and how far
+// apart they and the forces behind them are put
+Position const TirionLedgePosition = { 1495.8f, 1813.7f, 37.4f, 4.71f };
+static constexpr float TirionLedgeSpacing = 3.5f;
+
+// How often the script sees to it that Gul'dan holds Tirion
+static constexpr uint32 GuldanChannelCheckInterval = 1000;
+
+// How far and how fast Tirion falls into the pool, and how long after that he is gone
+static constexpr float TirionFallDistance = 25.0f;
+static constexpr float TirionFallSpeed = 18.0f;
+static constexpr Milliseconds TirionFallTime = 2s;
+
+// How far into "Krosus" he rises from the pool, breathes on Tirion, Tirion falls, and Krosus can be fought.
+// What is said before, between and after is spaced by the length of the lines.
+// His breath takes four and a half seconds to cast. He goes to the Alliance's ledge once he has spoken, and
+// can be fought when he is there.
+static constexpr Milliseconds KrosusEmergeDelay = 19s;
+static constexpr Milliseconds KrosusBreathDelay = 24s;
+static constexpr Milliseconds TirionFallDelay = 30s;
+static constexpr Milliseconds KrosusSentDelay = 56s;
+static constexpr Milliseconds KrosusWalkDelay = 4500ms;
 
 // The Argent Dawnbringer in the cage before the gate of the Black City, which Varian talks with (creature.guid)
 static constexpr ObjectGuid::LowType GateDawnbringerSpawnId = 14605060;
@@ -209,7 +254,8 @@ enum BrokenShoreTaskGroups
     TASK_GROUP_VARIAN_FOUND             = 7, // what is said when he is found, which nothing calls off
     TASK_GROUP_DESTROY_THE_PORTAL       = 8, // what is said at the portal, and the Mo'arg Painbringer setting off
     TASK_GROUP_RAZE_THE_BLACK_CITY      = 9, // what is said before the forces go into the Black City
-    TASK_GROUP_BLACK_CITY_SCENE         = 10 // the end of the cutscene after it, which nothing calls off
+    TASK_GROUP_BLACK_CITY_SCENE         = 10, // the end of the cutscene after it, which nothing calls off
+    TASK_GROUP_TIRION                   = 11  // what is said before the pool, Tirion's fall and Krosus rising
 };
 
 // "The Battle for Broken Shore". The scenario itself is attached to the map by the `scenarios` table
@@ -407,6 +453,13 @@ public:
 
             if (creature->GetEntry() == NPC_UNATTENDED_CANNON)
                 creature->AddExtraUnitMovementFlag(MOVEMENTFLAG2_NO_STRAFE | MOVEMENTFLAG2_NO_JUMPING);
+
+            // Krosus fights nobody until Gul'dan sends him
+            if (creature->GetEntry() == NPC_KROSUS)
+            {
+                creature->SetImmuneToAll(true);
+                creature->SetReactState(REACT_PASSIVE);
+            }
         }
 
         void OnGameObjectCreate(GameObject* go) override
@@ -748,8 +801,11 @@ public:
                     _scheduler.CancelGroup(TASK_GROUP_RAZE_THE_BLACK_CITY);
                     _allianceRallyPoint = RALLY_POINT_NONE;
                     break;
-                // As with the commander, his death ends the stage and his corpse stays
+                // As with the commander, his death ends the stage; his script takes his corpse away. What
+                // is left of the talk before him, which takes a GM skipping the stage, is called off.
                 case STAGE_KROSUS:
+                    _scheduler.CancelGroup(TASK_GROUP_TIRION);
+                    instance->SpawnGroupDespawn(SPAWN_GROUP_THE_HIGHLORD, true);
                     instance->SetSpawnGroupInactive(SPAWN_GROUP_KROSUS);
                     break;
                 // The same goes for the Mo'arg Spinebreaker, and Gul'dan stays as well
@@ -1275,14 +1331,16 @@ public:
         // in front of. He stays where he is until the next stage starts.
         // Players start the stage together at the edge of the city, where a bridge of ice forms across the
         // gap to the crevasse.
-        // A cutscene plays first, "Stage 3 Scene", and each player is taken there when it is over for them.
-        // That is how a video of the retail scenario has it, in which the player skips the cutscene.
-        // TODO: Gul'dan and what he says, Tirion's chains, the demons on the way from the city and Varian's
-        // forces.
+        // A cutscene plays first, "Stage 3 Scene", in which Jaina finds Tirion across the chasm. Each player
+        // is taken to the edge of the city when it is over for them, where the leaders and Varian's forces
+        // are by then. That is how videos of the retail scenario have it. Gul'dan holds Tirion over the
+        // pool, and the Horde's leaders watch from their own ledge.
+        // TODO: the demons on the way from the city, and the way the forces take, who are put on the ledge
+        // before Tirion once they have reached the far end of the bridge.
         void StartTheHighlord()
         {
             instance->SpawnGroupSpawn(SPAWN_GROUP_THE_HIGHLORD, true);
-            SpawnBridge(SPAWN_GROUP_BRIDGE_TO_THE_HIGHLORD);
+            instance->SpawnGroupSpawn(SPAWN_GROUP_HORDE_LEADERS, true);
 
             // Players who release from here on go to the graveyard at the crevasse
             SetEntranceLocation(WORLD_SAFE_LOC_ALLIANCE_CREVASSE);
@@ -1292,6 +1350,8 @@ public:
             {
                 player->CastSpell(player, SPELL_STAGE_3_SCENE, true);
             });
+
+            PlaceForcesAtTheBridge();
 
             _scheduler.Schedule(BlackCitySceneTimeout, TASK_GROUP_BLACK_CITY_SCENE, [this](TaskContext /*context*/)
             {
@@ -1303,7 +1363,76 @@ public:
             });
         }
 
-        // The cutscene is over for the player, who is taken to the edge of the city
+        // Puts the leaders and those of Varian's forces that still live at the edge of the city, to stay
+        void PlaceForcesAtTheBridge()
+        {
+            _allianceRallyPoint = RALLY_POINT_NONE;
+
+            PlaceAt(GetCreature(DATA_LADY_JAINA_PROUDMOORE), JainaBridgePosition);
+            PlaceAt(GetCreature(DATA_KING_VARIAN_WRYNN), VarianBridgePosition);
+            PlaceAt(GetCreature(DATA_GENN_GREYMANE), GennBridgePosition);
+            PlaceAt(GetCreature(DATA_GELBIN_MEKKATORQUE), GelbinBridgePosition);
+
+            PlaceForcesInRows(ForcesBridgePosition, ForcesBridgeSpacing, 1.0f);
+        }
+
+        // Puts them on the ledge before the pool that Tirion hangs over, where they gather
+        void PlaceForcesOnTheLedge()
+        {
+            static constexpr uint32 Leaders[] = { DATA_KING_VARIAN_WRYNN, DATA_LADY_JAINA_PROUDMOORE, DATA_GENN_GREYMANE, DATA_GELBIN_MEKKATORQUE };
+            for (std::size_t i = 0; i < std::size(Leaders); ++i)
+            {
+                float side = (float(i) - float(std::size(Leaders) - 1) / 2.0f) * TirionLedgeSpacing;
+                PlaceAt(GetCreature(Leaders[i]), Position(TirionLedgePosition.GetPositionX() + side, TirionLedgePosition.GetPositionY(),
+                    TirionLedgePosition.GetPositionZ(), TirionLedgePosition.GetOrientation()));
+            }
+
+            Position rows(TirionLedgePosition.GetPositionX(), TirionLedgePosition.GetPositionY() + TirionLedgeSpacing,
+                TirionLedgePosition.GetPositionZ(), TirionLedgePosition.GetOrientation());
+            PlaceForcesInRows(rows, TirionLedgeSpacing, 1.0f);
+
+            _allianceRallyPoint = RALLY_POINT_TIRION;
+        }
+
+        // Puts those of Varian's forces that still live in rows that run from east to west. The first row's
+        // middle is at the given place, and each further one is further north (1) or south (-1) of it.
+        void PlaceForcesInRows(Position const& first, float spacing, float direction)
+        {
+            std::size_t placed = 0;
+            for (ObjectGuid const& guid : _variansForces)
+            {
+                Creature* fighter = instance->GetCreature(guid);
+                if (!fighter || fighter->GetEntry() == NPC_GELBIN_MEKKATORQUE)
+                    continue;
+
+                float side = (float(placed % ForcesBridgeRowSize) - float(ForcesBridgeRowSize - 1) / 2.0f) * spacing;
+                float back = float(placed / ForcesBridgeRowSize) * spacing * direction;
+                if (PlaceAt(fighter, Position(first.GetPositionX() + side, first.GetPositionY() + back,
+                    first.GetPositionZ(), first.GetOrientation())))
+                    ++placed;
+            }
+        }
+
+        // Puts a living creature on the ground at a place, to stay. Returns whether it did.
+        bool PlaceAt(Creature* creature, Position const& where)
+        {
+            if (!creature || !creature->IsAlive())
+                return false;
+
+            // A creature that is moved to where nothing is loaded is put back where it spawned
+            instance->LoadGrid(where.GetPositionX(), where.GetPositionY());
+
+            Position place(where.GetPositionX(), where.GetPositionY(),
+                creature->GetMapHeight(where.GetPositionX(), where.GetPositionY(), where.GetPositionZ() + 5.0f), where.GetOrientation());
+            creature->CombatStop(true);
+            creature->GetMotionMaster()->Clear();
+            creature->NearTeleportTo(place);
+            creature->SetHomePosition(place);
+            return true;
+        }
+
+        // The cutscene is over for the player, who is taken to the edge of the city. The first one to get
+        // there has Gelbin ask how to get across, and Jaina make the bridge of ice.
         void LeaveBlackCityScene(Player* player)
         {
             if (!_playersAtTheCityEdge.insert(player->GetGUID()).second)
@@ -1311,21 +1440,135 @@ public:
 
             player->ExitVehicle();
             player->NearTeleportTo(BlackCityRazedPosition);
+
+            if (_playersAtTheCityEdge.size() > 1)
+                return;
+
+            TalkLater(2s, TASK_GROUP_BLACK_CITY_SCENE, DATA_GELBIN_MEKKATORQUE, SAY_GELBIN_HOW_TO_GET_ACROSS);
+            TalkLater(5s, TASK_GROUP_BLACK_CITY_SCENE, DATA_LADY_JAINA_PROUDMOORE, SAY_JAINA_IVE_GOT_THIS);
+            _scheduler.Schedule(JainaBridgeDelay, TASK_GROUP_BLACK_CITY_SCENE, [this](TaskContext /*context*/)
+            {
+                if (Creature* jaina = GetCreature(DATA_LADY_JAINA_PROUDMOORE))
+                    jaina->CastSpell(jaina, SPELL_DUMMY_CONE_OF_COLD, false);
+
+                instance->SpawnGroupSpawn(SPAWN_GROUP_BRIDGE_TO_THE_HIGHLORD, true);
+            });
+
+            _scheduler.Schedule(JainaBridgeDelay + ForcesCrossDelay, TASK_GROUP_BLACK_CITY_SCENE, [this](TaskContext /*context*/)
+            {
+                _allianceRallyPoint = RALLY_POINT_BRIDGE;
+            });
+
+            _scheduler.Schedule(JainaBridgeDelay + ForcesCrossDelay + ForcesLedgeDelay, TASK_GROUP_BLACK_CITY_SCENE, [this](TaskContext /*context*/)
+            {
+                PlaceForcesOnTheLedge();
+            });
         }
 
         void UpdateTheHighlord(uint32 diff)
         {
             SendScenarioEventWhenFound(diff, DATA_HIGHLORD_TIRION_FORDRING, TirionFoundDistance, GAME_EVENT_TIRION_FOUND);
+
+            if (_guldanChannelTimer > diff)
+            {
+                _guldanChannelTimer -= diff;
+                return;
+            }
+
+            _guldanChannelTimer = GuldanChannelCheckInterval;
+            HoldTirion();
+        }
+
+        // Gul'dan holds Tirion over the pool. They are there once someone is near enough for the map to
+        // have them, which is when this starts.
+        void HoldTirion()
+        {
+            Creature* guldan = GetCreature(DATA_GULDAN);
+            Creature* tirion = GetCreature(DATA_HIGHLORD_TIRION_FORDRING);
+            if (!guldan || !tirion)
+                return;
+
+            if (!guldan->HasUnitState(UNIT_STATE_CASTING))
+                guldan->CastSpell(tirion, SPELL_GULDAN_CORRUPTION_BEAM, TRIGGERED_FULL_MASK);
+        }
+
+        // Gul'dan lets go of Tirion, who falls into the pool and is gone
+        void DropTirion()
+        {
+            if (Creature* guldan = GetCreature(DATA_GULDAN))
+                guldan->InterruptNonMeleeSpells(false);
+
+            Creature* tirion = GetCreature(DATA_HIGHLORD_TIRION_FORDRING);
+            if (!tirion)
+                return;
+
+            tirion->GetMotionMaster()->MovePoint(0, tirion->GetPositionX(), tirion->GetPositionY(), tirion->GetPositionZ() - TirionFallDistance,
+                false, {}, TirionFallSpeed);
+            tirion->DespawnOrUnsummon(TirionFallTime);
         }
 
         // "Kill Krosus." Needs GAME_EVENT_KROSUS_SLAIN, sent from OnUnitDeath.
-        // Tirion goes when Krosus comes: Gul'dan drops him into the pool that Krosus rises from.
-        // TODO: Krosus rising from the pool, his abilities, what is said and the faction leaders.
+        // The stage starts with what is said before the pool: Krosus rises from it and breathes on Tirion,
+        // whom Gul'dan drops into it, and Gul'dan mocks the leaders of both factions and sends Krosus at
+        // them. The lines are Blizzard's and in their order; who says them, and what Krosus does, is from
+        // videos of the retail scenario.
+        // TODO: Krosus's abilities and what is said while he is fought.
         void StartKrosus()
         {
-            instance->SpawnGroupDespawn(SPAWN_GROUP_THE_HIGHLORD, true);
-            instance->SpawnGroupSpawn(SPAWN_GROUP_KROSUS, true);
             RaiseForTheAlliance(5);
+
+            TalkLater(1s, TASK_GROUP_TIRION, DATA_KING_VARIAN_WRYNN, SAY_VARIAN_TIRION);
+            TalkLater(3s, TASK_GROUP_TIRION, DATA_LADY_SYLVANAS_WINDRUNNER, SAY_SYLVANAS_YOU_WILL_PAY);
+            TalkLater(6500ms, TASK_GROUP_TIRION, DATA_HIGHLORD_TIRION_FORDRING, SAY_TIRION_STAY_BACK);
+            TalkLater(12500ms, TASK_GROUP_TIRION, DATA_GULDAN, SAY_GULDAN_YOU_FOOL);
+            _scheduler.Schedule(KrosusEmergeDelay, TASK_GROUP_TIRION, [this](TaskContext /*context*/)
+            {
+                instance->SpawnGroupSpawn(SPAWN_GROUP_KROSUS, true);
+                if (Creature* krosus = GetCreature(DATA_KROSUS))
+                    krosus->CastSpell(krosus, SPELL_KROSUS_EMERGE, true);
+            });
+
+            TalkLater(26s, TASK_GROUP_TIRION, DATA_GULDAN, SAY_GULDAN_DESTROY_HIM);
+            _scheduler.Schedule(KrosusBreathDelay, TASK_GROUP_TIRION, [this](TaskContext /*context*/)
+            {
+                Creature* krosus = GetCreature(DATA_KROSUS);
+                Creature* tirion = GetCreature(DATA_HIGHLORD_TIRION_FORDRING);
+                if (krosus && tirion)
+                    krosus->CastSpell(tirion, SPELL_FEL_BREATH, false);
+            });
+            TalkLater(28s, TASK_GROUP_TIRION, DATA_HIGHLORD_TIRION_FORDRING, SAY_TIRION_THE_LIGHT_WILL);
+            _scheduler.Schedule(TirionFallDelay, TASK_GROUP_TIRION, [this](TaskContext /*context*/)
+            {
+                DropTirion();
+            });
+
+            TalkLater(31s, TASK_GROUP_TIRION, DATA_THRALL, SAY_THRALL_FORDRING);
+            TalkLater(32s, TASK_GROUP_TIRION, DATA_LADY_JAINA_PROUDMOORE, SAY_JAINA_NO);
+            TalkLater(34s, TASK_GROUP_TIRION, DATA_GULDAN, SAY_GULDAN_FALL_TO_ASH);
+            TalkLater(43500ms, TASK_GROUP_TIRION, DATA_KING_VARIAN_WRYNN, SAY_VARIAN_NEVER_GIVE_IN);
+            TalkLater(47s, TASK_GROUP_TIRION, DATA_LADY_SYLVANAS_WINDRUNNER, SAY_SYLVANAS_TOGETHER);
+            TalkLater(51500ms, TASK_GROUP_TIRION, DATA_KING_VARIAN_WRYNN, SAY_VARIAN_TOGETHER_FOR_AZEROTH);
+            TalkLater(54s, TASK_GROUP_TIRION, DATA_GULDAN, SAY_GULDAN_DESTROY_THEM);
+            _scheduler.Schedule(KrosusSentDelay, TASK_GROUP_TIRION, [this](TaskContext /*context*/)
+            {
+                instance->SpawnGroupDespawn(SPAWN_GROUP_THE_HIGHLORD, true);
+            });
+
+            TalkLater(KrosusSentDelay + 2s, TASK_GROUP_TIRION, DATA_KROSUS, SAY_KROSUS_YOU_WILL_KNOW_FEAR);
+            _scheduler.Schedule(KrosusSentDelay + KrosusWalkDelay, TASK_GROUP_TIRION, [this](TaskContext context)
+            {
+                // He is not there while nobody is near enough for the map to have him
+                Creature* krosus = GetCreature(DATA_KROSUS);
+                if (!krosus)
+                {
+                    context.Repeat(1s);
+                    return;
+                }
+
+                // The rest is his own script's
+                if (krosus->IsAlive())
+                    krosus->AI()->DoAction(ACTION_KROSUS_ADVANCE);
+            });
         }
 
         // "Stop Gul'dan from summoning the Legion." Needs GAME_EVENT_GULDAN_CONFRONTED, sent from
@@ -1382,6 +1625,7 @@ public:
         bool _varianCanBeFound;
         GuidUnorderedSet _playersOnTheHilltop;
         GuidUnorderedSet _playersAtTheCityEdge;
+        uint32 _guldanChannelTimer = 0;
         GuidVector _felMeteorStalkers;
         GuidVector _variansForces;
         GuidVector _spireGUIDs;
@@ -1612,6 +1856,55 @@ private:
     uint32 _shieldTimer;
 };
 
+// A demon that casts one spell at what it fights, now and then. When it does is a guess.
+struct npc_broken_shore_casting_demon : public ScriptedAI
+{
+    npc_broken_shore_casting_demon(Creature* creature, uint32 spell) : ScriptedAI(creature), _spell(spell), _castTimer(0) { }
+
+    void JustEngagedWith(Unit* /*who*/) override
+    {
+        _castTimer = urand(4 * IN_MILLISECONDS, 8 * IN_MILLISECONDS);
+    }
+
+    void UpdateAI(uint32 diff) override
+    {
+        if (!UpdateVictim())
+            return;
+
+        if (_castTimer > diff)
+        {
+            _castTimer -= diff;
+            return;
+        }
+
+        if (me->HasUnitState(UNIT_STATE_CASTING))
+            return;
+
+        DoCastVictim(_spell);
+        _castTimer = urand(12 * IN_MILLISECONDS, 18 * IN_MILLISECONDS);
+    }
+
+private:
+    uint32 _spell;
+    uint32 _castTimer;
+};
+
+// 94190 - Burning Sentry
+// In the Black City, and on the Alliance's ledge with a Fel Storm of Krosus's. That it casts Fel Eruption is
+// from a video of the retail scenario.
+struct npc_broken_shore_burning_sentry : public npc_broken_shore_casting_demon
+{
+    npc_broken_shore_burning_sentry(Creature* creature) : npc_broken_shore_casting_demon(creature, SPELL_FEL_ERUPTION) { }
+};
+
+// 94189 - Living Felblaze
+// In the Black City, and on the Alliance's ledge with a Fel Storm of Krosus's. That it casts Mass
+// Incineration is from a video of the retail scenario.
+struct npc_broken_shore_living_felblaze : public npc_broken_shore_casting_demon
+{
+    npc_broken_shore_living_felblaze(Creature* creature) : npc_broken_shore_casting_demon(creature, SPELL_MASS_INCINERATION) { }
+};
+
 // 240535 - Legion Cage
 // Holds an Argent Dawnbringer. A player who opens it frees the Dawnbringer, once, which then joins the
 // Alliance's forces.
@@ -1757,6 +2050,8 @@ void AddSC_scenario_broken_shore()
     RegisterBrokenShoreCreatureAI(npc_broken_shore_anchoring_crystal);
     RegisterBrokenShoreCreatureAI(npc_broken_shore_spire_of_woe);
     RegisterBrokenShoreCreatureAI(npc_broken_shore_eredar_chaos_guard);
+    RegisterBrokenShoreCreatureAI(npc_broken_shore_burning_sentry);
+    RegisterBrokenShoreCreatureAI(npc_broken_shore_living_felblaze);
     RegisterGameObjectAIWithFactory(go_broken_shore_legion_cage, GetBrokenShoreAI);
     RegisterSpellScript(spell_broken_shore_fel_beam);
     RegisterSpellScript(spell_broken_shore_fel_meteor);
