@@ -78,6 +78,18 @@ enum BrokenShoreCreatureIds
     NPC_LADY_JAINA_PROUDMOORE           = 90714,
     NPC_GENN_GREYMANE                   = 90717,
 
+    // Gelbin Mekkatorque and the forces that are with King Varian Wrynn, along with more of those that land
+    NPC_GELBIN_MEKKATORQUE              = 90716,
+    NPC_ALLIANCE_PRIEST                 = 92074,
+    NPC_GNOMEREGAN_TINKERER             = 92122,
+    NPC_STORMWIND_GUARD                 = 92123,
+
+    // Raze the Black City: what players can drive and fire through the city
+    NPC_UNATTENDED_CANNON               = 100959,
+
+    // Raze the Black City: caged before the city's gate and in the city, and dead on the fence at the gate
+    NPC_ARGENT_DAWNBRINGER              = 110615,
+
     // The forces that land with them
     NPC_KIRIN_TOR_BATTLE_MAGE_1         = 91353,
     NPC_KIRIN_TOR_BATTLE_MAGE_2         = 97496,
@@ -181,6 +193,9 @@ enum BrokenShoreSpells
     SPELL_STAGE_2_FAR_SIGHT             = 218636,
     SPELL_STAGE_2_TELEPORT              = 227791,
 
+    // The cutscene that plays when the Black City has been razed, for as long as the aura is on a player
+    SPELL_STAGE_3_SCENE                 = 181926,
+
     // What a Fel Meteor on the way to Varian does where it lands. The client has the effects of two more
     // spells to go with it, but not the spells themselves, so the core does not know them: the bearer of
     // 199044 casts 199031 every three seconds, a missile that lands within ten yards of the ground below
@@ -230,6 +245,8 @@ enum BrokenShoreLeaderTexts
     SAY_JAINA_VARIAN                    = 9,
     SAY_JAINA_CRYSTALS_ARE_THE_KEY      = 10,
     SAY_JAINA_FOCUS_ON_THE_CRYSTALS     = 11,
+    SAY_JAINA_WHAT_HAPPENED_HERE        = 12,
+    SAY_JAINA_SURVIVORS                 = 13,
 
     SAY_GENN_JUST_IN_TIME               = 1,
     SAY_GENN_CHARGE                     = 2,
@@ -259,14 +276,41 @@ enum BrokenShoreVarianTexts
 {
     SAY_VARIAN_GOOD_TO_SEE_YOU_SAFE     = 0,
     SAY_VARIAN_TAKE_DOWN_THIS_PORTAL    = 1,
-    SAY_VARIAN_FORM_UP                  = 2
+    SAY_VARIAN_FORM_UP                  = 2,
+    SAY_VARIAN_HEAL_THE_WOUNDED         = 3,
+    SAY_VARIAN_WITH_ME_ALLIANCE         = 4,
+    SAY_VARIAN_HALFWAY_THERE            = 5,
+    SAY_VARIAN_IN_A_FIGHT               = 6,
+    SAY_VARIAN_WHERE_IS_TIRION          = 7,
+    SAY_VARIAN_SAVE_YOUR_STRENGTH       = 8
+};
+
+// creature_text groups of the Argent Dawnbringer
+enum BrokenShoreDawnbringerTexts
+{
+    SAY_DAWNBRINGER_FELFIRE_EVERYWHERE  = 0
+};
+
+// creature_text groups of Gelbin Mekkatorque. Group 0 is SAY_LEADER_IN_A_FIGHT.
+enum BrokenShoreGelbinTexts
+{
+    SAY_GELBIN_IT_HAPPENED_IN_SECONDS   = 1
 };
 
 // What the instance script has Dread Commander Arganoth do
 enum BrokenShoreActions
 {
     ACTION_ARGANOTH_CRASH_DOWN          = 1,
-    ACTION_ARGANOTH_FIGHT               = 2
+    ACTION_ARGANOTH_FIGHT               = 2,
+
+    // What a Legion Cage has the Argent Dawnbringer inside it do when a player opens it
+    ACTION_DAWNBRINGER_FREED            = 3
+};
+
+// The faction of the Alliance's leaders and forces in the scenario, which a freed Argent Dawnbringer takes
+enum BrokenShoreFactions
+{
+    FACTION_BROKEN_SHORE_ALLIANCE       = 2879
 };
 
 // Creatures the instance script keeps track of (ObjectData), what it can be asked with GetData and what it can
@@ -287,7 +331,62 @@ enum BrokenShoreDataTypes
     DATA_COMMANDER_ARRIVED              = 7,
 
     // Told with a player's GUID: the cutscene of "Find Varian" is over for that player
-    DATA_PLAYER_LEFT_FIND_VARIAN_SCENE  = 8
+    DATA_PLAYER_LEFT_FIND_VARIAN_SCENE  = 8,
+
+    // Where the Alliance's forces gather while they charge and have no one to fight (BrokenShoreRallyPoints)
+    DATA_ALLIANCE_RALLY_POINT           = 9,
+
+    DATA_GELBIN_MEKKATORQUE             = 10,
+
+    // Told by a Legion Cage: a player has opened it and freed the Argent Dawnbringer inside
+    DATA_DAWNBRINGER_FREED              = 11,
+
+    // Told with a player's GUID: the cutscene after "Raze the Black City" is over for that player
+    DATA_PLAYER_LEFT_BLACK_CITY_SCENE   = 12
+};
+
+enum BrokenShoreRallyPoints
+{
+    RALLY_POINT_NONE                    = 0,
+    RALLY_POINT_ANCHORS                 = 1, // among the Shielded Anchors of "Destroy the Portal"
+    RALLY_POINT_PORTAL_DESTROYED        = 2, // where they fall back to when the portal is destroyed
+    RALLY_POINT_BLACK_CITY_GATE         = 3, // before the gate of the Black City, by way of BlackCityGateWay
+    RALLY_POINT_BLACK_CITY              = 4, // the same place, but they go for the demons all over the city
+    RALLY_POINT_MAX
+};
+
+struct BrokenShoreRallyPoint
+{
+    float X;
+    float Y;
+    float Z;
+    float JoinDistance;  // how far from it a fighter may be to belong to it; those left on the beach do not cross the island
+    float FightDistance; // how far around itself a fighter that belongs to it looks for demons
+};
+
+// The places are from videos of the retail scenario, taken in game: where Jaina runs to when the forces
+// advance, where the leaders gather when the portal is destroyed, and where they all gather before the gate
+// of the Black City. That is a few yards back from where the video has them, to keep them off the cage
+// there, and they do not look far for demons from it: the city's first are 50 yards on. From the gate the
+// forces go for the nearest demon anywhere in the city, which is up to 250 yards across.
+static constexpr BrokenShoreRallyPoint AllianceRallyPoints[RALLY_POINT_MAX] =
+{
+    {    0.0f,    0.0f,  0.0f,   0.0f,   0.0f },
+    { 1188.6f, 2454.1f, 36.2f, 150.0f,  45.0f },
+    { 1162.1f, 2452.9f, 33.6f, 150.0f,  45.0f },
+    { 1110.8f, 2336.7f, 20.2f, 200.0f,  30.0f },
+    { 1108.1f, 2332.5f, 20.1f, 400.0f, 250.0f }
+};
+
+// The middle of the gateway into the Black City, from the same videos. The forces that gathered before the
+// gate go through it when they are sent into the city; the nearest demon is over a hill otherwise.
+static constexpr BrokenShoreRallyPoint BlackCityGateway = { 1093.4f, 2325.3f, 20.2f, 0.0f, 0.0f };
+
+// The way the forces take to the gate of the Black City from where they fell back to, from the same videos
+static constexpr BrokenShoreRallyPoint BlackCityGateWay[] =
+{
+    { 1159.8f, 2403.9f, 31.1f, 0.0f, 0.0f },
+    { 1124.1f, 2357.8f, 20.9f, 0.0f, 0.0f }
 };
 
 // spawn_group_template. Each stage's spawns are one group, spawned when the stage starts.

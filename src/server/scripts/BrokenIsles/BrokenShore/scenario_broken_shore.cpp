@@ -21,6 +21,7 @@
 #include "DB2Stores.h"
 #include "GameEventSender.h"
 #include "GameObject.h"
+#include "GameObjectAI.h"
 #include "GridNotifiersImpl.h"
 #include "InstanceScenario.h"
 #include "InstanceScript.h"
@@ -49,6 +50,7 @@ ObjectData const creatureData[] =
     { NPC_LADY_JAINA_PROUDMOORE,    DATA_LADY_JAINA_PROUDMOORE    },
     { NPC_GENN_GREYMANE,            DATA_GENN_GREYMANE            },
     { NPC_DREAD_COMMANDER_ARGANOTH, DATA_DREAD_COMMANDER_ARGANOTH },
+    { NPC_GELBIN_MEKKATORQUE,       DATA_GELBIN_MEKKATORQUE       },
     { 0,                            0                             }  // END
 };
 
@@ -95,6 +97,38 @@ static constexpr uint8 WayToVarianParts = 8;
 // How far from an Eredar Chaos Guard the Shielded Anchor it shields is at most. They are spawned four yards
 // apart, and the next anchor is more than seven yards away.
 static constexpr float ChaosGuardAnchorDistance = 6.0f;
+
+// Varian's forces stand behind him in two rows, this far from him and from each other, and Gelbin
+// Mekkatorque at his side. Who they are is from videos of the retail scenario; how many and where is not
+// known.
+static constexpr float VarianForcesRowDistance = 7.0f;
+static constexpr float VarianForcesRowSpacing = 4.0f;
+static constexpr float VarianForcesSpacing = 3.5f;
+static constexpr float GelbinPlaceDistance = 4.0f;
+
+static constexpr std::size_t VarianForcesRowSize = 6;
+static constexpr uint32 VarianForces[][VarianForcesRowSize] =
+{
+    { NPC_STORMWIND_GUARD, NPC_GILNEAN_ROYAL_GUARD, NPC_STORMWIND_GUARD, NPC_DARNASSUS_SENTINEL, NPC_GILNEAN_ROYAL_GUARD, NPC_STORMWIND_GUARD },
+    { NPC_GNOMEREGAN_TINKERER, NPC_ALLIANCE_PRIEST, NPC_KIRIN_TOR_BATTLE_MAGE_1, NPC_GILNEAN_DRUID, NPC_ALLIANCE_PRIEST, NPC_GNOMEREGAN_TINKERER }
+};
+
+// How long the cutscene after "Raze the Black City" may take before players are moved on without it having
+// said so. How long it is, is not known.
+static constexpr Seconds BlackCitySceneTimeout = 120s;
+
+// The Argent Dawnbringer in the cage before the gate of the Black City, which Varian talks with (creature.guid)
+static constexpr ObjectGuid::LowType GateDawnbringerSpawnId = 14605060;
+
+// How far from a Legion Cage the Argent Dawnbringer inside it is at most
+static constexpr float LegionCageDistance = 3.0f;
+
+// How near to where the forces gather before the gate of the Black City Varian has to be for the talk
+// there to start
+static constexpr float VarianAtTheGateDistance = 14.0f;
+
+// How near to where the forces gather among the anchors Jaina has to be to tell them what to go for
+static constexpr float JainaAtAnchorsDistance = 15.0f;
 
 // How long into "Destroy the Portal" players get their second stack of "For the Alliance!": when the last
 // of the lines has been said
@@ -173,7 +207,9 @@ enum BrokenShoreTaskGroups
     TASK_GROUP_COMMANDER_SLAIN          = 5, // what the leaders say when he has fallen, which nothing calls off
     TASK_GROUP_FIND_VARIAN              = 6, // the way over the hill to King Varian Wrynn, its cutscene and its Fel Meteors
     TASK_GROUP_VARIAN_FOUND             = 7, // what is said when he is found, which nothing calls off
-    TASK_GROUP_DESTROY_THE_PORTAL       = 8  // what is said at the portal, and the Mo'arg Painbringer setting off
+    TASK_GROUP_DESTROY_THE_PORTAL       = 8, // what is said at the portal, and the Mo'arg Painbringer setting off
+    TASK_GROUP_RAZE_THE_BLACK_CITY      = 9, // what is said before the forces go into the Black City
+    TASK_GROUP_BLACK_CITY_SCENE         = 10 // the end of the cutscene after it, which nothing calls off
 };
 
 // "The Battle for Broken Shore". The scenario itself is attached to the map by the `scenarios` table
@@ -187,7 +223,8 @@ public:
     struct instance_broken_shore_scenario_InstanceMapScript : public InstanceScript
     {
         instance_broken_shore_scenario_InstanceMapScript(InstanceMap* map) : InstanceScript(map), _currentStep(nullptr), _checkTimer(0),
-            _spiresDestroyed(0), _forTheAllianceStacks(1), _blackCityPoints(0), _allianceForcesCharging(false), _commanderArrived(false),
+            _spiresDestroyed(0), _forTheAllianceStacks(1), _allianceRallyPoint(RALLY_POINT_NONE), _blackCityPoints(0),
+            _allianceForcesCharging(false), _commanderArrived(false),
             _varianCanBeFound(false)
         {
             SetHeaders(DataHeader);
@@ -325,18 +362,51 @@ public:
                     return _allianceForcesCharging ? 1 : 0;
                 case DATA_COMMANDER_ARRIVED:
                     return _commanderArrived ? 1 : 0;
+                case DATA_ALLIANCE_RALLY_POINT:
+                    return _allianceRallyPoint;
                 default:
                     return 0;
             }
         }
 
-        void SetGuidData(uint32 type, ObjectGuid data) override
+        // A freed Argent Dawnbringer is worth a point of the Black City's. That is how a video of the retail
+        // scenario has it.
+        void SetData(uint32 type, uint32 /*data*/) override
         {
-            if (type != DATA_PLAYER_LEFT_FIND_VARIAN_SCENE)
+            if (type != DATA_DAWNBRINGER_FREED)
                 return;
 
-            if (Player* player = instance->GetPlayer(data))
-                LeaveFindVarianScene(player);
+            SendScenarioEvent(GAME_EVENT_BLACK_CITY_1);
+            AddBlackCityPoints(1);
+        }
+
+        void SetGuidData(uint32 type, ObjectGuid data) override
+        {
+            Player* player = instance->GetPlayer(data);
+            if (!player)
+                return;
+
+            switch (type)
+            {
+                case DATA_PLAYER_LEFT_FIND_VARIAN_SCENE:
+                    LeaveFindVarianScene(player);
+                    break;
+                case DATA_PLAYER_LEFT_BLACK_CITY_SCENE:
+                    LeaveBlackCityScene(player);
+                    break;
+                default:
+                    break;
+            }
+        }
+
+        // An Unattended Cannon can neither strafe nor jump, as a video of the retail scenario shows. Its
+        // vehicle (4585) does not say so.
+        void OnCreatureCreate(Creature* creature) override
+        {
+            InstanceScript::OnCreatureCreate(creature);
+
+            if (creature->GetEntry() == NPC_UNATTENDED_CANNON)
+                creature->AddExtraUnitMovementFlag(MOVEMENTFLAG2_NO_STRAFE | MOVEMENTFLAG2_NO_JUMPING);
         }
 
         void OnGameObjectCreate(GameObject* go) override
@@ -452,8 +522,8 @@ public:
         }
 
         // The stacks of "For the Alliance!" the scenario has got to, as videos of the retail scenario show
-        // them: a second when the lines at the portal have been said, a third when the Black City is
-        // reached, a fourth halfway through it and a fifth when Krosus comes.
+        // them: a second when the lines at the portal have been said, a third when the forces go into the
+        // Black City, a fourth halfway through it and a fifth when Krosus comes.
         void RaiseForTheAlliance(uint8 stacks)
         {
             _forTheAllianceStacks = std::max(_forTheAllianceStacks, stacks);
@@ -465,7 +535,11 @@ public:
         {
             _blackCityPoints += points;
             if (_blackCityPoints >= ForTheAllianceBlackCityPoints && _blackCityPoints - points < ForTheAllianceBlackCityPoints)
+            {
                 RaiseForTheAlliance(4);
+                if (Creature* varian = GetCreature(DATA_KING_VARIAN_WRYNN))
+                    varian->AI()->Talk(SAY_VARIAN_HALFWAY_THERE);
+            }
         }
 
         // Has one of the creatures the script keeps track of say a line after a delay
@@ -662,12 +736,17 @@ public:
                     StopFelMeteors();
                     VarianFound();
                     break;
+                // The forces fall back from the anchors
                 case STAGE_DESTROY_THE_PORTAL:
                     instance->SpawnGroupDespawn(SPAWN_GROUP_DESTROY_THE_PORTAL, true);
                     _scheduler.CancelGroup(TASK_GROUP_DESTROY_THE_PORTAL);
+                    _allianceForcesCharging = true;
+                    _allianceRallyPoint = RALLY_POINT_PORTAL_DESTROYED;
                     break;
                 case STAGE_RAZE_THE_BLACK_CITY:
                     instance->SpawnGroupDespawn(SPAWN_GROUP_RAZE_THE_BLACK_CITY, true);
+                    _scheduler.CancelGroup(TASK_GROUP_RAZE_THE_BLACK_CITY);
+                    _allianceRallyPoint = RALLY_POINT_NONE;
                     break;
                 // As with the commander, his death ends the stage and his corpse stays
                 case STAGE_KROSUS:
@@ -892,6 +971,8 @@ public:
             if (!varian || !_felMeteorStalkers.empty())
                 return;
 
+            SummonVariansForces();
+
             std::vector<Position> way = GetWayToVarian(varian);
 
             float length = 0.0f;
@@ -976,6 +1057,46 @@ public:
             _felMeteorStalkers.clear();
         }
 
+        // Gelbin Mekkatorque and the forces that are with Varian. They are put there when the way to him
+        // opens, and stay for the rest of the scenario.
+        void SummonVariansForces()
+        {
+            Creature* varian = GetCreature(DATA_KING_VARIAN_WRYNN);
+            if (!varian || !_variansForces.empty())
+                return;
+
+            float behind = varian->GetOrientation() + float(M_PI);
+            float aside = varian->GetOrientation() - float(M_PI) / 2.0f;
+
+            SummonAtVarian(varian, NPC_GELBIN_MEKKATORQUE, GelbinPlaceDistance * std::cos(aside), GelbinPlaceDistance * std::sin(aside));
+
+            for (std::size_t row = 0; row < std::size(VarianForces); ++row)
+            {
+                float back = VarianForcesRowDistance + float(row) * VarianForcesRowSpacing;
+                for (std::size_t i = 0; i < VarianForcesRowSize; ++i)
+                {
+                    float side = (float(i) - float(VarianForcesRowSize - 1) / 2.0f) * VarianForcesSpacing;
+                    SummonAtVarian(varian, VarianForces[row][i],
+                        back * std::cos(behind) + side * std::cos(aside),
+                        back * std::sin(behind) + side * std::sin(aside));
+                }
+            }
+        }
+
+        void SummonAtVarian(Creature const* varian, uint32 entry, float offsetX, float offsetY)
+        {
+            float x = varian->GetPositionX() + offsetX;
+            float y = varian->GetPositionY() + offsetY;
+            instance->LoadGrid(x, y);
+
+            Position place(x, y, varian->GetMapHeight(x, y, varian->GetPositionZ() + 10.0f), varian->GetOrientation());
+            if (TempSummon* fighter = instance->SummonCreature(entry, place))
+            {
+                fighter->SetHomePosition(place);
+                _variansForces.push_back(fighter->GetGUID());
+            }
+        }
+
         // Jaina and Genn stand in front of Varian, to either side, facing him, and he greets them
         void VarianFound()
         {
@@ -1004,11 +1125,18 @@ public:
         // appears there and comes forth is how a video of the retail scenario has it; what makes it appear
         // is a guess. The lines are the next four of the scenario's; that the first and third
         // are Varian's, and when they are said, is a guess.
-        // TODO: the portal itself, how the Mo'arg Painbringer appears in it and that another follows when it
-        // has died, and Varian's forces.
+        // When Varian has them form up, the leaders and the forces at his camp advance on the anchors, and
+        // Jaina says her last line when she is among them. They fall back when the stage ends. That is how
+        // videos of the retail scenario have it.
+        // TODO: that another Mo'arg Painbringer follows when the first has died.
         void StartDestroyThePortal()
         {
             instance->SpawnGroupSpawn(SPAWN_GROUP_DESTROY_THE_PORTAL, true);
+
+            // They are there already unless a GM skipped the stage before
+            SummonVariansForces();
+            _allianceForcesCharging = false;
+            _allianceRallyPoint = RALLY_POINT_NONE;
 
             // Players who release from here on go to the graveyard at Varian's camp. Until he was found it
             // was still the one on the beach: his camp is where the way under the Fel Meteors leads.
@@ -1018,7 +1146,20 @@ public:
             TalkLater(8s, TASK_GROUP_DESTROY_THE_PORTAL, DATA_KING_VARIAN_WRYNN, SAY_VARIAN_TAKE_DOWN_THIS_PORTAL);
             TalkLater(10500ms, TASK_GROUP_DESTROY_THE_PORTAL, DATA_LADY_JAINA_PROUDMOORE, SAY_JAINA_CRYSTALS_ARE_THE_KEY);
             TalkLater(15500ms, TASK_GROUP_DESTROY_THE_PORTAL, DATA_KING_VARIAN_WRYNN, SAY_VARIAN_FORM_UP);
-            TalkLater(22s, TASK_GROUP_DESTROY_THE_PORTAL, DATA_LADY_JAINA_PROUDMOORE, SAY_JAINA_FOCUS_ON_THE_CRYSTALS);
+            _scheduler.Schedule(15500ms, TASK_GROUP_DESTROY_THE_PORTAL, [this](TaskContext /*context*/)
+            {
+                _allianceForcesCharging = true;
+                _allianceRallyPoint = RALLY_POINT_ANCHORS;
+            });
+            _scheduler.Schedule(16500ms, TASK_GROUP_DESTROY_THE_PORTAL, [this](TaskContext context)
+            {
+                BrokenShoreRallyPoint const& anchors = AllianceRallyPoints[RALLY_POINT_ANCHORS];
+                Creature* jaina = GetCreature(DATA_LADY_JAINA_PROUDMOORE);
+                if (jaina && jaina->IsAlive() && (jaina->IsInCombat() || jaina->GetExactDist2d(anchors.X, anchors.Y) <= JainaAtAnchorsDistance))
+                    jaina->AI()->Talk(SAY_JAINA_FOCUS_ON_THE_CRYSTALS);
+                else
+                    context.Repeat(1s);
+            });
 
             _scheduler.Schedule(ForTheAllianceAtThePortalDelay, TASK_GROUP_DESTROY_THE_PORTAL, [this](TaskContext /*context*/)
             {
@@ -1077,26 +1218,67 @@ public:
         // worth 1, 2, 5 and 10 points each and sent from OnUnitDeath. The city's demons respawn,
         // because killing each of them once does not fill the bar. The Unattended Cannons that players
         // can fight from are spawned with them and need no scripting.
-        // TODO: the city's Anchoring Crystals and Varian's forces.
+        // The leaders talk where the forces fell back to when the portal was destroyed. With Varian's last
+        // line there the forces go to the city's gate, where an Argent Dawnbringer is caged. Varian talks
+        // with it, and then the forces go into the city and players get their third stack of "For the
+        // Alliance!". That is how videos of the retail scenario have it. The lines are the scenario's next;
+        // who says those that have a man's voice, and when, is a guess.
+        // TODO: the city's Anchoring Crystals.
         void StartRazeTheBlackCity()
         {
             instance->SpawnGroupSpawn(SPAWN_GROUP_RAZE_THE_BLACK_CITY, true);
 
             _blackCityPoints = 0;
 
-            // TODO: the third stack comes somewhat into the stage, not as it starts; when is not settled
-            RaiseForTheAlliance(3);
+            TalkLater(8s, TASK_GROUP_RAZE_THE_BLACK_CITY, DATA_KING_VARIAN_WRYNN, SAY_VARIAN_HEAL_THE_WOUNDED);
+            TalkLater(12s, TASK_GROUP_RAZE_THE_BLACK_CITY, DATA_LADY_JAINA_PROUDMOORE, SAY_JAINA_WHAT_HAPPENED_HERE);
+            TalkLater(14500ms, TASK_GROUP_RAZE_THE_BLACK_CITY, DATA_GELBIN_MEKKATORQUE, SAY_GELBIN_IT_HAPPENED_IN_SECONDS);
+            TalkLater(26s, TASK_GROUP_RAZE_THE_BLACK_CITY, DATA_KING_VARIAN_WRYNN, SAY_VARIAN_WITH_ME_ALLIANCE);
+            _scheduler.Schedule(26s, TASK_GROUP_RAZE_THE_BLACK_CITY, [this](TaskContext /*context*/)
+            {
+                _allianceForcesCharging = true;
+                _allianceRallyPoint = RALLY_POINT_BLACK_CITY_GATE;
+            });
+            _scheduler.Schedule(27s, TASK_GROUP_RAZE_THE_BLACK_CITY, [this](TaskContext context)
+            {
+                BrokenShoreRallyPoint const& gate = AllianceRallyPoints[RALLY_POINT_BLACK_CITY_GATE];
+                Creature* varian = GetCreature(DATA_KING_VARIAN_WRYNN);
+                if (varian && varian->IsAlive() && varian->GetExactDist2d(gate.X, gate.Y) <= VarianAtTheGateDistance)
+                    TalkAtTheGate();
+                else
+                    context.Repeat(1s);
+            });
 
             // Players who release from here on go to the graveyard at the edge of the city
             SetEntranceLocation(WORLD_SAFE_LOC_ALLIANCE_CITY);
+        }
+
+        void TalkAtTheGate()
+        {
+            TalkLater(2s, TASK_GROUP_RAZE_THE_BLACK_CITY, DATA_KING_VARIAN_WRYNN, SAY_VARIAN_WHERE_IS_TIRION);
+            _scheduler.Schedule(7s, TASK_GROUP_RAZE_THE_BLACK_CITY, [this](TaskContext /*context*/)
+            {
+                auto bounds = instance->GetCreatureBySpawnIdStore().equal_range(GateDawnbringerSpawnId);
+                if (bounds.first != bounds.second && bounds.first->second->IsAlive())
+                    bounds.first->second->AI()->Talk(SAY_DAWNBRINGER_FELFIRE_EVERYWHERE);
+            });
+            TalkLater(12s, TASK_GROUP_RAZE_THE_BLACK_CITY, DATA_KING_VARIAN_WRYNN, SAY_VARIAN_SAVE_YOUR_STRENGTH);
+            TalkLater(15500ms, TASK_GROUP_RAZE_THE_BLACK_CITY, DATA_LADY_JAINA_PROUDMOORE, SAY_JAINA_SURVIVORS);
+            _scheduler.Schedule(17s, TASK_GROUP_RAZE_THE_BLACK_CITY, [this](TaskContext /*context*/)
+            {
+                RaiseForTheAlliance(3);
+                _allianceRallyPoint = RALLY_POINT_BLACK_CITY;
+            });
         }
 
         // "Get to Tirion." Needs GAME_EVENT_TIRION_FOUND, sent when a player reaches the ledge he hangs
         // in front of. He stays where he is until the next stage starts.
         // Players start the stage together at the edge of the city, where a bridge of ice forms across the
         // gap to the crevasse.
-        // TODO: the cinematic that plays before players are moved, Gul'dan and what he says, Tirion's
-        // chains, the demons on the way from the city and Varian's forces.
+        // A cutscene plays first, "Stage 3 Scene", and each player is taken there when it is over for them.
+        // That is how a video of the retail scenario has it, in which the player skips the cutscene.
+        // TODO: Gul'dan and what he says, Tirion's chains, the demons on the way from the city and Varian's
+        // forces.
         void StartTheHighlord()
         {
             instance->SpawnGroupSpawn(SPAWN_GROUP_THE_HIGHLORD, true);
@@ -1105,10 +1287,30 @@ public:
             // Players who release from here on go to the graveyard at the crevasse
             SetEntranceLocation(WORLD_SAFE_LOC_ALLIANCE_CREVASSE);
 
+            _playersAtTheCityEdge.clear();
             instance->DoOnPlayers([](Player* player)
             {
-                player->NearTeleportTo(BlackCityRazedPosition);
+                player->CastSpell(player, SPELL_STAGE_3_SCENE, true);
             });
+
+            _scheduler.Schedule(BlackCitySceneTimeout, TASK_GROUP_BLACK_CITY_SCENE, [this](TaskContext /*context*/)
+            {
+                instance->DoOnPlayers([this](Player* player)
+                {
+                    player->RemoveAurasDueToSpell(SPELL_STAGE_3_SCENE);
+                    LeaveBlackCityScene(player);
+                });
+            });
+        }
+
+        // The cutscene is over for the player, who is taken to the edge of the city
+        void LeaveBlackCityScene(Player* player)
+        {
+            if (!_playersAtTheCityEdge.insert(player->GetGUID()).second)
+                return;
+
+            player->ExitVehicle();
+            player->NearTeleportTo(BlackCityRazedPosition);
         }
 
         void UpdateTheHighlord(uint32 diff)
@@ -1173,12 +1375,15 @@ public:
         TaskScheduler _scheduler;
         uint8 _spiresDestroyed;
         uint8 _forTheAllianceStacks;
+        uint8 _allianceRallyPoint;
         uint32 _blackCityPoints;
         bool _allianceForcesCharging;
         bool _commanderArrived;
         bool _varianCanBeFound;
         GuidUnorderedSet _playersOnTheHilltop;
+        GuidUnorderedSet _playersAtTheCityEdge;
         GuidVector _felMeteorStalkers;
+        GuidVector _variansForces;
         GuidVector _spireGUIDs;
         std::unordered_set<ObjectGuid::LowType> _fallenSpires;
     };
@@ -1407,6 +1612,35 @@ private:
     uint32 _shieldTimer;
 };
 
+// 240535 - Legion Cage
+// Holds an Argent Dawnbringer. A player who opens it frees the Dawnbringer, once, which then joins the
+// Alliance's forces.
+struct go_broken_shore_legion_cage : public GameObjectAI
+{
+    go_broken_shore_legion_cage(GameObject* go) : GameObjectAI(go) { }
+
+    bool OnGossipHello(Player* /*player*/) override
+    {
+        std::vector<Creature*> dawnbringers;
+        me->GetCreatureListWithEntryInGrid(dawnbringers, NPC_ARGENT_DAWNBRINGER, LegionCageDistance);
+        for (Creature* dawnbringer : dawnbringers)
+        {
+            // Those that lie dead near the cage at the gate are of the same kind
+            if (!dawnbringer->IsAlive() || dawnbringer->GetStandState() == UNIT_STAND_STATE_DEAD)
+                continue;
+
+            dawnbringer->AI()->DoAction(ACTION_DAWNBRINGER_FREED);
+            me->SetFlag(GO_FLAG_NOT_SELECTABLE);
+            if (InstanceScript* instance = me->GetInstanceScript())
+                instance->SetData(DATA_DAWNBRINGER_FREED, 1);
+
+            break;
+        }
+
+        return false;
+    }
+};
+
 // 199036 - Fel Meteor
 // What lands where a stalker above the way to King Varian Wrynn has sent a meteor. The spell takes whatever
 // is around; whom Blizzard has it take is not known, and here it is players, but for those who are watching
@@ -1480,14 +1714,50 @@ private:
     }
 };
 
+// 1373 - the cutscene that "Stage 3 Scene" (181926) plays when the Black City has been razed. The player is
+// taken to the edge of the city when it asks for that ("port") or when it ends, however it ends.
+class scene_broken_shore_alliance_stage_3 : public SceneScript
+{
+public:
+    scene_broken_shore_alliance_stage_3() : SceneScript("scene_broken_shore_alliance_stage_3") { }
+
+    void OnSceneTriggerEvent(Player* player, uint32 /*sceneInstanceID*/, SceneTemplate const* /*sceneTemplate*/, std::string const& triggerName) override
+    {
+        if (triggerName == "port")
+            Leave(player);
+    }
+
+    void OnSceneComplete(Player* player, uint32 /*sceneInstanceID*/, SceneTemplate const* /*sceneTemplate*/) override
+    {
+        Leave(player);
+    }
+
+    void OnSceneCancel(Player* player, uint32 /*sceneInstanceID*/, SceneTemplate const* /*sceneTemplate*/) override
+    {
+        Leave(player);
+    }
+
+private:
+    static void Leave(Player* player)
+    {
+        if (player->GetMapId() != MAP_BROKEN_SHORE_SCENARIO)
+            return;
+
+        if (InstanceScript* instance = player->GetInstanceScript())
+            instance->SetGuidData(DATA_PLAYER_LEFT_BLACK_CITY_SCENE, player->GetGUID());
+    }
+};
+
 void AddSC_scenario_broken_shore()
 {
     new instance_broken_shore_scenario();
     new scene_broken_shore_alliance_stage_2();
+    new scene_broken_shore_alliance_stage_3();
     RegisterCreatureAI(npc_captain_angelica_broken_shore);
     RegisterBrokenShoreCreatureAI(npc_broken_shore_anchoring_crystal);
     RegisterBrokenShoreCreatureAI(npc_broken_shore_spire_of_woe);
     RegisterBrokenShoreCreatureAI(npc_broken_shore_eredar_chaos_guard);
+    RegisterGameObjectAIWithFactory(go_broken_shore_legion_cage, GetBrokenShoreAI);
     RegisterSpellScript(spell_broken_shore_fel_beam);
     RegisterSpellScript(spell_broken_shore_fel_meteor);
 }
