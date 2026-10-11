@@ -153,9 +153,19 @@ enum BrokenShoreCreatureIds
     // Krosus (Alliance)
     NPC_KROSUS                          = 90544,
 
-    // Stop Gul'dan (Alliance)
+    // Stop Gul'dan (Alliance). The demons he brings before him to be fought have templates of their own,
+    // made together; those of the Legion that comes after them were made with the scenario's other
+    // creatures. Which of them stand there is from a video of the retail scenario, as far as it shows.
     NPC_GULDAN                          = 94276,
+    NPC_FELSTALKER_DREADHOUND_TOMB      = 105199,
+    NPC_FELGUARD_INVADER_TOMB           = 105203,
     NPC_MOARG_SPINEBREAKER              = 105205,
+    NPC_WRATHGUARD_DREADBLADE_TOMB      = 105206,
+    NPC_IMP_MOTHER_FECUNDA              = 90662,
+    NPC_TICHONDRIUS_THE_DARKENER        = 90688,
+    NPC_JAILER_ZERUS                    = 91672,
+    NPC_BRUTALLUS                       = 91902,
+    NPC_FEL_COMMANDER_AZGALOR           = 93719,
 
     NPC_FINALE_KILL_CREDIT              = 90918, // quest objective "Broken Shore assaulted"
     NPC_CAPTAIN_ANGELICA                = 108920 // Stormwind Harbor, quest objective "Ship taken to the Broken Shore"
@@ -243,9 +253,20 @@ enum BrokenShoreSpells
     SPELL_CHAOS_SHIELD                  = 181545,
     SPELL_LEGION_INVASION_SPAWN         = 180433, // the Mo'arg Painbringer, as it appears in the portal; picked by eye against a video
 
+    // "Broken Shore Complete": how the scenario ends for a player. It gives the credit for the quest's
+    // objective "Broken Shore assaulted", plays the cinematic of Varian's fall, takes the player out of
+    // combat and lets nothing harm them for five minutes.
+    SPELL_BROKEN_SHORE_COMPLETE         = 208513,
+
     // The Alliance's forces
     SPELL_WRATH                         = 171773, // Gilnean Druid
     SPELL_FROSTFIRE_BOLT                = 199219  // Kirin Tor Battle-Mage
+};
+
+// Movie.db2
+enum BrokenShoreMovies
+{
+    MOVIE_BROKEN_SHORE_ALLIANCE         = 487 // what "Broken Shore Complete" plays
 };
 
 enum BrokenShoreSpellVisuals
@@ -327,7 +348,15 @@ enum BrokenShoreVarianTexts
     SAY_VARIAN_FOCUS_YOUR_FIRE          = 13,
     SAY_VARIAN_HEADING_YOUR_WAY         = 14,
     SAY_VARIAN_WEVE_GOT_HIM             = 15,
-    SAY_VARIAN_ANOTHER_SHOT             = 16
+    SAY_VARIAN_ANOTHER_SHOT             = 16,
+    SAY_VARIAN_BIGGER_THEY_ARE          = 17,
+    SAY_VARIAN_ACROSS_THE_CHASM         = 18,
+    SAY_VARIAN_SYLVANAS_THANK_YOU       = 19,
+    SAY_VARIAN_AND_YOU                  = 20,
+    SAY_VARIAN_NOWHERE_TO_RUN           = 21,
+    SAY_VARIAN_HOLD_STEADY              = 22,
+    SAY_VARIAN_WE_WILL_NEVER_FALL       = 23,
+    SAY_VARIAN_CUT_YOU_DOWN             = 24
 };
 
 // creature_text groups of Highlord Tirion Fordring, Gul'dan, the Horde's leaders and Krosus
@@ -340,16 +369,26 @@ enum BrokenShoreTirionTexts
     SAY_GULDAN_DESTROY_HIM              = 1,
     SAY_GULDAN_FALL_TO_ASH              = 2,
     SAY_GULDAN_DESTROY_THEM             = 3,
+    SAY_GULDAN_WITNESS_THE_MIGHT        = 4,
+    SAY_GULDAN_LEGION_IS_ENDLESS        = 5,
+    SAY_GULDAN_DO_YOU_SEE_NOW           = 6,
+    SAY_GULDAN_NOW_YOU_WILL_FALL        = 7,
 
     SAY_SYLVANAS_YOU_WILL_PAY           = 0,
     SAY_SYLVANAS_TOGETHER               = 1,
     SAY_SYLVANAS_LETS_GO_HORDE          = 2,
     SAY_SYLVANAS_ALL_YOURS              = 3,
     SAY_SYLVANAS_JOB_DONE               = 4,
+    SAY_SYLVANAS_NO_TIME_TO_GLOAT       = 5,
+    SAY_SYLVANAS_TAKE_THE_RIDGE         = 6,
+    SAY_SYLVANAS_GOOD_LUCK_VARIAN       = 7,
 
     SAY_THRALL_FORDRING                 = 0,
 
-    SAY_KROSUS_YOU_WILL_KNOW_FEAR       = 0
+    SAY_KROSUS_YOU_WILL_KNOW_FEAR       = 0,
+
+    // Brutallus, Tichondrius and Azgalor each have one line, before Gul'dan
+    SAY_LEGION_LORD_RETURNS             = 0
 };
 
 // creature_text groups of the Argent Dawnbringer
@@ -429,6 +468,7 @@ enum BrokenShoreRallyPoints
     RALLY_POINT_BLACK_CITY              = 4, // the same place, but they go for the demons all over the city
     RALLY_POINT_BRIDGE                  = 5, // the far end of Jaina's bridge to the crevasse
     RALLY_POINT_TIRION                  = 6, // the ledge before the pool that Tirion hangs over
+    RALLY_POINT_GULDAN                  = 7, // before Gul'dan, on the height above the pool
     RALLY_POINT_MAX
 };
 
@@ -445,7 +485,8 @@ struct BrokenShoreRallyPoint
 // advance, where the leaders gather when the portal is destroyed, and where they all gather before the gate
 // of the Black City. That is a few yards back from where the video has them, to keep them off the cage
 // there, and they do not look far for demons from it: the city's first are 50 yards on. From the gate the
-// forces go for the nearest demon anywhere in the city, which is up to 250 yards across.
+// forces go for the nearest demon anywhere in the city, which is up to 250 yards across. Where they gather
+// before Gul'dan is a guess: about 50 yards from him, on the way up from Jaina's second bridge.
 static constexpr BrokenShoreRallyPoint AllianceRallyPoints[RALLY_POINT_MAX] =
 {
     {    0.0f,    0.0f,  0.0f,   0.0f,   0.0f },
@@ -454,7 +495,8 @@ static constexpr BrokenShoreRallyPoint AllianceRallyPoints[RALLY_POINT_MAX] =
     { 1110.8f, 2336.7f, 20.2f, 200.0f,  30.0f },
     { 1108.1f, 2332.5f, 20.1f, 400.0f, 250.0f },
     { 1419.9f, 2082.1f, 21.0f, 150.0f,  30.0f },
-    { 1495.8f, 1813.7f, 37.4f, 150.0f,  60.0f }
+    { 1495.8f, 1813.7f, 37.4f, 150.0f,  60.0f },
+    { 1630.0f, 1702.0f, 77.5f, 250.0f,  60.0f }
 };
 
 // The middle of the gateway into the Black City, from the same videos. The forces that gathered before the
@@ -466,6 +508,32 @@ static constexpr BrokenShoreRallyPoint BlackCityGateWay[] =
 {
     { 1159.8f, 2403.9f, 31.1f, 0.0f, 0.0f },
     { 1124.1f, 2357.8f, 20.9f, 0.0f, 0.0f }
+};
+
+// The ways the forces take over Jaina's bridges of ice: the foot of the bridge, and the middle of its deck
+// every ten yards along it. The deck rises in a curve; its heights are those of the model. The first bridge
+// leads from the edge of the Black City to the crevasse.
+static constexpr BrokenShoreRallyPoint HighlordBridgeWay[] =
+{
+    { 1415.5f, 2141.5f, 21.8f, 0.0f, 0.0f },
+    { 1416.7f, 2130.1f, 22.2f, 0.0f, 0.0f },
+    { 1417.6f, 2120.1f, 27.2f, 0.0f, 0.0f },
+    { 1418.6f, 2110.2f, 31.7f, 0.0f, 0.0f },
+    { 1419.6f, 2100.2f, 34.3f, 0.0f, 0.0f },
+    { 1420.6f, 2090.3f, 36.4f, 0.0f, 0.0f },
+    { 1421.4f, 2082.8f, 36.8f, 0.0f, 0.0f }
+};
+
+// The second leads from the ledge before the pool to the slope below the height Gul'dan stands on
+static constexpr BrokenShoreRallyPoint GuldanBridgeWay[] =
+{
+    { 1528.6f, 1808.7f, 37.3f, 0.0f, 0.0f },
+    { 1532.8f, 1797.5f, 37.9f, 0.0f, 0.0f },
+    { 1536.4f, 1788.1f, 42.9f, 0.0f, 0.0f },
+    { 1539.9f, 1778.8f, 47.4f, 0.0f, 0.0f },
+    { 1543.4f, 1769.4f, 50.1f, 0.0f, 0.0f },
+    { 1546.9f, 1760.1f, 52.1f, 0.0f, 0.0f },
+    { 1549.6f, 1753.0f, 52.5f, 0.0f, 0.0f }
 };
 
 // spawn_group_template. Each stage's spawns are one group, spawned when the stage starts.

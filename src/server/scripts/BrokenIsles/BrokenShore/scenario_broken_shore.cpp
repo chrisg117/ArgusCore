@@ -41,6 +41,7 @@
 #include "TemporarySummon.h"
 #include "World.h"
 #include "broken_shore.h"
+#include <span>
 
 ObjectData const creatureData[] =
 {
@@ -137,7 +138,7 @@ static constexpr std::size_t ForcesBridgeRowSize = 6;
 // that the forces make for its far end, and how long after that they are put on the ledge before Tirion
 static constexpr Milliseconds JainaBridgeDelay = 6500ms;
 static constexpr Milliseconds ForcesCrossDelay = 3s;
-static constexpr Milliseconds ForcesLedgeDelay = 14s;
+static constexpr Milliseconds ForcesLedgeDelay = 17s;
 
 // Where the leaders are on that ledge, from a video of the retail scenario and taken in game, and how far
 // apart they and the forces behind them are put
@@ -198,9 +199,143 @@ static constexpr float TirionFoundDistance = 40.0f;
 // How close to Gul'dan a player dies
 static constexpr float GuldanDeathDistance = 5.0f;
 
-// How far into a stage Jaina's bridge of ice appears, and how long after that it starts to form
-static constexpr Seconds BridgeSpawnDelay = 3s;
+// How long after a bridge of ice of Jaina's appears it starts to form
 static constexpr Milliseconds BridgeFormDelay = 500ms;
+
+// "Stop Gul'dan". What Varian and Sylvanas say when Krosus has fallen is spaced by the length of the lines.
+// When they have said it the Horde's leaders, who are within this distance of Sylvanas, leave for the ridge.
+// Where that is is not known: they run this far back from the pool and are gone this long after they set off.
+static constexpr Milliseconds HordeLeavesDelay = 24s;
+static constexpr float HordeLeadersDistance = 30.0f;
+static constexpr float HordeLeaveDistance = 45.0f;
+static constexpr Milliseconds HordeGoneDelay = 7s;
+
+// Once Varian has sent everyone across, Jaina makes her second bridge of ice when the demons that Krosus's
+// Fel Storms brought to the ledge are dead. They are looked for this far around her.
+static constexpr Milliseconds AcrossTheChasmDelay = 13s;
+static constexpr float LedgeDemonDistance = 100.0f;
+
+// Where she makes it from, taken in game, and facing along it. She has to come this near to that place, is
+// given this many seconds to, and does not go there at all from farther away than this.
+Position const JainaSecondBridgePosition = { 1528.8f, 1805.6f, 37.3f, 5.07f };
+static constexpr float JainaSecondBridgeTolerance = 2.0f;
+static constexpr uint32 JainaSecondBridgeChecks = 15;
+static constexpr float JainaSecondBridgeMaxDistance = 150.0f;
+
+// Which way the Alliance faces where it gathers before Gul'dan: towards him. Varian speaks to him once a
+// player is this near to that place and Varian this near to it. When the player has waited this many
+// seconds for Varian, he and the forces are put there.
+static constexpr float GuldanGatherOrientation = 5.31f;
+static constexpr float GuldanConfrontDistance = 45.0f;
+static constexpr float VarianConfrontDistance = 15.0f;
+static constexpr uint32 VarianConfrontWait = 20;
+
+// One of the demons Gul'dan brings before him, and where it stands from where he does: so many yards ahead
+// of him, which is towards the Alliance, and so many to his left
+struct GuldanDemon
+{
+    uint32 Entry;
+    float Ahead;
+    float Side;
+};
+
+// The first row: Felguard Invaders with Felstalker Dreadhounds between them. That, the row behind it and the
+// Legion that comes after them are from a video of the retail scenario; how many there are of each is counted
+// from it as well as it shows, and where they stand is by eye.
+static constexpr GuldanDemon GuldanFirstRow[] =
+{
+    { NPC_FELGUARD_INVADER_TOMB,      12.0f, -20.0f }, { NPC_FELSTALKER_DREADHOUND_TOMB, 14.0f, -17.5f },
+    { NPC_FELGUARD_INVADER_TOMB,      12.0f, -15.0f }, { NPC_FELSTALKER_DREADHOUND_TOMB, 14.0f, -12.5f },
+    { NPC_FELGUARD_INVADER_TOMB,      12.0f, -10.0f }, { NPC_FELSTALKER_DREADHOUND_TOMB, 14.0f,  -7.5f },
+    { NPC_FELGUARD_INVADER_TOMB,      12.0f,  -5.0f }, { NPC_FELSTALKER_DREADHOUND_TOMB, 14.0f,  -2.5f },
+    { NPC_FELGUARD_INVADER_TOMB,      12.0f,   0.0f }, { NPC_FELSTALKER_DREADHOUND_TOMB, 14.0f,   2.5f },
+    { NPC_FELGUARD_INVADER_TOMB,      12.0f,   5.0f }, { NPC_FELSTALKER_DREADHOUND_TOMB, 14.0f,   7.5f },
+    { NPC_FELGUARD_INVADER_TOMB,      12.0f,  10.0f }, { NPC_FELSTALKER_DREADHOUND_TOMB, 14.0f,  12.5f },
+    { NPC_FELGUARD_INVADER_TOMB,      12.0f,  15.0f }, { NPC_FELSTALKER_DREADHOUND_TOMB, 14.0f,  17.5f },
+    { NPC_FELGUARD_INVADER_TOMB,      12.0f,  20.0f }
+};
+
+// The second row, behind Gul'dan: Wrathguard Dreadblades with a Mo'arg Spinebreaker at each end
+static constexpr GuldanDemon GuldanSecondRow[] =
+{
+    { NPC_MOARG_SPINEBREAKER,         -3.0f, -24.0f },
+    { NPC_WRATHGUARD_DREADBLADE_TOMB, -3.0f, -17.5f }, { NPC_WRATHGUARD_DREADBLADE_TOMB, -3.0f, -12.5f },
+    { NPC_WRATHGUARD_DREADBLADE_TOMB, -3.0f,  -7.5f }, { NPC_WRATHGUARD_DREADBLADE_TOMB, -3.0f,  -2.5f },
+    { NPC_WRATHGUARD_DREADBLADE_TOMB, -3.0f,   2.5f }, { NPC_WRATHGUARD_DREADBLADE_TOMB, -3.0f,   7.5f },
+    { NPC_WRATHGUARD_DREADBLADE_TOMB, -3.0f,  12.5f }, { NPC_WRATHGUARD_DREADBLADE_TOMB, -3.0f,  17.5f },
+    { NPC_MOARG_SPINEBREAKER,         -3.0f,  24.0f }
+};
+
+// The Legion, which is not fought. It stands to both sides of a way that is left open behind Gul'dan. What
+// comes first is a row of Felguard Legionnaires on each side with lords of the Legion behind them.
+static constexpr GuldanDemon GuldansLegionFirst[] =
+{
+    { NPC_FELGUARD_LEGIONNAIRE_1,    -9.0f, -31.0f }, { NPC_FELGUARD_LEGIONNAIRE_2,    -9.0f, -26.0f },
+    { NPC_FELGUARD_LEGIONNAIRE_3,    -9.0f, -21.0f }, { NPC_FELGUARD_LEGIONNAIRE_1,    -9.0f, -16.0f },
+    { NPC_FELGUARD_LEGIONNAIRE_2,    -9.0f, -11.0f }, { NPC_FELGUARD_LEGIONNAIRE_3,    -9.0f,  -6.0f },
+    { NPC_FELGUARD_LEGIONNAIRE_1,    -9.0f,   6.0f }, { NPC_FELGUARD_LEGIONNAIRE_2,    -9.0f,  11.0f },
+    { NPC_FELGUARD_LEGIONNAIRE_3,    -9.0f,  16.0f }, { NPC_FELGUARD_LEGIONNAIRE_1,    -9.0f,  21.0f },
+    { NPC_FELGUARD_LEGIONNAIRE_2,    -9.0f,  26.0f }, { NPC_FELGUARD_LEGIONNAIRE_3,    -9.0f,  31.0f },
+    { NPC_TICHONDRIUS_THE_DARKENER, -16.0f, -20.0f }, { NPC_IMP_MOTHER_FECUNDA,      -16.0f,   9.0f },
+    { NPC_FEL_COMMANDER_AZGALOR,    -20.0f,  20.0f }, { NPC_JAILER_ZERUS,            -15.0f,  31.0f }
+};
+
+// What comes when the second row has fallen: a row of Felguard Legionnaires on each side where that row
+// stood, and Brutallus on the way behind Gul'dan
+static constexpr GuldanDemon GuldansLegionSecond[] =
+{
+    { NPC_FELGUARD_LEGIONNAIRE_3,    -3.0f, -31.0f }, { NPC_FELGUARD_LEGIONNAIRE_1,    -3.0f, -26.0f },
+    { NPC_FELGUARD_LEGIONNAIRE_2,    -3.0f, -21.0f }, { NPC_FELGUARD_LEGIONNAIRE_3,    -3.0f, -16.0f },
+    { NPC_FELGUARD_LEGIONNAIRE_1,    -3.0f, -11.0f }, { NPC_FELGUARD_LEGIONNAIRE_2,    -3.0f,  -6.0f },
+    { NPC_FELGUARD_LEGIONNAIRE_3,    -3.0f,   6.0f }, { NPC_FELGUARD_LEGIONNAIRE_1,    -3.0f,  11.0f },
+    { NPC_FELGUARD_LEGIONNAIRE_2,    -3.0f,  16.0f }, { NPC_FELGUARD_LEGIONNAIRE_3,    -3.0f,  21.0f },
+    { NPC_FELGUARD_LEGIONNAIRE_1,    -3.0f,  26.0f }, { NPC_FELGUARD_LEGIONNAIRE_2,    -3.0f,  31.0f },
+    { NPC_BRUTALLUS,                 -9.0f,   0.0f }
+};
+
+// How far above Gul'dan the ground is looked for where his demons are put: the steps behind him rise
+static constexpr float GuldanGroundSearchHeight = 10.0f;
+
+// His demons appear in fel fire this long after they are there, because a client shows nothing at a creature
+// it does not know yet; the fire burns this long. A fallen demon lies this long.
+static constexpr Milliseconds GuldanDemonAppearDelay = 500ms;
+static constexpr uint32 GuldanDemonFireTime = 3000;
+static constexpr Milliseconds GuldanDemonCorpseTime = 60s;
+
+// How far a row that is sent at the Alliance runs if it meets nobody, and how many seconds a row is fought
+// before what follows it starts anyway
+static constexpr float GuldanRowAdvance = 34.0f;
+static constexpr uint32 GuldanRowTimeout = 120;
+
+// How far into what Varian and Gul'dan say the first two rows appear and the first is sent. The times, here
+// and of what follows a row, are those of a video of the retail scenario.
+static constexpr Milliseconds GuldanFirstRowsDelay = 22s;
+static constexpr Milliseconds GuldanChargeDelay = 28s;
+
+// How far the Legion's front line walks towards the Alliance when Gul'dan has said his last; the cinematic
+// starts while it is on its way
+static constexpr float LegionAdvanceDistance = 12.0f;
+
+// Where a player is taken when the cinematic is over: the deck of the Skyfire over Stormwind Harbor. The
+// place is where the spell after "Broken Shore Complete" (208514) teleports to. The client has that spell's
+// effect and not the spell itself, so the core does not know it and the script does what it would.
+WorldLocation const SkyfireDeckLocation(0, -8400.18f, 1383.11f, 135.12f, 2.36f);
+
+// How long after a player has come back into a scenario that has ended they are taken there
+static constexpr Seconds SkyfireReturnDelay = 2s;
+
+static void TakeToTheSkyfire(Player* player)
+{
+    player->TeleportTo(SkyfireDeckLocation);
+}
+
+// Which row of Gul'dan's demons is being fought
+enum GuldanFight
+{
+    GULDAN_FIGHT_NONE                   = 0,
+    GULDAN_FIGHT_FIRST_ROW              = 1,
+    GULDAN_FIGHT_SECOND_ROW             = 2
+};
 
 // How far from a Spire of Woe its Anchoring Crystals are at most, and the other way round. They circle it
 // about 15 yards out, and the spires stand more than 50 yards apart.
@@ -255,7 +390,8 @@ enum BrokenShoreTaskGroups
     TASK_GROUP_DESTROY_THE_PORTAL       = 8, // what is said at the portal, and the Mo'arg Painbringer setting off
     TASK_GROUP_RAZE_THE_BLACK_CITY      = 9, // what is said before the forces go into the Black City
     TASK_GROUP_BLACK_CITY_SCENE         = 10, // the end of the cutscene after it, which nothing calls off
-    TASK_GROUP_TIRION                   = 11  // what is said before the pool, Tirion's fall and Krosus rising
+    TASK_GROUP_TIRION                   = 11, // what is said before the pool, Tirion's fall and Krosus rising
+    TASK_GROUP_STOP_GULDAN              = 12  // what is said when Krosus has fallen and before Gul'dan, and Jaina's second bridge
 };
 
 // "The Battle for Broken Shore". The scenario itself is attached to the map by the `scenarios` table
@@ -391,9 +527,6 @@ public:
                     break;
                 case NPC_KROSUS:
                     SendScenarioEvent(GAME_EVENT_KROSUS_SLAIN);
-                    break;
-                case NPC_MOARG_SPINEBREAKER:
-                    SendScenarioEvent(GAME_EVENT_GULDAN_CONFRONTED);
                     break;
                 default:
                     break;
@@ -711,15 +844,6 @@ public:
             }
         }
 
-        // TODO: Jaina, who makes the bridges; for now they form by themselves.
-        void SpawnBridge(uint32 spawnGroupId)
-        {
-            _scheduler.Schedule(BridgeSpawnDelay, [this, spawnGroupId](TaskContext /*context*/)
-            {
-                instance->SpawnGroupSpawn(spawnGroupId, true);
-            });
-        }
-
         void StartStage(BrokenShoreStages stage)
         {
             TC_LOG_DEBUG("scripts", "Broken Shore scenario: stage {} started (instance {})", uint32(stage), instance->GetInstanceId());
@@ -810,6 +934,7 @@ public:
                     break;
                 // The same goes for the Mo'arg Spinebreaker, and Gul'dan stays as well
                 case STAGE_STOP_GULDAN:
+                    _scheduler.CancelGroup(TASK_GROUP_STOP_GULDAN);
                     instance->SetSpawnGroupInactive(SPAWN_GROUP_STOP_GULDAN);
                     break;
                 default:
@@ -1379,19 +1504,25 @@ public:
         // Puts them on the ledge before the pool that Tirion hangs over, where they gather
         void PlaceForcesOnTheLedge()
         {
+            PlaceForcesBehindTheLeaders(TirionLedgePosition);
+
+            _allianceRallyPoint = RALLY_POINT_TIRION;
+        }
+
+        // Puts the leaders in a row that runs from north to south, with its middle at the given place, and
+        // those of Varian's forces that still live in rows to the west of them
+        void PlaceForcesBehindTheLeaders(Position const& where)
+        {
             static constexpr uint32 Leaders[] = { DATA_KING_VARIAN_WRYNN, DATA_LADY_JAINA_PROUDMOORE, DATA_GENN_GREYMANE, DATA_GELBIN_MEKKATORQUE };
             for (std::size_t i = 0; i < std::size(Leaders); ++i)
             {
                 float side = (float(i) - float(std::size(Leaders) - 1) / 2.0f) * TirionLedgeSpacing;
-                PlaceAt(GetCreature(Leaders[i]), Position(TirionLedgePosition.GetPositionX() + side, TirionLedgePosition.GetPositionY(),
-                    TirionLedgePosition.GetPositionZ(), TirionLedgePosition.GetOrientation()));
+                PlaceAt(GetCreature(Leaders[i]), Position(where.GetPositionX() + side, where.GetPositionY(),
+                    where.GetPositionZ(), where.GetOrientation()));
             }
 
-            Position rows(TirionLedgePosition.GetPositionX(), TirionLedgePosition.GetPositionY() + TirionLedgeSpacing,
-                TirionLedgePosition.GetPositionZ(), TirionLedgePosition.GetOrientation());
+            Position rows(where.GetPositionX(), where.GetPositionY() + TirionLedgeSpacing, where.GetPositionZ(), where.GetOrientation());
             PlaceForcesInRows(rows, TirionLedgeSpacing, 1.0f);
-
-            _allianceRallyPoint = RALLY_POINT_TIRION;
         }
 
         // Puts those of Varian's forces that still live in rows that run from east to west. The first row's
@@ -1571,44 +1702,408 @@ public:
             });
         }
 
-        // "Stop Gul'dan from summoning the Legion." Needs GAME_EVENT_GULDAN_CONFRONTED, sent from
-        // OnUnitDeath when the Mo'arg Spinebreaker dies. It is the last stage of the scenario.
-        // A bridge of ice forms from the ledge where Krosus was fought to the path before the tomb.
-        // TODO: the demons Gul'dan summons, what is said, the Alliance being surrounded and the Horde
-        // on the ridge.
+        // "Stop Gul'dan from summoning the Legion." Needs GAME_EVENT_GULDAN_CONFRONTED, which is sent when
+        // Gul'dan has said his last. It is the last stage of the scenario.
+        // Varian and Sylvanas talk across the pool, and the Horde's leaders leave for the ridge. Jaina makes
+        // a bridge of ice from the ledge where Krosus was fought to the slope below the height that Gul'dan
+        // stands on; the Alliance crosses it and gathers before him, and Varian and he have their words.
+        // Gul'dan brings two rows of demons before him, which are fought one after the other, and then the
+        // Legion, which is not. The lines are Blizzard's; who says them, and when, is from a video of the
+        // retail scenario, and so is what Gul'dan brings.
+        // TODO: the Horde on the ridge, the cinematic and the return to Stormwind.
         void StartStopGuldan()
         {
+            // Gul'dan stands in another grid than the pool, which nothing has loaded while players are there
+            BrokenShoreRallyPoint const& gather = AllianceRallyPoints[RALLY_POINT_GULDAN];
+            instance->LoadGrid(gather.X, gather.Y);
             instance->SpawnGroupSpawn(SPAWN_GROUP_STOP_GULDAN, true);
-            SpawnBridge(SPAWN_GROUP_BRIDGE_TO_GULDAN);
 
             // Players who release from here on go to the graveyard before the tomb
             SetEntranceLocation(WORLD_SAFE_LOC_ALLIANCE_TOMB);
+
+            _guldanConfronted = false;
+            _varianConfrontWait = 0;
+            _guldanFight = GULDAN_FIGHT_NONE;
+            for (GuidVector* demons : { &_guldanFirstRow, &_guldanSecondRow, &_guldansLegion })
+            {
+                for (ObjectGuid const& guid : *demons)
+                    if (Creature* demon = instance->GetCreature(guid))
+                        demon->DespawnOrUnsummon();
+
+                demons->clear();
+            }
+
+            TalkLater(2s, TASK_GROUP_STOP_GULDAN, DATA_KING_VARIAN_WRYNN, SAY_VARIAN_BIGGER_THEY_ARE);
+            TalkLater(5s, TASK_GROUP_STOP_GULDAN, DATA_LADY_SYLVANAS_WINDRUNNER, SAY_SYLVANAS_NO_TIME_TO_GLOAT);
+            TalkLater(11500ms, TASK_GROUP_STOP_GULDAN, DATA_KING_VARIAN_WRYNN, SAY_VARIAN_ACROSS_THE_CHASM);
+            TalkLater(14s, TASK_GROUP_STOP_GULDAN, DATA_LADY_SYLVANAS_WINDRUNNER, SAY_SYLVANAS_TAKE_THE_RIDGE);
+            TalkLater(17500ms, TASK_GROUP_STOP_GULDAN, DATA_KING_VARIAN_WRYNN, SAY_VARIAN_SYLVANAS_THANK_YOU);
+            TalkLater(20s, TASK_GROUP_STOP_GULDAN, DATA_LADY_SYLVANAS_WINDRUNNER, SAY_SYLVANAS_GOOD_LUCK_VARIAN);
+            TalkLater(22s, TASK_GROUP_STOP_GULDAN, DATA_KING_VARIAN_WRYNN, SAY_VARIAN_AND_YOU);
+            _scheduler.Schedule(HordeLeavesDelay, TASK_GROUP_STOP_GULDAN, [this](TaskContext /*context*/)
+            {
+                HordeLeaves();
+            });
+
+            _scheduler.Schedule(AcrossTheChasmDelay, TASK_GROUP_STOP_GULDAN, [this](TaskContext context)
+            {
+                if (IsLedgeClear())
+                    SendJainaToMakeTheSecondBridge();
+                else
+                    context.Repeat(1s);
+            });
         }
 
-        // Nobody gets to Gul'dan: a player who comes that close to him dies
+        // The Horde's leaders run off, away from the pool, and are gone
+        void HordeLeaves()
+        {
+            Creature* sylvanas = GetCreature(DATA_LADY_SYLVANAS_WINDRUNNER);
+            if (!sylvanas)
+                return;
+
+            std::vector<Creature*> leaders = { sylvanas };
+            for (uint32 entry : { NPC_THRALL, NPC_BAINE_BLOODHOOF, NPC_VOLJIN })
+                if (Creature* leader = sylvanas->FindNearestCreature(entry, HordeLeadersDistance))
+                    leaders.push_back(leader);
+
+            for (Creature* leader : leaders)
+            {
+                leader->SetWalk(false);
+                leader->GetMotionMaster()->MovePoint(0, leader->GetPositionX() - HordeLeaveDistance, leader->GetPositionY(), leader->GetPositionZ());
+            }
+
+            _scheduler.Schedule(HordeGoneDelay, [this](TaskContext /*context*/)
+            {
+                instance->SpawnGroupDespawn(SPAWN_GROUP_HORDE_LEADERS, true);
+            });
+        }
+
+        // Whether the demons that Krosus's Fel Storms brought to the ledge before the pool are all dead
+        bool IsLedgeClear()
+        {
+            Creature* jaina = GetCreature(DATA_LADY_JAINA_PROUDMOORE);
+            if (!jaina)
+                return true;
+
+            for (uint32 entry : { NPC_BURNING_TERRORHOUND, NPC_LIVING_FELBLAZE, NPC_BURNING_SENTRY })
+                if (jaina->FindNearestCreature(entry, LedgeDemonDistance))
+                    return false;
+
+            return true;
+        }
+
+        // Jaina runs to where the bridge starts and makes it, as she made the first. The forces stay where
+        // they are until it is there, and cross it then. Where she is not there to make it, which takes a GM
+        // skipping stages, it forms by itself.
+        void SendJainaToMakeTheSecondBridge()
+        {
+            _allianceRallyPoint = RALLY_POINT_NONE;
+
+            Creature* jaina = GetCreature(DATA_LADY_JAINA_PROUDMOORE);
+            if (jaina && jaina->IsAlive() && jaina->GetExactDist2d(JainaSecondBridgePosition) <= JainaSecondBridgeMaxDistance)
+            {
+                jaina->SetWalk(false);
+                jaina->GetMotionMaster()->MovePoint(0, JainaSecondBridgePosition, true, JainaSecondBridgePosition.GetOrientation());
+            }
+
+            _scheduler.Schedule(1s, TASK_GROUP_STOP_GULDAN, [this](TaskContext context)
+            {
+                Creature* jaina = GetCreature(DATA_LADY_JAINA_PROUDMOORE);
+                bool there = jaina && jaina->IsAlive() && jaina->GetExactDist2d(JainaSecondBridgePosition) <= JainaSecondBridgeTolerance;
+                if (!there && jaina && jaina->IsAlive() && jaina->isMoving() && context.GetRepeatCounter() < JainaSecondBridgeChecks)
+                {
+                    context.Repeat(1s);
+                    return;
+                }
+
+                if (there)
+                {
+                    jaina->SetFacingTo(JainaSecondBridgePosition.GetOrientation());
+                    jaina->CastSpell(jaina, SPELL_DUMMY_CONE_OF_COLD, false);
+                }
+
+                instance->SpawnGroupSpawn(SPAWN_GROUP_BRIDGE_TO_GULDAN, true);
+                _scheduler.Schedule(ForcesCrossDelay, TASK_GROUP_STOP_GULDAN, [this](TaskContext /*context*/)
+                {
+                    _allianceRallyPoint = RALLY_POINT_GULDAN;
+                });
+            });
+        }
+
         void UpdateStopGuldan(uint32 diff)
         {
             if (!IsTimeToCheckPlayers(diff))
                 return;
 
             Creature* guldan = GetCreature(DATA_GULDAN);
-            if (!guldan)
-                return;
+            BrokenShoreRallyPoint const& gather = AllianceRallyPoints[RALLY_POINT_GULDAN];
 
+            bool playerHasCome = false;
             for (MapReference const& ref : instance->GetPlayers())
             {
                 Player* player = ref.GetSource();
-                if (player && !player->IsGameMaster() && player->IsAlive() && player->GetExactDist(guldan) <= GuldanDeathDistance)
+                if (!player || player->IsGameMaster() || !player->IsAlive())
+                    continue;
+
+                // Nobody gets to Gul'dan: a player who comes that close to him dies
+                if (guldan && player->GetExactDist(guldan) <= GuldanDeathDistance)
                     Unit::Kill(guldan, player);
+                else if (player->GetExactDist2d(gather.X, gather.Y) <= GuldanConfrontDistance)
+                    playerHasCome = true;
+            }
+
+            UpdateGuldanFight();
+
+            if (!playerHasCome || _guldanConfronted || _allianceRallyPoint != RALLY_POINT_GULDAN)
+                return;
+
+            Creature* varian = GetCreature(DATA_KING_VARIAN_WRYNN);
+            if (varian && varian->IsAlive() && varian->GetExactDist2d(gather.X, gather.Y) > VarianConfrontDistance)
+            {
+                if (++_varianConfrontWait < VarianConfrontWait)
+                    return;
+
+                PlaceForcesBehindTheLeaders(Position(gather.X, gather.Y, gather.Z, GuldanGatherOrientation));
+            }
+
+            ConfrontGuldan();
+        }
+
+        // Varian and Gul'dan have their words. Gul'dan brings two rows of demons before him, Varian has his
+        // forces charge, and the first row comes at them.
+        void ConfrontGuldan()
+        {
+            _guldanConfronted = true;
+
+            Creature* guldan = GetCreature(DATA_GULDAN);
+            Creature* varian = GetCreature(DATA_KING_VARIAN_WRYNN);
+            if (guldan && varian)
+                varian->SetFacingToObject(guldan);
+
+            TalkLater(1s, TASK_GROUP_STOP_GULDAN, DATA_KING_VARIAN_WRYNN, SAY_VARIAN_NOWHERE_TO_RUN);
+            TalkLater(10s, TASK_GROUP_STOP_GULDAN, DATA_GULDAN, SAY_GULDAN_WITNESS_THE_MIGHT);
+            _scheduler.Schedule(GuldanFirstRowsDelay, TASK_GROUP_STOP_GULDAN, [this](TaskContext /*context*/)
+            {
+                SummonGuldansDemons(GuldanFirstRow, _guldanFirstRow);
+                SummonGuldansDemons(GuldanSecondRow, _guldanSecondRow);
+            });
+
+            TalkLater(25s, TASK_GROUP_STOP_GULDAN, DATA_KING_VARIAN_WRYNN, SAY_VARIAN_HOLD_STEADY);
+            _scheduler.Schedule(GuldanChargeDelay, TASK_GROUP_STOP_GULDAN, [this](TaskContext /*context*/)
+            {
+                SendGuldansDemons(_guldanFirstRow);
+                _guldanFight = GULDAN_FIGHT_FIRST_ROW;
+                _guldanFightTime = 0;
+            });
+        }
+
+        // A place before Gul'dan, or behind him: so many yards ahead of him and so many to his left
+        Position GetPlaceBeforeGuldan(Creature const* guldan, float ahead, float side) const
+        {
+            float orientation = guldan->GetOrientation();
+            float x = guldan->GetPositionX() + ahead * std::cos(orientation) - side * std::sin(orientation);
+            float y = guldan->GetPositionY() + ahead * std::sin(orientation) + side * std::cos(orientation);
+            return Position(x, y, guldan->GetMapHeight(x, y, guldan->GetPositionZ() + GuldanGroundSearchHeight), orientation);
+        }
+
+        // Gul'dan brings demons before him, in fel fire. Nothing can fight them, and they fight nothing,
+        // until they are sent. The fire is a stand-in: a video of the retail scenario shows a wall of fel
+        // fire along a row that appears; which spell that is is not known.
+        void SummonGuldansDemons(std::span<GuldanDemon const> demons, GuidVector& guids)
+        {
+            Creature* guldan = GetCreature(DATA_GULDAN);
+            if (!guldan)
+                return;
+
+            GuidVector appeared;
+            for (GuldanDemon const& demon : demons)
+            {
+                Creature* creature = guldan->SummonCreature(demon.Entry, GetPlaceBeforeGuldan(guldan, demon.Ahead, demon.Side),
+                    TEMPSUMMON_CORPSE_TIMED_DESPAWN, GuldanDemonCorpseTime);
+                if (!creature)
+                    continue;
+
+                creature->SetImmuneToAll(true);
+                creature->SetReactState(REACT_PASSIVE);
+                appeared.push_back(creature->GetGUID());
+            }
+
+            guids.insert(guids.end(), appeared.begin(), appeared.end());
+            _scheduler.Schedule(GuldanDemonAppearDelay, TASK_GROUP_STOP_GULDAN, [this, appeared](TaskContext /*context*/)
+            {
+                for (ObjectGuid const& guid : appeared)
+                {
+                    Creature* creature = instance->GetCreature(guid);
+                    if (!creature)
+                        continue;
+
+                    creature->CastSpell(creature, SPELL_LEGION_INVASION_SPAWN, true);
+                    creature->SendPlaySpellVisualKit(SPELL_VISUAL_KIT_SPIRE_OF_WOE_FIRE, 0, GuldanDemonFireTime);
+                }
+            });
+        }
+
+        // A row of Gul'dan's demons comes at the Alliance, abreast, and fights whom it meets
+        void SendGuldansDemons(GuidVector const& guids)
+        {
+            for (ObjectGuid const& guid : guids)
+            {
+                Creature* demon = instance->GetCreature(guid);
+                if (!demon || !demon->IsAlive())
+                    continue;
+
+                demon->SetImmuneToAll(false);
+                demon->SetReactState(REACT_AGGRESSIVE);
+                demon->SetWalk(false);
+
+                float x = demon->GetPositionX() + GuldanRowAdvance * std::cos(demon->GetOrientation());
+                float y = demon->GetPositionY() + GuldanRowAdvance * std::sin(demon->GetOrientation());
+                demon->GetMotionMaster()->MovePoint(0, x, y, demon->GetMapHeight(x, y, demon->GetPositionZ() + GuldanGroundSearchHeight));
             }
         }
 
-        // TODO: the finale cinematic and the return to Stormwind.
+        bool HaveAllFallen(GuidVector const& guids) const
+        {
+            for (ObjectGuid const& guid : guids)
+                if (Creature const* demon = instance->GetCreature(guid))
+                    if (demon->IsAlive())
+                        return false;
+
+            return true;
+        }
+
+        // Called every second. When the row that is fought has fallen, what follows it starts.
+        void UpdateGuldanFight()
+        {
+            switch (_guldanFight)
+            {
+                case GULDAN_FIGHT_FIRST_ROW:
+                    if (HaveAllFallen(_guldanFirstRow) || ++_guldanFightTime >= GuldanRowTimeout)
+                        FirstRowFallen();
+                    break;
+                case GULDAN_FIGHT_SECOND_ROW:
+                    if (HaveAllFallen(_guldanSecondRow) || ++_guldanFightTime >= GuldanRowTimeout)
+                        SecondRowFallen();
+                    break;
+                default:
+                    break;
+            }
+        }
+
+        // Varian and Gul'dan have more words, the first of the Legion appears behind the second row, and
+        // that row comes at the Alliance
+        void FirstRowFallen()
+        {
+            _guldanFight = GULDAN_FIGHT_NONE;
+
+            TalkLater(2s, TASK_GROUP_STOP_GULDAN, DATA_KING_VARIAN_WRYNN, SAY_VARIAN_WE_WILL_NEVER_FALL);
+            TalkLater(15s, TASK_GROUP_STOP_GULDAN, DATA_GULDAN, SAY_GULDAN_LEGION_IS_ENDLESS);
+            _scheduler.Schedule(18s, TASK_GROUP_STOP_GULDAN, [this](TaskContext /*context*/)
+            {
+                SummonGuldansDemons(GuldansLegionFirst, _guldansLegion);
+            });
+
+            _scheduler.Schedule(25s, TASK_GROUP_STOP_GULDAN, [this](TaskContext /*context*/)
+            {
+                SendGuldansDemons(_guldanSecondRow);
+                _guldanFight = GULDAN_FIGHT_SECOND_ROW;
+                _guldanFightTime = 0;
+            });
+        }
+
+        // Varian speaks once more and the rest of the Legion appears. Three of its lords speak in turn, and
+        // then Gul'dan, which ends the stage and the scenario.
+        void SecondRowFallen()
+        {
+            _guldanFight = GULDAN_FIGHT_NONE;
+
+            TalkLater(2s, TASK_GROUP_STOP_GULDAN, DATA_KING_VARIAN_WRYNN, SAY_VARIAN_CUT_YOU_DOWN);
+            _scheduler.Schedule(5s, TASK_GROUP_STOP_GULDAN, [this](TaskContext /*context*/)
+            {
+                _guldansFrontLine = _guldansLegion.size();
+                SummonGuldansDemons(GuldansLegionSecond, _guldansLegion);
+            });
+
+            LegionLordTalksLater(9s, NPC_BRUTALLUS);
+            LegionLordTalksLater(16s, NPC_TICHONDRIUS_THE_DARKENER);
+            LegionLordTalksLater(23s, NPC_FEL_COMMANDER_AZGALOR);
+            TalkLater(30s, TASK_GROUP_STOP_GULDAN, DATA_GULDAN, SAY_GULDAN_DO_YOU_SEE_NOW);
+            TalkLater(37s, TASK_GROUP_STOP_GULDAN, DATA_GULDAN, SAY_GULDAN_NOW_YOU_WILL_FALL);
+            _scheduler.Schedule(38500ms, TASK_GROUP_STOP_GULDAN, [this](TaskContext /*context*/)
+            {
+                LegionAdvances();
+            });
+
+            _scheduler.Schedule(41500ms, TASK_GROUP_STOP_GULDAN, [this](TaskContext /*context*/)
+            {
+                SendScenarioEvent(GAME_EVENT_GULDAN_CONFRONTED);
+            });
+        }
+
+        // The front line of the Legion, the Felguard Legionnaires that came last, starts for the Alliance
+        // at a walk
+        void LegionAdvances()
+        {
+            for (std::size_t i = _guldansFrontLine; i < _guldansLegion.size(); ++i)
+            {
+                Creature* demon = instance->GetCreature(_guldansLegion[i]);
+                if (!demon || demon->GetEntry() == NPC_BRUTALLUS)
+                    continue;
+
+                float x = demon->GetPositionX() + LegionAdvanceDistance * std::cos(demon->GetOrientation());
+                float y = demon->GetPositionY() + LegionAdvanceDistance * std::sin(demon->GetOrientation());
+                demon->SetWalk(true);
+                demon->GetMotionMaster()->MovePoint(0, x, y, demon->GetMapHeight(x, y, demon->GetPositionZ() + GuldanGroundSearchHeight));
+            }
+        }
+
+        void LegionLordTalksLater(Milliseconds delay, uint32 entry)
+        {
+            _scheduler.Schedule(delay, TASK_GROUP_STOP_GULDAN, [this, entry](TaskContext /*context*/)
+            {
+                for (ObjectGuid const& guid : _guldansLegion)
+                {
+                    Creature* lord = instance->GetCreature(guid);
+                    if (!lord || lord->GetEntry() != entry)
+                        continue;
+
+                    lord->AI()->Talk(SAY_LEGION_LORD_RETURNS);
+                    return;
+                }
+            });
+        }
+
+        // The scenario ends for each player as Blizzard's spell for it has it end: with the credit for the
+        // quest and the cinematic of Varian's fall, which can be skipped. When the cinematic is over for a
+        // player, they are taken to the Skyfire (player_broken_shore_finale). The spell does nothing for the
+        // dead, so they are raised first.
         void CompleteScenario()
         {
+            _scenarioCompleted = true;
+
             instance->DoOnPlayers([](Player* player)
             {
-                player->KilledMonsterCredit(NPC_FINALE_KILL_CREDIT);
+                if (!player->IsAlive())
+                {
+                    player->ResurrectPlayer(1.0f);
+                    player->SpawnCorpseBones();
+                }
+
+                player->CastSpell(player, SPELL_BROKEN_SHORE_COMPLETE, true);
+            });
+        }
+
+        // A player who comes back when the scenario has ended, as one does who left the game during the
+        // cinematic, is taken to the Skyfire as well
+        void OnPlayerEnter(Player* player) override
+        {
+            if (!_scenarioCompleted)
+                return;
+
+            _scheduler.Schedule(SkyfireReturnDelay, [this, guid = player->GetGUID()](TaskContext /*context*/)
+            {
+                if (Player* returned = ObjectAccessor::GetPlayer(instance, guid))
+                    TakeToTheSkyfire(returned);
             });
         }
 
@@ -1626,6 +2121,15 @@ public:
         GuidUnorderedSet _playersOnTheHilltop;
         GuidUnorderedSet _playersAtTheCityEdge;
         uint32 _guldanChannelTimer = 0;
+        bool _guldanConfronted = false;
+        uint32 _varianConfrontWait = 0;
+        GuldanFight _guldanFight = GULDAN_FIGHT_NONE;
+        uint32 _guldanFightTime = 0;
+        GuidVector _guldanFirstRow;
+        GuidVector _guldanSecondRow;
+        GuidVector _guldansLegion;
+        std::size_t _guldansFrontLine = 0;
+        bool _scenarioCompleted = false;
         GuidVector _felMeteorStalkers;
         GuidVector _variansForces;
         GuidVector _spireGUIDs;
@@ -2041,9 +2545,24 @@ private:
     }
 };
 
+// When the cinematic that ends the scenario is over for a player, or the player has skipped it, they are
+// taken out of the scenario to the Skyfire over Stormwind Harbor
+class player_broken_shore_finale : public PlayerScript
+{
+public:
+    player_broken_shore_finale() : PlayerScript("player_broken_shore_finale") { }
+
+    void OnMovieComplete(Player* player, uint32 movieId) override
+    {
+        if (movieId == MOVIE_BROKEN_SHORE_ALLIANCE && player->GetMapId() == MAP_BROKEN_SHORE_SCENARIO)
+            TakeToTheSkyfire(player);
+    }
+};
+
 void AddSC_scenario_broken_shore()
 {
     new instance_broken_shore_scenario();
+    new player_broken_shore_finale();
     new scene_broken_shore_alliance_stage_2();
     new scene_broken_shore_alliance_stage_3();
     RegisterCreatureAI(npc_captain_angelica_broken_shore);

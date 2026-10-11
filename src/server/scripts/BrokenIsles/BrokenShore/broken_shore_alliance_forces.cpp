@@ -23,12 +23,14 @@
 #include "GridNotifiersImpl.h"
 #include "InstanceScript.h"
 #include "MotionMaster.h"
+#include "MoveSplineInit.h"
 #include "MovementDefines.h"
 #include "Random.h"
 #include "ScriptedCreature.h"
 #include "ThreatManager.h"
 #include "broken_shore.h"
 #include <algorithm>
+#include <span>
 #include <vector>
 
 // How far away a fighter looks for a Spire of Woe that still stands
@@ -73,6 +75,14 @@ static constexpr float RallyWayDistance = 3.0f;
 static constexpr float GateForcesDistance = 40.0f;
 static constexpr float GatewayTolerance = 4.0f;
 
+// On the way over one of Jaina's bridges of ice a fighter keeps this near to the middle of the deck. It has
+// to come this near to its place at the foot of the bridge to go onto it, and takes the bridge at all only
+// when it is this near to that place: one that the instance script has put beyond the bridge does not go
+// back for it.
+static constexpr float BridgeWayDistance = 1.0f;
+static constexpr float BridgeWayTolerance = 2.0f;
+static constexpr float BridgeJoinDistance = 70.0f;
+
 // How often a fighter that is not fighting looks for what to do next
 static constexpr uint32 FighterThinkInterval = 1 * IN_MILLISECONDS;
 
@@ -88,7 +98,16 @@ static constexpr uint32 LeaderYellCooldown = 30 * IN_MILLISECONDS;
 enum BrokenShoreFighterPoints
 {
     POINT_SPIRE                         = 1,
-    POINT_RALLY                         = 2
+    POINT_RALLY                         = 2,
+    POINT_BRIDGE                        = 3
+};
+
+// Where a fighter is with the bridge of ice on its way to where the forces gather
+enum BrokenShoreFighterBridge
+{
+    BRIDGE_AHEAD                        = 0,
+    BRIDGE_ON_IT                        = 1,
+    BRIDGE_BEHIND                       = 2
 };
 
 // 92074 - Alliance Priest
@@ -106,7 +125,7 @@ struct npc_broken_shore_alliance_soldier : public ScriptedAI
     npc_broken_shore_alliance_soldier(Creature* creature) : ScriptedAI(creature),
         _direction(Position::NormalizeOrientation(float(creature->GetGUID().GetCounter() % 1000) * FighterDirectionStep)),
         _standDistance(frand(SpireStandDistanceMin, SpireStandDistanceMax)), _thinkTimer(0), _rallyPoint(RALLY_POINT_NONE),
-        _throughTheGateway(true) { }
+        _throughTheGateway(true), _bridge(BRIDGE_AHEAD), _bridgeRallyPoint(RALLY_POINT_NONE) { }
 
     // A fighter picks its own fights
     void MoveInLineOfSight(Unit* /*who*/) override { }
@@ -127,7 +146,7 @@ struct npc_broken_shore_alliance_soldier : public ScriptedAI
     // On a way of several places a fighter goes on at once
     void MovementInform(uint32 type, uint32 id) override
     {
-        if (type == POINT_MOTION_TYPE && id == POINT_RALLY)
+        if (type == POINT_MOTION_TYPE && (id == POINT_RALLY || id == POINT_BRIDGE))
             _thinkTimer = 0;
     }
 
@@ -157,7 +176,7 @@ struct npc_broken_shore_alliance_soldier : public ScriptedAI
             return;
         }
 
-        if (GoThroughTheGateway())
+        if (GoThroughTheGateway() || GoOverTheBridge())
             return;
 
         GameObject* spire = FindNextSpire();
@@ -271,6 +290,87 @@ private:
         return true;
     }
 
+    // The way over the bridge of ice that leads to where the forces gather, if one does
+    static std::span<BrokenShoreRallyPoint const> GetBridgeWayTo(uint32 rallyPoint)
+    {
+        switch (rallyPoint)
+        {
+            case RALLY_POINT_BRIDGE:
+                return HighlordBridgeWay;
+            case RALLY_POINT_GULDAN:
+                return GuldanBridgeWay;
+            default:
+                return {};
+        }
+    }
+
+    // A fighter that is sent to gather beyond one of Jaina's bridges of ice goes to the foot of the bridge
+    // and over it before anything else. Returns whether it is still on that way.
+    bool GoOverTheBridge()
+    {
+        InstanceScript const* instance = me->GetInstanceScript();
+        uint32 point = instance ? instance->GetData(DATA_ALLIANCE_RALLY_POINT) : uint32(RALLY_POINT_NONE);
+        if (point != _bridgeRallyPoint)
+        {
+            _bridgeRallyPoint = point;
+            _bridge = BRIDGE_AHEAD;
+        }
+
+        std::span<BrokenShoreRallyPoint const> way = GetBridgeWayTo(point);
+        if (way.empty() || _bridge == BRIDGE_BEHIND)
+            return false;
+
+        if (_bridge == BRIDGE_ON_IT)
+        {
+            if (me->GetMotionMaster()->GetCurrentMovementGeneratorType() == POINT_MOTION_TYPE)
+                return true;
+
+            _bridge = BRIDGE_BEHIND;
+            return false;
+        }
+
+        // Each keeps to its own side of the middle of the deck
+        float sideX = BridgeWayDistance * std::cos(_direction);
+        float sideY = BridgeWayDistance * std::sin(_direction);
+
+        BrokenShoreRallyPoint const& foot = way.front();
+        Position place(foot.X + sideX, foot.Y + sideY, me->GetMapHeight(foot.X + sideX, foot.Y + sideY, foot.Z + 5.0f));
+        float distance = me->GetExactDist2d(place);
+        if (distance > BridgeJoinDistance)
+        {
+            _bridge = BRIDGE_BEHIND;
+            return false;
+        }
+
+        if (distance > BridgeWayTolerance)
+        {
+            if (me->GetMotionMaster()->GetCurrentMovementGeneratorType() != POINT_MOTION_TYPE)
+            {
+                me->SetWalk(false);
+                me->GetMotionMaster()->MovePoint(POINT_RALLY, place);
+            }
+
+            return true;
+        }
+
+        // Nothing tells the core that the bridge is there to walk on, and its deck is no straight line, so
+        // the fighter is given the whole way over it at once
+        Movement::PointsArray path;
+        path.emplace_back(me->GetPositionX(), me->GetPositionY(), me->GetPositionZ());
+        for (BrokenShoreRallyPoint const& via : way.subspan(1))
+            path.emplace_back(via.X + sideX, via.Y + sideY, via.Z);
+
+        me->SetWalk(false);
+        me->GetMotionMaster()->LaunchMoveSpline([path = std::move(path)](Movement::MoveSplineInit& init)
+        {
+            init.MovebyPath(path);
+            init.SetWalk(false);
+        }, POINT_BRIDGE, MOTION_PRIORITY_NORMAL, POINT_MOTION_TYPE);
+
+        _bridge = BRIDGE_ON_IT;
+        return true;
+    }
+
     // The place the instance script has the forces gather at, if there is one and the fighter is not too
     // far from it
     BrokenShoreRallyPoint const* GetRallyPoint() const
@@ -360,6 +460,8 @@ private:
     uint32 _thinkTimer;
     uint32 _rallyPoint;
     bool _throughTheGateway;
+    BrokenShoreFighterBridge _bridge;
+    uint32 _bridgeRallyPoint;
 };
 
 // 90713 - King Varian Wrynn
