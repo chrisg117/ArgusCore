@@ -225,24 +225,21 @@ bool Conversation::Start()
     return true;
 }
 
-void Conversation::AddActor(int32 actorId, uint32 actorIdx, ObjectGuid const& actorGuid)
+void Conversation::AddActor(int32 /*actorId*/, uint32 actorIdx, ObjectGuid const& actorGuid)
 {
     ConversationDynamicFieldActor actorField;
-    actorField.ActorTemplate.Id = actorId;
-    actorField.ActorTemplate.CreatureId = 0;
-    actorField.ActorTemplate.CreatureModelId = 0;
     actorField.ActorGuid = actorGuid;
     actorField.Type = AsUnderlyingType(ConversationDynamicFieldActor::ActorType::WorldObjectActor);
     SetDynamicStructuredValue(CONVERSATION_DYNAMIC_FIELD_ACTORS, actorIdx, &actorField);
 }
 
-void Conversation::AddActor(int32 actorId, uint32 actorIdx, ConversationActorType type, uint32 creatureId, uint32 creatureDisplayInfoId)
+// An actor that is no object in the world is its creature id and display in the place of the guid (they
+// share the field), which is how the 7.3.5 client reads it
+void Conversation::AddActor(int32 /*actorId*/, uint32 actorIdx, ConversationActorType type, uint32 creatureId, uint32 creatureDisplayInfoId)
 {
     ConversationDynamicFieldActor actorField;
-    actorField.ActorTemplate.Id = actorId;
     actorField.ActorTemplate.CreatureId = creatureId;
     actorField.ActorTemplate.CreatureModelId = creatureDisplayInfoId;
-    actorField.ActorGuid = ObjectGuid::Empty;
     actorField.Type = AsUnderlyingType(type);
     SetDynamicStructuredValue(CONVERSATION_DYNAMIC_FIELD_ACTORS, actorIdx, &actorField);
 }
