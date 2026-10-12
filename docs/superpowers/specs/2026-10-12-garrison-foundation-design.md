@@ -162,8 +162,8 @@ Every place that acted on the one garrison now loops over all of them:
 - Daily follower activation reset.
 - Remote info on map change and after a seamless teleport.
 
-A saved row whose site level no longer exists is skipped and logged, as it
-is today.
+A saved row whose site level no longer exists is skipped, as it is today,
+and is now also logged as an error.
 
 ### 5. Garrison info lists every garrison
 
@@ -172,23 +172,26 @@ is today.
 
 Split it: each `Garrison` fills its own entry, and a `Player` function
 builds one reply holding every garrison the character has. The info request
-handler and the login path call the `Player` function.
+handler calls the `Player` function. Nothing sends this reply unasked at
+login; the client requests it.
 
 A character with only a Warlords garrison gets the same reply as before.
 
-### 6. Enter and Leave guard
+### 6. Leave guard
 
 `Garrison::Enter` and `Garrison::Leave` teleport between a garrison's
 instance map and its parent map. A class hall's map has no parent.
 
-Both become no-ops for a garrison whose site map has no parent map. No
-current caller reaches them for a class hall, because the Draenor area
-triggers use `GetGarrison()`. The guard keeps a later caller from
-teleporting a player to an invalid map.
+`Leave` becomes a no-op for a garrison whose site map has no parent map.
+`Enter` needs no change: it only acts when the owner stands on the parent
+map, which can never be true without a parent. No current caller reaches
+either for a class hall, because the Draenor area triggers use
+`GetGarrison()`. The guard keeps a later caller from teleporting a player to
+an invalid map.
 
 ### 7. Criteria look up the requested type
 
-Seventeen modifier-tree checks in `CriteriaHandler.cpp` take the player's
+Sixteen modifier-tree checks in `CriteriaHandler.cpp` take the player's
 garrison and then compare its type with the type the achievement data asks
 for. They change to ask the player for the garrison of that type.
 
@@ -208,7 +211,7 @@ the next one starts.
 2. `feat(engine,sql)`: garrison type column; `Garrison` stores its type
 3. `feat(engine)`: `Player` holds garrisons by type
 4. `feat(engine)`: garrison info lists every garrison
-5. `fix(engine)`: Enter and Leave only for garrisons with a parent map
+5. `fix(engine)`: Leave only for garrisons with a parent map
 6. `fix(engine)`: criteria look up the requested garrison type
 
 After commit 2 a class hall can be created and is saved under type 3, but it
@@ -226,6 +229,8 @@ adding world updates on the same dates.
   `GARRISON_ERROR_INVALID_GARRISON_TYPE`.
 - Saved row with a missing site level: skipped at login and logged.
 - Enter or Leave on a garrison without a parent map: nothing happens.
+- A follower with no ability rows is still removed by the save-time delete,
+  so re-inserting it cannot collide.
 
 ## Verification
 
