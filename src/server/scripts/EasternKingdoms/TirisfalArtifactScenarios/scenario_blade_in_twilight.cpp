@@ -99,7 +99,7 @@ enum BladeInTwilightSpells
     SPELL_TWILIGHT_WHIRL                    = 203115, // a channel that sets off the other "Twilight Whirl" (203114)
 
     // The wards of the tomb
-    SPELL_WARD_DAMPENED                     = 200924, // "Statue"; TODO: not what a dampened ward looks like on retail
+    SPELL_WARD_DAMPENED                     = 202925, // "Dampened": a ball of shadow over the ward, which bursts when it ends
     SPELL_COSMETIC_HOLY_WARDS               = 202014,
 
     // Amassing Darkness
@@ -126,7 +126,7 @@ enum BladeInTwilightSpells
     SPELL_CHANNELING_WITH_BLADE             = 201750,
     SPELL_SHADOW_IMAGES                     = 203514, // "Shadow Image", which sets off the two that summon one (203384, 203385)
     SPELL_CONVERSATION_DEATH_OF_THE_DEACON  = 201791,
-    SPELL_XALATATH_BEAM                     = 201792, // "Chained"; TODO: a stand-in, what the blade's beam is on retail is not known
+    SPELL_XALATATH_BEAM                     = 201899, // "Cosmetic - Artifact Soul Attack": stays on him when he is dead
     SPELL_COSMETIC_DISSOLVE_FARTHING        = 224283,
 
     // Zakajz the Corruptor
@@ -179,6 +179,8 @@ enum BladeInTwilightMisc
     POINT_FARTHING_LAST_STAND               = 3,
     POINT_SLAGHAMMER_YE_DID_IT              = 4,
     POINT_SLAGHAMMER_PORTAL_STONE           = 5,
+    POINT_SLAGHAMMER_AWAY                   = 6,
+    POINT_FACELESS_GUARD_ADVANCE            = 7,
 
     TASK_GROUP_AMBUSH                       = 1,
     TASK_GROUP_BARRIER                      = 2,
@@ -187,9 +189,13 @@ enum BladeInTwilightMisc
     ACTION_AMASSING_DARKNESS_AWAKEN         = 1,
     ACTION_SLAGHAMMER_STAY_BEHIND           = 2,
     ACTION_FARTHING_GUARDS_FALLEN           = 3,
+    ACTION_SLAGHAMMER_LEAVE                 = 4,
 
     // AnimKit.db2: lying dead (what the cutscene's script calls it)
     ANIM_KIT_DEAD                           = 730,
+
+    // AnimKit.db2: the animation "Hold", which for the portal's model is standing open
+    ANIM_KIT_HOLD                           = 3890,
 
     GO_XALATATH                             = 247690,
     GO_PORTAL_TO_DALARAN_CITY               = 247351,
@@ -222,10 +228,11 @@ static constexpr std::array<DampeningRitual, 4> DampeningRituals =
 // ritual is stopped (measured on the tomb's collision), turned to the door
 Position const AmassingDarknessPosition = { 1963.2f, 2336.4f, 80.55f, 0.0f };
 
-// The stairs from the hall down to the prison, under the broken seal in the hall's floor: where Borgoth
-// and the Twilight Bladetwister with him come up them (measured on the tomb's collision)
-Position const BorgothPosition = { 1908.0f, 2335.0f, 68.95f, 0.0f };
-Position const BorgothBladetwisterPosition = { 1905.0f, 2333.0f, 66.17f, 0.0f };
+// The stairs from the hall down to the prison, under the broken seal in the hall's floor: Borgoth and the
+// Twilight Bladetwister with him have come up them and stand on the hall's floor at their top (measured on
+// the tomb's collision). In the video of the retail scenario they are fought in the hall.
+Position const BorgothPosition = { 1917.0f, 2336.5f, 75.41f, 0.0f };
+Position const BorgothBladetwisterPosition = { 1919.0f, 2333.0f, 75.41f, 0.0f };
 
 // The Void Tendrils stand at the northern edge of the round chamber halfway down, along which the way
 // goes: about this place, and how near to it a player is when Slaghammer speaks of them
@@ -240,10 +247,40 @@ Position const BossRevealPosition = { 1873.0f, 2266.0f, 36.6f };
 static constexpr float BossRevealDistance = 9.0f;
 static constexpr Milliseconds BossRevealTimeout = 40s;
 
-// `creature`.`guid` of the Deacon and of Zakajz in the prison chamber, and how many guards the Deacon has
+// Behind the door a bridge of stone leads over a gap into the prison chamber. This is where a player
+// steps onto it (marked in game), and how near to it counts; a player who is past it, in the chamber,
+// counts as well (the chamber lies towards lower y, within this distance and about this height).
+Position const BridgePosition = { 1876.83f, 2242.72f, 35.98f };
+static constexpr float BridgeDistance = 6.0f;
+static constexpr float PrisonChamberDistance = 100.0f;
+static constexpr float PrisonChamberHeight = 15.0f;
+
+// At the bridge Slaghammer leaves the player: he runs back up the passage to this place, around its bend,
+// and is gone there, or after this time. Should the player have left him farther behind than this, he is
+// brought to this place behind the door first, so that he is heard. (All measured on the tomb's collision.)
+Position const SlaghammerAwayPosition = { 1867.0f, 2290.0f, 42.1f };
+Position const SlaghammerBehindDoorPosition = { 1875.5f, 2258.0f, 36.94f, 4.71f };
+static constexpr float SlaghammerHearingDistance = 30.0f;
+static constexpr Milliseconds SlaghammerAwayTime = 10s;
+
+// `creature`.`guid` of the Deacon, of his two guards and of Zakajz in the prison chamber
 static constexpr ObjectGuid::LowType FarthingSpawnId = 15390038;
 static constexpr ObjectGuid::LowType ZakajzSpawnId = 15390041;
 static constexpr uint32 FarthingsGuards = 2;
+
+// When the player steps onto the bridge the Deacon's guards start walking towards it: each to its side
+// of the bridge's end in the chamber (measured on the tomb's collision)
+struct FacelessGuardAdvance
+{
+    ObjectGuid::LowType SpawnId;
+    Position Destination;
+};
+
+FacelessGuardAdvance const FacelessGuardAdvances[] =
+{
+    { 15390039, { 1878.5f, 2218.5f, 37.78f } }, // Faceless Corrupter
+    { 15390040, { 1873.5f, 2217.5f, 37.6f } }   // Faceless Guardian
+};
 
 // Where the Deacon goes when the blade fails him, turned to the blade, and where the blade floats then,
 // turned to him. Both were marked in game against the video of the retail scenario.
@@ -263,16 +300,20 @@ Position const FarthingVoidTendrilPositions[] =
 };
 
 // When Zakajz is gone Slaghammer comes into the prison chamber: where he speaks, where he goes to use
-// his portal stone, turned to where the portal opens, and where it opens, turned to him. All three were
-// marked in game against the video of the retail scenario.
+// his portal stone, turned to where the portal opens, and where it opens. All three were marked in game
+// against the video of the retail scenario. The portal looks across the chamber, with Slaghammer at its
+// left end as one stands before it, which is how the video shows the two.
 Position const SlaghammerYeDidItPosition = { 1876.31f, 2212.9f, 37.83f, 4.71f };
 Position const SlaghammerPortalStonePosition = { 1882.19f, 2212.11f, 38.27f, 5.07f };
-Position const TwilightPortalPosition = { 1884.09f, 2207.05f, 38.37f, 1.93f };
+Position const TwilightPortalPosition = { 1884.09f, 2207.05f, 38.37f, float(M_PI) };
 
-// He comes from where he stayed behind, in the passage before the chamber. Should he not be within this
-// distance of the chamber's door, he is brought to it (the scenario's graveyard there, WorldSafeLocs 5351).
+// The portal's model opens for as long as nothing else is asked of it, again and again. When it has
+// opened once (its animation is 1667 ms long) it is told to stand open.
+static constexpr Milliseconds TwilightPortalOpeningTime = 1600ms;
+
+// He comes in through the chamber's door (the scenario's graveyard there, WorldSafeLocs 5351), over the
+// bridge
 Position const PrisonDoorPosition = { 1877.69f, 2249.0f, 37.55f, 4.71f };
-static constexpr float SlaghammerComesDistance = 80.0f;
 
 // How far a Faceless guard of the Deacon calls the other into its fight
 static constexpr float FacelessGuardCallDistance = 60.0f;
@@ -319,6 +360,7 @@ static constexpr Milliseconds BarrierFadeTime = 3s;
 static constexpr float SlaghammerFollowDistance = 2.0f;
 static constexpr float SlaghammerFollowAngle = float(M_PI) / 2.0f;
 static constexpr float SlaghammerPlayerSearchDistance = 200.0f;
+static constexpr float SlaghammerCatchUpDistance = 50.0f;
 
 // The Slaghammer of the door leaves when the one who goes through the tomb takes his place, and does not
 // come back while the scenario lasts
@@ -362,9 +404,6 @@ static constexpr Milliseconds EdgeOfTwilightInterval = 20s;
 static constexpr Milliseconds MindFlayFirstDelay = 1s;
 static constexpr Milliseconds MindFlayInterval = 7s;
 
-// How long after the cutscene Slaghammer says that he stays behind
-static constexpr Milliseconds SlaghammerStayBehindDelay = 2s;
-
 // What the Deacon and his Faceless guards cast
 static constexpr Milliseconds VoidBoltFirstDelay = 1s;
 static constexpr Milliseconds VoidBoltInterval = 3500ms;
@@ -372,15 +411,15 @@ static constexpr Milliseconds ShadowCrashFirstDelay = 5s;
 static constexpr Milliseconds ShadowCrashInterval = 12s;
 
 // The Deacon calls up his Shadow Images and Void Tendrils when he has this much of his health left, and
-// the blade fails him at this much. Then he and the blade speak (the conversation's lines begin at 0,
-// 7.5, 16.25 and 23.25 seconds): at his last plea the blade turns its beam on him, he dissolves in it and
-// is dead as the blade begins to speak to the player. What is left of him is gone this long after.
+// the blade fails him at this much. Then he and the blade speak (the conversation's lines begin at 0, 5,
+// 16 and 21.5 seconds): at his last plea the blade turns its beam on him, and a second later he is dead
+// and dissolves. The beam stays on what is left of him, which is gone as the blade begins to speak to
+// the player.
 static constexpr int32 FarthingHallucinationsHealthPct = 80;
 static constexpr int32 FarthingFailingHealthPct = 1;
-static constexpr Milliseconds XalatathBeamDelay = 16250ms;
-static constexpr Milliseconds FarthingDissolveDelay = 19s;
-static constexpr Milliseconds FarthingDeathDelay = 22500ms;
-static constexpr Milliseconds FarthingCorpseTime = 1s;
+static constexpr Milliseconds XalatathBeamDelay = 17s;
+static constexpr Milliseconds FarthingDeathDelay = 18s;
+static constexpr Milliseconds FarthingCorpseTime = 3500ms;
 
 // The blade speaks of Zakajz this long after it has been taken, when the cutscene of the player holding it
 // up (nine seconds) is over
@@ -407,8 +446,8 @@ class BladeInTwilightScenario final : public TirisfalArtifactScenario
 public:
     explicit BladeInTwilightScenario(InstanceMap* map) : TirisfalArtifactScenario(map), _currentStep(nullptr), _checkTimer(0),
         _barrierBeingTakenDown(false), _amassingDarknessDefeated(false), _voidTendrilsSpokenOf(false), _bossRevealStarted(false),
-        _prisonChamberReached(false), _farthingsGuardsSlain(0), _farthingDead(false), _bladeTaken(false),
-        _zakajzDrained(false) { }
+        _prisonChamberReached(false), _bridgeReached(false), _farthingsGuardsSlain(0), _farthingDead(false),
+        _bladeTaken(false), _zakajzDrained(false) { }
 
     // The core has no script hook for scenario step changes, so the current step is polled.
     void Update(uint32 diff) override
@@ -446,6 +485,9 @@ public:
                 break;
             case STAGE_DARK_PASSAGE:
                 UpdateDarkPassage();
+                break;
+            case STAGE_DEATH_TO_THE_DEACON:
+                UpdateDeathToTheDeacon();
                 break;
             case STAGE_THE_BLADE_OF_THE_BLACK_EMPIRE:
                 UpdateTheBladeOfTheBlackEmpire();
@@ -868,25 +910,71 @@ private:
         SendScenarioEvent(GAME_EVENT_PRISON_CHAMBER_REACHED);
     }
 
-    // The Deacon is trying to bring Zakajz back to life with the blade. Slaghammer hears more of the
-    // Twilight's Hammer coming and stays behind to hold them off; the Deacon is the player's. The stage is
+    // The Deacon is trying to bring Zakajz back to life with the blade, and is the player's: the stage is
     // done when he is dead.
     void StartDeathToTheDeacon()
     {
         if (_farthingDead)
-        {
             SendScenarioEvent(GAME_EVENT_TWILIGHT_DEACON_KILLED);
+    }
+
+    // When the player steps onto the bridge into the prison chamber, Slaghammer hears more of the
+    // Twilight's Hammer coming, says so and runs back up the passage to hold them off, and the Deacon's two
+    // guards start for the player.
+    void UpdateDeathToTheDeacon()
+    {
+        if (_bridgeReached)
+            return;
+
+        for (MapReference const& ref : instance->GetPlayers())
+        {
+            Player* player = ref.GetSource();
+            if (!player || player->IsGameMaster() || !player->IsAlive() || !IsOnTheBridgeOrPastIt(player))
+                continue;
+
+            _bridgeReached = true;
+            SlaghammerLeaves(player);
+            FacelessGuardsAdvance();
             return;
         }
+    }
 
-        _scheduler.Schedule(SlaghammerStayBehindDelay, [this](TaskContext /*context*/)
+    static bool IsOnTheBridgeOrPastIt(Player const* player)
+    {
+        if (player->GetExactDist(BridgePosition) < BridgeDistance)
+            return true;
+
+        return player->GetPositionY() < BridgePosition.GetPositionY()
+            && player->GetExactDist2d(BridgePosition) < PrisonChamberDistance
+            && std::abs(player->GetPositionZ() - BridgePosition.GetPositionZ()) < PrisonChamberHeight;
+    }
+
+    void SlaghammerLeaves(Player const* player)
+    {
+        Creature* slaghammer = GetSlaghammerInTheTomb();
+        if (!slaghammer)
+            return;
+
+        if (slaghammer->GetExactDist(player) > SlaghammerHearingDistance)
+            slaghammer->NearTeleportTo(SlaghammerBehindDoorPosition);
+
+        slaghammer->AI()->Talk(SAY_SLAGHAMMER_STAY_BEHIND);
+        slaghammer->AI()->DoAction(ACTION_SLAGHAMMER_LEAVE);
+    }
+
+    // They walk; whoever they meet on the way, or who attacks them, they fight as they would have at
+    // their posts
+    void FacelessGuardsAdvance()
+    {
+        for (FacelessGuardAdvance const& advance : FacelessGuardAdvances)
         {
-            if (Creature* slaghammer = GetSlaghammerInTheTomb())
-            {
-                slaghammer->AI()->Talk(SAY_SLAGHAMMER_STAY_BEHIND);
-                slaghammer->AI()->DoAction(ACTION_SLAGHAMMER_STAY_BEHIND);
-            }
-        });
+            Creature* guard = GetLivingCreature(advance.SpawnId);
+            if (!guard || guard->IsEngaged())
+                continue;
+
+            guard->SetWalk(true);
+            guard->GetMotionMaster()->MovePoint(POINT_FACELESS_GUARD_ADVANCE, advance.Destination);
+        }
     }
 
     // The Deacon is all but dead and the blade does not defend him (his script tells the instance). It
@@ -902,8 +990,10 @@ private:
 
         _scheduler.Schedule(XalatathBeamDelay, [this](TaskContext /*context*/)
         {
-            if (Creature* xalatath = instance->GetCreature(_xalatathGuid))
-                xalatath->CastSpell(nullptr, SPELL_XALATATH_BEAM, true);
+            Creature* xalatath = instance->GetCreature(_xalatathGuid);
+            Creature* farthing = GetLivingCreature(FarthingSpawnId);
+            if (xalatath && farthing)
+                xalatath->CastSpell(farthing, SPELL_XALATATH_BEAM, true);
         });
     }
 
@@ -941,7 +1031,8 @@ private:
     // with the blade in it; the stage is done when a player has the blade. (The object has a condition of
     // its own, PlayerCondition 43717, which the client checks: only a player who does not have the blade
     // yet can use it.)
-    // TODO: the circle of blue light that the blade floats over in the video
+    // TODO: what the circle of blue light is that the blade floats over in the video is not known; the
+    // object has a blue glow on the ground of the client's in its place (gameobject_template_addon)
     void StartTheBladeOfTheBlackEmpire()
     {
         if (_bladeTaken)
@@ -1115,33 +1206,44 @@ private:
                 return;
 
             slaghammer->SetEmoteState(EMOTE_ONESHOT_NONE);
-            slaghammer->SummonGameObject(GO_PORTAL_TO_DALARAN_CITY, TwilightPortalPosition, QuaternionData::fromEulerAnglesZYX(TwilightPortalPosition.GetOrientation(), 0.0f, 0.0f), 0s);
+
+            GameObject* portal = slaghammer->SummonGameObject(GO_PORTAL_TO_DALARAN_CITY, TwilightPortalPosition, QuaternionData::fromEulerAnglesZYX(TwilightPortalPosition.GetOrientation(), 0.0f, 0.0f), 0s);
+            if (portal)
+                _portalGuid = portal->GetGUID();
+        });
+
+        _scheduler.Schedule(TwilightPortalDelay + TwilightPortalOpeningTime, [this](TaskContext /*context*/)
+        {
+            if (GameObject* portal = instance->GetGameObject(_portalGuid))
+                portal->SetAnimKitId(ANIM_KIT_HOLD, false);
         });
 
         _scheduler.Schedule(SlaghammerKeepAnEyeDelay, [this](TaskContext /*context*/)
         {
-            if (Creature* slaghammer = GetSlaghammerInTheTomb())
-                slaghammer->AI()->Talk(SAY_SLAGHAMMER_KEEP_AN_EYE);
+            Creature* slaghammer = GetSlaghammerInTheTomb();
+            if (!slaghammer)
+                return;
+
+            if (Player* player = GetPlayerToFollow())
+                slaghammer->SetFacingToObject(player);
+
+            slaghammer->AI()->Talk(SAY_SLAGHAMMER_KEEP_AN_EYE);
         });
     }
 
+    // He left for the passage when the player went onto the bridge, and comes back in through the door.
+    // (Should he still be about, that one goes: he may stand anywhere, and the way from the door over the
+    // bridge is one he can walk.)
     Creature* BringSlaghammerToThePrison()
     {
-        Creature* slaghammer = GetSlaghammerInTheTomb();
-        if (slaghammer && slaghammer->GetExactDist(PrisonDoorPosition) > SlaghammerComesDistance)
-        {
+        if (Creature* slaghammer = GetSlaghammerInTheTomb())
             slaghammer->DespawnOrUnsummon();
-            slaghammer = nullptr;
-        }
 
+        TempSummon* slaghammer = instance->SummonCreature(NPC_SHADOWLORD_SLAGHAMMER_SPY, PrisonDoorPosition);
         if (!slaghammer)
-        {
-            slaghammer = instance->SummonCreature(NPC_SHADOWLORD_SLAGHAMMER_SPY, PrisonDoorPosition);
-            if (!slaghammer)
-                return nullptr;
+            return nullptr;
 
-            _slaghammerGuid = slaghammer->GetGUID();
-        }
+        _slaghammerGuid = slaghammer->GetGUID();
 
         // He goes where the scenario's script sends him, not after the player
         slaghammer->AI()->DoAction(ACTION_SLAGHAMMER_STAY_BEHIND);
@@ -1196,11 +1298,13 @@ private:
     bool _voidTendrilsSpokenOf;
     bool _bossRevealStarted;
     bool _prisonChamberReached;
+    bool _bridgeReached;
     uint32 _farthingsGuardsSlain;
     bool _farthingDead;
     ObjectGuid _xalatathGuid;
     bool _bladeTaken;
     bool _zakajzDrained;
+    ObjectGuid _portalGuid;
 };
 
 std::unique_ptr<TirisfalArtifactScenario> CreateBladeInTwilightScenario(InstanceMap* map)
@@ -1236,10 +1340,11 @@ struct npc_shadowlord_slaghammer : public ScriptedAI
 };
 
 // 101899 - Shadowlord Slaghammer, as he goes through the tomb with the player: he keeps to the player's
-// side, fights what the player fights, and does not fall. Before the prison chamber he stays behind.
+// side, fights what the player fights, and does not fall. At the bridge into the prison chamber he leaves
+// the player, and in the end he comes back, when the scenario's script tells him where to go.
 struct npc_shadowlord_slaghammer_spy : public ScriptedAI
 {
-    npc_shadowlord_slaghammer_spy(Creature* creature) : ScriptedAI(creature), _checkTimer(0), _staysBehind(false) { }
+    npc_shadowlord_slaghammer_spy(Creature* creature) : ScriptedAI(creature), _checkTimer(0), _catchUpTimer(0), _staysBehind(false) { }
 
     void JustAppeared() override
     {
@@ -1249,13 +1354,34 @@ struct npc_shadowlord_slaghammer_spy : public ScriptedAI
 
     void DoAction(int32 action) override
     {
-        if (action != ACTION_SLAGHAMMER_STAY_BEHIND)
-            return;
+        switch (action)
+        {
+            // He no longer follows the player, and waits for what he is told
+            case ACTION_SLAGHAMMER_STAY_BEHIND:
+                _staysBehind = true;
+                me->SetHomePosition(me->GetPosition());
+                if (!me->IsEngaged())
+                    me->GetMotionMaster()->MoveIdle();
+                break;
+            // He runs back up the passage, whatever he was doing, and is gone when he is out of sight
+            case ACTION_SLAGHAMMER_LEAVE:
+                _staysBehind = true;
+                me->SetReactState(REACT_PASSIVE);
+                me->SetImmuneToAll(true);
+                me->CombatStop(true);
+                me->SetWalk(false);
+                me->GetMotionMaster()->MovePoint(POINT_SLAGHAMMER_AWAY, SlaghammerAwayPosition);
+                me->DespawnOrUnsummon(SlaghammerAwayTime);
+                break;
+            default:
+                break;
+        }
+    }
 
-        _staysBehind = true;
-        me->SetHomePosition(me->GetPosition());
-        if (!me->IsEngaged())
-            me->GetMotionMaster()->MoveIdle();
+    void MovementInform(uint32 type, uint32 id) override
+    {
+        if (type == POINT_MOTION_TYPE && id == POINT_SLAGHAMMER_AWAY)
+            me->DespawnOrUnsummon();
     }
 
     void DamageTaken(Unit* /*attacker*/, uint32& damage, DamageEffectType /*damageType*/, SpellInfo const* /*spellInfo*/) override
@@ -1278,7 +1404,17 @@ struct npc_shadowlord_slaghammer_spy : public ScriptedAI
 
     void UpdateAI(uint32 diff) override
     {
-        if (UpdateVictim() || _staysBehind)
+        if (_staysBehind)
+            return;
+
+        _catchUpTimer += diff;
+        if (_catchUpTimer >= CheckInterval)
+        {
+            _catchUpTimer = 0;
+            CatchUp();
+        }
+
+        if (UpdateVictim())
             return;
 
         _checkTimer += diff;
@@ -1313,8 +1449,22 @@ private:
         me->GetMotionMaster()->MoveFollow(player, SlaghammerFollowDistance, ChaseAngle(SlaghammerFollowAngle));
     }
 
+    // On retail he is the summon of an aura on the player and never far away. Here he walks after the
+    // player, and what holds him up leaves him behind: then he is brought to the player's side.
+    void CatchUp()
+    {
+        Player* player = ObjectAccessor::GetPlayer(*me, _playerGuid);
+        if (!player || !player->IsAlive() || me->GetExactDist(player) < SlaghammerCatchUpDistance)
+            return;
+
+        me->CombatStop(true);
+        me->NearTeleportTo(player->GetPosition());
+        FollowPlayer();
+    }
+
     ObjectGuid _playerGuid;
     uint32 _checkTimer;
+    uint32 _catchUpTimer;
     bool _staysBehind;
 };
 
@@ -1799,7 +1949,8 @@ private:
     }
 
     // The blade does not defend him. It leaves his hand, he backs away from the dome, and the two speak
-    // (the scenario's script sees to the blade and to what is heard) until the blade's beam dissolves him.
+    // (the scenario's script sees to the blade, to its beam and to what is heard) until he dies in the
+    // blade's beam and dissolves.
     void Fail()
     {
         _summons.DespawnAll();
@@ -1815,13 +1966,9 @@ private:
         if (InstanceScript* instance = me->GetInstanceScript())
             instance->SetData(DATA_FARTHING_FAILING, 1);
 
-        _scheduler.Schedule(FarthingDissolveDelay, [this](TaskContext /*context*/)
-        {
-            DoCastSelf(SPELL_COSMETIC_DISSOLVE_FARTHING, true);
-        });
-
         _scheduler.Schedule(FarthingDeathDelay, [this](TaskContext /*context*/)
         {
+            DoCastSelf(SPELL_COSMETIC_DISSOLVE_FARTHING, true);
             me->SetImmuneToAll(false);
             me->KillSelf();
         });
