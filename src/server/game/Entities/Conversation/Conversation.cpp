@@ -233,11 +233,13 @@ void Conversation::AddActor(int32 /*actorId*/, uint32 actorIdx, ObjectGuid const
     SetDynamicStructuredValue(CONVERSATION_DYNAMIC_FIELD_ACTORS, actorIdx, &actorField);
 }
 
-// An actor that is no object in the world is its creature id and display in the place of the guid (they
-// share the field), which is how the 7.3.5 client reads it
-void Conversation::AddActor(int32 /*actorId*/, uint32 actorIdx, ConversationActorType type, uint32 creatureId, uint32 creatureDisplayInfoId)
+// An actor that is no object in the world is its actor id, creature id and display in the place of the guid
+// (they share the field). The 7.3.5 client takes the second of the three for the creature: without the
+// actor id in front it showed the creature whose id the display's is.
+void Conversation::AddActor(int32 actorId, uint32 actorIdx, ConversationActorType type, uint32 creatureId, uint32 creatureDisplayInfoId)
 {
     ConversationDynamicFieldActor actorField;
+    actorField.ActorTemplate.Id = actorId;
     actorField.ActorTemplate.CreatureId = creatureId;
     actorField.ActorTemplate.CreatureModelId = creatureDisplayInfoId;
     actorField.Type = AsUnderlyingType(type);
