@@ -16,6 +16,8 @@
  */
 
 #include "ScriptMgr.h"
+#include "AreaTrigger.h"
+#include "AreaTriggerAI.h"
 #include "Conversation.h"
 #include "ConversationAI.h"
 #include "ObjectAccessor.h"
@@ -234,8 +236,42 @@ class spell_dalaran_sealed_letter : public AuraScript
     }
 };
 
+enum DalaranTeleportPads
+{
+    SPELL_TELEPORT_PORTRAIT_ROOM    = 192293,
+    SPELL_TELEPORT_DALARAN          = 192295
+};
+
+// The teleport pad in the middle of the city takes one down to Aegwynn's Gallery, and the pad there back up.
+// Nothing in the client's data casts the two spells, so each pad has an area trigger of the server's own.
+struct at_dalaran_teleport_pad_to_aegwynns_gallery : AreaTriggerAI
+{
+    at_dalaran_teleport_pad_to_aegwynns_gallery(AreaTrigger* areatrigger) : AreaTriggerAI(areatrigger) { }
+
+    void OnUnitEnter(Unit* unit) override
+    {
+        if (Player* player = unit->ToPlayer())
+            player->CastSpell(player, SPELL_TELEPORT_PORTRAIT_ROOM, true);
+    }
+};
+
+struct at_dalaran_teleport_pad_to_the_city : AreaTriggerAI
+{
+    at_dalaran_teleport_pad_to_the_city(AreaTrigger* areatrigger) : AreaTriggerAI(areatrigger) { }
+
+    void OnUnitEnter(Unit* unit) override
+    {
+        if (Player* player = unit->ToPlayer())
+            player->CastSpell(player, SPELL_TELEPORT_DALARAN, true);
+    }
+};
+
 void AddSC_zone_dalaran_broken_isle()
 {
+    // Areatrigger
+    RegisterAreaTriggerAI(at_dalaran_teleport_pad_to_aegwynns_gallery);
+    RegisterAreaTriggerAI(at_dalaran_teleport_pad_to_the_city);
+
     // Conversation
     RegisterConversationAI(conversation_on_summon_call_of_the_uncrowned);
 
