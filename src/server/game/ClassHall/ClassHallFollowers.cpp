@@ -155,6 +155,25 @@ void ClassHallFollowers::AddFollower(uint32 garrFollowerId)
     _owner->UpdateCriteria(CriteriaType::RecruitGarrisonFollower, garrFollowerId);
 }
 
+void ClassHallFollowers::RemoveFollower(uint64 dbId)
+{
+    WorldPackets::Garrison::GarrisonRemoveFollowerResult removeFollowerResult;
+    removeFollowerResult.FollowerDBID = dbId;
+    removeFollowerResult.GarrTypeID = GARRISON_TYPE_CLASS_ORDER;
+
+    // only troops can be dismissed
+    auto itr = _followers.find(dbId);
+    if (itr != _followers.end() && IsTroop(itr->second.Entry))
+    {
+        _followers.erase(itr);
+        removeFollowerResult.Destroyed = 1;
+    }
+    else
+        removeFollowerResult.Result = GARRISON_ERROR_INVALID_FOLLOWER;
+
+    _owner->SendDirectMessage(removeFollowerResult.Write());
+}
+
 void ClassHallFollowers::SetFollowerInactive(uint64 dbId, bool inactive)
 {
     auto itr = _followers.find(dbId);

@@ -326,6 +326,7 @@ namespace WorldPackets
         class GarrisonRequestBlueprintAndSpecializationData;
         class GarrisonGetMapData;
         class GarrisonRequestScoutingMap;
+        class GarrisonRemoveFollower;
         class GarrisonResearchTalent;
         class GarrisonSetFollowerInactive;
     }
@@ -1820,6 +1821,7 @@ class TC_GAME_API WorldSession
         void HandleGarrisonRequestScoutingMap(WorldPackets::Garrison::GarrisonRequestScoutingMap& garrisonRequestScoutingMap);
         void HandleGarrisonResearchTalent(WorldPackets::Garrison::GarrisonResearchTalent& garrisonResearchTalent);
         void HandleGarrisonSetFollowerInactive(WorldPackets::Garrison::GarrisonSetFollowerInactive& garrisonSetFollowerInactive);
+        void HandleGarrisonRemoveFollower(WorldPackets::Garrison::GarrisonRemoveFollower& garrisonRemoveFollower);
 
         // Battle Pets
         void HandleBattlePetRequestJournal(WorldPackets::BattlePet::BattlePetRequestJournal& battlePetRequestJournal);

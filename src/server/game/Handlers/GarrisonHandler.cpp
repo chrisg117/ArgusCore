@@ -97,3 +97,12 @@ void WorldSession::HandleGarrisonSetFollowerInactive(WorldPackets::Garrison::Gar
     if (ClassHall* classHall = _player->GetClassHall())
         classHall->GetFollowers().SetFollowerInactive(garrisonSetFollowerInactive.FollowerDBID, garrisonSetFollowerInactive.Inactive);
 }
+
+void WorldSession::HandleGarrisonRemoveFollower(WorldPackets::Garrison::GarrisonRemoveFollower& garrisonRemoveFollower)
+{
+    if (!_player->GetNPCIfCanInteractWith(garrisonRemoveFollower.NpcGUID, UNIT_NPC_FLAG_NONE, UNIT_NPC_FLAG_2_GARRISON_MISSION_NPC))
+        return;
+
+    if (ClassHall* classHall = _player->GetClassHall())
+        classHall->GetFollowers().RemoveFollower(garrisonRemoveFollower.FollowerDBID);
+}
