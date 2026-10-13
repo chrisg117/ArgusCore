@@ -18,9 +18,19 @@
 #include "ClassHallFollowers.h"
 #include "DatabaseEnv.h"
 #include "DB2Stores.h"
-#include "Garrison.h"
+#include "GarrisonMgr.h"
 #include "Log.h"
 #include "Player.h"
+#include <algorithm>
+
+namespace
+{
+// troops are the followers that missions use up; champions have no vitality
+bool IsTroop(GarrFollowerEntry const* follower)
+{
+    return follower->Vitality > 0;
+}
+}
 
 ClassHallFollowers::ClassHallFollowers(Player* owner) : _owner(owner)
 {
@@ -98,6 +108,73 @@ void ClassHallFollowers::BuildInfo(WorldPackets::Garrison::GarrisonInfo& info) c
         info.Followers.push_back(&follower.PacketInfo);
 }
 
+void ClassHallFollowers::AddFollower(uint32 garrFollowerId)
+{
+    GarrFollowerEntry const* entry = sGarrFollowerStore.LookupEntry(garrFollowerId);
+
+    WorldPackets::Garrison::GarrisonAddFollowerResult addFollowerResult;
+    addFollowerResult.GarrTypeID = GARRISON_TYPE_CLASS_ORDER;
+    addFollowerResult.Result = CanAddFollower(entry);
+    if (addFollowerResult.Result != GARRISON_SUCCESS)
+    {
+        _owner->SendDirectMessage(addFollowerResult.Write());
+        return;
+    }
+
+    // a champion gained while the active ones are at their limit starts inactive
+    uint32 status = 0;
+    if (IsTroop(entry))
+        status = FOLLOWER_STATUS_TROOP;
+    else if (GarrFollowerTypeEntry const* followerType = sGarrFollowerTypeStore.LookupEntry(entry->GarrFollowerTypeID))
+        if (CountActiveChampions() >= followerType->MaxFollowers)
+            status = FOLLOWER_STATUS_INACTIVE;
+
+    uint64 dbId = sGarrisonMgr.GenerateFollowerDbId();
+    Follower& follower = _followers[dbId];
+    follower.Entry = entry;
+    follower.PacketInfo.DbID = dbId;
+    follower.PacketInfo.GarrFollowerID = garrFollowerId;
+    follower.PacketInfo.Quality = entry->Quality;
+    follower.PacketInfo.FollowerLevel = entry->FollowerLevel;
+    follower.PacketInfo.ItemLevelWeapon = entry->ItemLevelWeapon;
+    follower.PacketInfo.ItemLevelArmor = entry->ItemLevelArmor;
+    follower.PacketInfo.Durability = entry->Vitality;
+    follower.PacketInfo.FollowerStatus = status;
+    follower.PacketInfo.AbilityID = GetAbilities(entry, entry->Quality);
+
+    addFollowerResult.Follower = follower.PacketInfo;
+    _owner->SendDirectMessage(addFollowerResult.Write());
+
+    _owner->UpdateCriteria(CriteriaType::RecruitGarrisonFollower, garrFollowerId);
+}
+
+GarrisonError ClassHallFollowers::CanAddFollower(GarrFollowerEntry const* follower) const
+{
+    if (!follower || follower->GarrTypeID != GARRISON_TYPE_CLASS_ORDER)
+        return GARRISON_ERROR_INVALID_FOLLOWER;
+
+    if (follower->ChrClassID && follower->ChrClassID != _owner->GetClass())
+        return GARRISON_ERROR_INVALID_CLASS;
+
+    if (follower->Flags & GARRISON_FOLLOWER_FLAG_UNIQUE)
+        for (auto const& [dbId, owned] : _followers)
+            if (owned.Entry == follower)
+                return GARRISON_ERROR_FOLLOWER_EXISTS;
+
+    if (IsTroop(follower))
+    {
+        // each kind of troop has its own limit
+        GarrClassSpecEntry const* classSpec = sGarrClassSpecStore.LookupEntry(GetClassSpec(follower));
+        if (!classSpec)
+            return GARRISON_ERROR_INVALID_FOLLOWER;
+
+        if (CountTroops(classSpec->ID) >= classSpec->FollowerClassLimit)
+            return GARRISON_ERROR_AT_CLASS_SPEC_CAP;
+    }
+
+    return GARRISON_SUCCESS;
+}
+
 std::list<GarrAbilityEntry const*> ClassHallFollowers::GetAbilities(GarrFollowerEntry const* follower, uint32 quality) const
 {
     std::list<GarrAbilityEntry const*> abilities;
@@ -149,4 +226,25 @@ std::list<GarrAbilityEntry const*> ClassHallFollowers::GetAbilities(GarrFollower
     }
 
     return abilities;
+}
+
+uint32 ClassHallFollowers::GetClassSpec(GarrFollowerEntry const* follower) const
+{
+    return _owner->GetTeam() == HORDE ? follower->HordeGarrClassSpecID : follower->AllianceGarrClassSpecID;
+}
+
+uint32 ClassHallFollowers::CountActiveChampions() const
+{
+    return uint32(std::count_if(_followers.begin(), _followers.end(), [](auto const& follower)
+    {
+        return !IsTroop(follower.second.Entry) && follower.second.IsActive();
+    }));
+}
+
+uint32 ClassHallFollowers::CountTroops(uint32 garrClassSpecId) const
+{
+    return uint32(std::count_if(_followers.begin(), _followers.end(), [&](auto const& follower)
+    {
+        return IsTroop(follower.second.Entry) && GetClassSpec(follower.second.Entry) == garrClassSpecId;
+    }));
 }

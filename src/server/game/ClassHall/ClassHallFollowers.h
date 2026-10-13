@@ -20,6 +20,7 @@
 
 #include "Define.h"
 #include "DatabaseEnvFwd.h"
+#include "Garrison.h"
 #include "GarrisonPackets.h"
 #include "ObjectGuid.h"
 #include <list>
@@ -41,14 +42,22 @@ public:
 
     void BuildInfo(WorldPackets::Garrison::GarrisonInfo& info) const;
 
+    void AddFollower(uint32 garrFollowerId);
+
 private:
     struct Follower
     {
         GarrFollowerEntry const* Entry = nullptr;
         WorldPackets::Garrison::GarrisonFollower PacketInfo;
+
+        bool IsActive() const { return (PacketInfo.FollowerStatus & FOLLOWER_STATUS_INACTIVE) == 0; }
     };
 
+    GarrisonError CanAddFollower(GarrFollowerEntry const* follower) const;
     std::list<GarrAbilityEntry const*> GetAbilities(GarrFollowerEntry const* follower, uint32 quality) const;
+    uint32 GetClassSpec(GarrFollowerEntry const* follower) const;
+    uint32 CountActiveChampions() const;
+    uint32 CountTroops(uint32 garrClassSpecId) const;
 
     Player* _owner;
     std::map<uint64 /*dbId*/, Follower> _followers;
