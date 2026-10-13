@@ -36,6 +36,8 @@ public:
     void SaveToDB(CharacterDatabaseTransaction trans) const;
     static void DeleteFromDB(ObjectGuid::LowType ownerGuid, CharacterDatabaseTransaction trans);
 
+    bool Create(uint32 garrSiteId);
+
 private:
     Player* _owner;
     GarrSiteLevelEntry const* _siteLevel;

@@ -28324,6 +28324,22 @@ void Player::DeleteGarrison()
     }
 }
 
+void Player::CreateClassHall(uint32 garrSiteId)
+{
+    // a class hall is never replaced: it holds the followers and research earned so far
+    if (_classHall)
+    {
+        WorldPackets::Garrison::GarrisonCreateResult garrisonCreateResult;
+        garrisonCreateResult.Result = GARRISON_ERROR_GARRISON_EXISTS;
+        SendDirectMessage(garrisonCreateResult.Write());
+        return;
+    }
+
+    std::unique_ptr<ClassHall> classHall = std::make_unique<ClassHall>(this);
+    if (classHall->Create(garrSiteId))
+        _classHall = std::move(classHall);
+}
+
 void Player::SendMovementSetCollisionHeight(float height, WorldPackets::Movement::UpdateCollisionHeightReason reason)
 {
     WorldPackets::Movement::MoveSetCollisionHeight setCollisionHeight;

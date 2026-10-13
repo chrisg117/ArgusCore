@@ -2777,6 +2777,7 @@ class TC_GAME_API Player final : public Unit, public GridObject<Player>
         void DeleteGarrison();
         Garrison* GetGarrison() const { return _garrison.get(); }
 
+        void CreateClassHall(uint32 garrSiteId);
         ClassHall* GetClassHall() const { return _classHall.get(); }
 
         bool IsAdvancedCombatLoggingEnabled() const { return _advancedCombatLoggingEnabled; }
