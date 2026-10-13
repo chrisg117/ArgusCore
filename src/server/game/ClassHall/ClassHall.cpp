@@ -24,11 +24,11 @@
 #include "Log.h"
 #include "Player.h"
 
-ClassHall::ClassHall(Player* owner) : _owner(owner), _siteLevel(nullptr)
+ClassHall::ClassHall(Player* owner) : _owner(owner), _siteLevel(nullptr), _talents(owner)
 {
 }
 
-bool ClassHall::LoadFromDB(PreparedQueryResult classHall)
+bool ClassHall::LoadFromDB(PreparedQueryResult classHall, PreparedQueryResult talents)
 {
     if (!classHall)
         return false;
@@ -43,6 +43,7 @@ bool ClassHall::LoadFromDB(PreparedQueryResult classHall)
         return false;
     }
 
+    _talents.LoadFromDB(std::move(talents));
     return true;
 }
 
@@ -52,6 +53,8 @@ void ClassHall::SaveToDB(CharacterDatabaseTransaction trans) const
     stmt->setUInt64(0, _owner->GetGUID().GetCounter());
     stmt->setUInt32(1, _siteLevel->ID);
     trans->Append(stmt);
+
+    _talents.SaveToDB(trans);
 }
 
 void ClassHall::DeleteFromDB(ObjectGuid::LowType ownerGuid, CharacterDatabaseTransaction trans)
@@ -59,6 +62,8 @@ void ClassHall::DeleteFromDB(ObjectGuid::LowType ownerGuid, CharacterDatabaseTra
     CharacterDatabasePreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_DEL_CHARACTER_CLASS_HALL);
     stmt->setUInt64(0, ownerGuid);
     trans->Append(stmt);
+
+    ClassHallTalents::DeleteFromDB(ownerGuid, trans);
 }
 
 bool ClassHall::Create(uint32 garrSiteId)
@@ -80,4 +85,6 @@ void ClassHall::BuildInfo(WorldPackets::Garrison::GarrisonInfo& info) const
     info.GarrTypeID = GARRISON_TYPE_CLASS_ORDER;
     info.GarrSiteID = _siteLevel->GarrSiteID;
     info.GarrSiteLevelID = _siteLevel->ID;
+
+    _talents.BuildInfo(info);
 }

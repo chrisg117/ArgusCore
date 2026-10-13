@@ -19,6 +19,7 @@
 #define ClassHall_h__
 
 #include "Define.h"
+#include "ClassHallTalents.h"
 #include "DatabaseEnvFwd.h"
 #include "ObjectGuid.h"
 
@@ -40,7 +41,7 @@ class TC_GAME_API ClassHall
 public:
     explicit ClassHall(Player* owner);
 
-    bool LoadFromDB(PreparedQueryResult classHall);
+    bool LoadFromDB(PreparedQueryResult classHall, PreparedQueryResult talents);
     void SaveToDB(CharacterDatabaseTransaction trans) const;
     static void DeleteFromDB(ObjectGuid::LowType ownerGuid, CharacterDatabaseTransaction trans);
 
@@ -48,9 +49,13 @@ public:
 
     void BuildInfo(WorldPackets::Garrison::GarrisonInfo& info) const;
 
+    ClassHallTalents& GetTalents() { return _talents; }
+    ClassHallTalents const& GetTalents() const { return _talents; }
+
 private:
     Player* _owner;
     GarrSiteLevelEntry const* _siteLevel;
+    ClassHallTalents _talents;
 };
 
 #endif // ClassHall_h__
