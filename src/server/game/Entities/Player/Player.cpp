@@ -24411,6 +24411,9 @@ void Player::DailyReset()
     if (_garrison)
         _garrison->ResetFollowerActivationLimit();
 
+    if (_classHall)
+        _classHall->GetFollowers().ResetActivations();
+
     FailCriteria(CriteriaFailEvent::DailyQuestsCleared, 0);
 }
 

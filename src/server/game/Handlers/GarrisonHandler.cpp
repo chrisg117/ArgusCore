@@ -91,3 +91,9 @@ void WorldSession::HandleGarrisonResearchTalent(WorldPackets::Garrison::Garrison
     researchTalentResult.Talent.GarrTalentID = garrisonResearchTalent.GarrTalentID;
     SendPacket(researchTalentResult.Write());
 }
+
+void WorldSession::HandleGarrisonSetFollowerInactive(WorldPackets::Garrison::GarrisonSetFollowerInactive& garrisonSetFollowerInactive)
+{
+    if (ClassHall* classHall = _player->GetClassHall())
+        classHall->GetFollowers().SetFollowerInactive(garrisonSetFollowerInactive.FollowerDBID, garrisonSetFollowerInactive.Inactive);
+}

@@ -50,6 +50,8 @@ public:
 
     void BuildInfo(WorldPackets::Garrison::GarrisonInfo& info) const;
 
+    uint32 GetGarrSiteID() const;
+
     void Update();
 
     ClassHallTalents& GetTalents() { return _talents; }

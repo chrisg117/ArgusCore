@@ -695,9 +695,10 @@ void CharacterDatabaseConnection::DoPrepareStatements()
     PrepareStatement(CHAR_INS_CHARACTER_GARRISON_FOLLOWER_ABILITIES, "INSERT INTO character_garrison_follower_abilities (dbId, abilityId, slot) VALUES (?, ?, ?)", CONNECTION_ASYNC);
 
     // Class hall
-    PrepareStatement(CHAR_SEL_CHARACTER_CLASS_HALL, "SELECT siteLevelId FROM character_class_hall WHERE guid = ?", CONNECTION_ASYNC);
-    PrepareStatement(CHAR_REP_CHARACTER_CLASS_HALL, "REPLACE INTO character_class_hall (guid, siteLevelId) VALUES (?, ?)", CONNECTION_ASYNC);
+    PrepareStatement(CHAR_SEL_CHARACTER_CLASS_HALL, "SELECT siteLevelId, followerActivationsRemaining FROM character_class_hall WHERE guid = ?", CONNECTION_ASYNC);
+    PrepareStatement(CHAR_REP_CHARACTER_CLASS_HALL, "REPLACE INTO character_class_hall (guid, siteLevelId, followerActivationsRemaining) VALUES (?, ?, ?)", CONNECTION_ASYNC);
     PrepareStatement(CHAR_DEL_CHARACTER_CLASS_HALL, "DELETE FROM character_class_hall WHERE guid = ?", CONNECTION_ASYNC);
+    PrepareStatement(CHAR_UPD_CHARACTER_CLASS_HALL_FOLLOWER_ACTIVATIONS, "UPDATE character_class_hall SET followerActivationsRemaining = ?", CONNECTION_ASYNC);
     PrepareStatement(CHAR_SEL_CHARACTER_CLASS_HALL_TALENTS, "SELECT talentId, researchStartTime, flags FROM character_class_hall_talent WHERE guid = ?", CONNECTION_ASYNC);
     PrepareStatement(CHAR_INS_CHARACTER_CLASS_HALL_TALENT, "INSERT INTO character_class_hall_talent (guid, talentId, researchStartTime, flags) VALUES (?, ?, ?, ?)", CONNECTION_ASYNC);
     PrepareStatement(CHAR_DEL_CHARACTER_CLASS_HALL_TALENTS, "DELETE FROM character_class_hall_talent WHERE guid = ?", CONNECTION_ASYNC);

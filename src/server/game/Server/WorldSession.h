@@ -327,6 +327,7 @@ namespace WorldPackets
         class GarrisonGetMapData;
         class GarrisonRequestScoutingMap;
         class GarrisonResearchTalent;
+        class GarrisonSetFollowerInactive;
     }
 
     namespace Guild
@@ -1818,6 +1819,7 @@ class TC_GAME_API WorldSession
         void HandleGarrisonGetMapData(WorldPackets::Garrison::GarrisonGetMapData& garrisonGetBuildingLandmarks);
         void HandleGarrisonRequestScoutingMap(WorldPackets::Garrison::GarrisonRequestScoutingMap& garrisonRequestScoutingMap);
         void HandleGarrisonResearchTalent(WorldPackets::Garrison::GarrisonResearchTalent& garrisonResearchTalent);
+        void HandleGarrisonSetFollowerInactive(WorldPackets::Garrison::GarrisonSetFollowerInactive& garrisonSetFollowerInactive);
 
         // Battle Pets
         void HandleBattlePetRequestJournal(WorldPackets::BattlePet::BattlePetRequestJournal& battlePetRequestJournal);

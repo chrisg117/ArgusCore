@@ -16,6 +16,7 @@
  */
 
 #include "ClassHallFollowers.h"
+#include "ClassHall.h"
 #include "DatabaseEnv.h"
 #include "DB2Stores.h"
 #include "GarrisonMgr.h"
@@ -25,6 +26,9 @@
 
 namespace
 {
+// what activating a follower costs, as the client shows it
+constexpr int64 FOLLOWER_ACTIVATION_COST = 250 * GOLD;
+
 // troops are the followers that missions use up; champions have no vitality
 bool IsTroop(GarrFollowerEntry const* follower)
 {
@@ -32,7 +36,8 @@ bool IsTroop(GarrFollowerEntry const* follower)
 }
 }
 
-ClassHallFollowers::ClassHallFollowers(Player* owner) : _owner(owner)
+ClassHallFollowers::ClassHallFollowers(Player* owner, ClassHall const* classHall) : _owner(owner), _classHall(classHall),
+    _activationsRemaining(DAILY_FOLLOWER_ACTIVATIONS)
 {
 }
 
@@ -104,6 +109,8 @@ void ClassHallFollowers::DeleteFromDB(ObjectGuid::LowType ownerGuid, CharacterDa
 
 void ClassHallFollowers::BuildInfo(WorldPackets::Garrison::GarrisonInfo& info) const
 {
+    info.NumFollowerActivationsRemaining = _activationsRemaining;
+
     for (auto const& [dbId, follower] : _followers)
         info.Followers.push_back(&follower.PacketInfo);
 }
@@ -148,6 +155,53 @@ void ClassHallFollowers::AddFollower(uint32 garrFollowerId)
     _owner->UpdateCriteria(CriteriaType::RecruitGarrisonFollower, garrFollowerId);
 }
 
+void ClassHallFollowers::SetFollowerInactive(uint64 dbId, bool inactive)
+{
+    auto itr = _followers.find(dbId);
+    Follower* follower = itr != _followers.end() ? &itr->second : nullptr;
+
+    WorldPackets::Garrison::GarrisonFollowerChangedStatus followerChangedStatus;
+    followerChangedStatus.Result = CanSetFollowerInactive(follower, inactive);
+    if (followerChangedStatus.Result != GARRISON_SUCCESS)
+    {
+        if (follower)
+            followerChangedStatus.Follower = follower->PacketInfo;
+        else
+            followerChangedStatus.Follower.DbID = dbId;
+
+        _owner->SendDirectMessage(followerChangedStatus.Write());
+        return;
+    }
+
+    if (inactive)
+        follower->PacketInfo.FollowerStatus |= FOLLOWER_STATUS_INACTIVE;
+    else
+    {
+        _owner->ModifyMoney(-FOLLOWER_ACTIVATION_COST, false);
+        --_activationsRemaining;
+        SendActivationsRemaining();
+
+        follower->PacketInfo.FollowerStatus &= ~FOLLOWER_STATUS_INACTIVE;
+    }
+
+    followerChangedStatus.Follower = follower->PacketInfo;
+    _owner->SendDirectMessage(followerChangedStatus.Write());
+}
+
+void ClassHallFollowers::ResetActivations()
+{
+    _activationsRemaining = DAILY_FOLLOWER_ACTIVATIONS;
+    SendActivationsRemaining();
+}
+
+void ClassHallFollowers::SendActivationsRemaining() const
+{
+    WorldPackets::Garrison::GarrisonNumFollowerActivationsRemaining activationsRemaining;
+    activationsRemaining.GarrSiteID = _classHall->GetGarrSiteID();
+    activationsRemaining.Activations = _activationsRemaining;
+    _owner->SendDirectMessage(activationsRemaining.Write());
+}
+
 GarrisonError ClassHallFollowers::CanAddFollower(GarrFollowerEntry const* follower) const
 {
     if (!follower || follower->GarrTypeID != GARRISON_TYPE_CLASS_ORDER)
@@ -171,6 +225,31 @@ GarrisonError ClassHallFollowers::CanAddFollower(GarrFollowerEntry const* follow
         if (CountTroops(classSpec->ID) >= classSpec->FollowerClassLimit)
             return GARRISON_ERROR_AT_CLASS_SPEC_CAP;
     }
+
+    return GARRISON_SUCCESS;
+}
+
+GarrisonError ClassHallFollowers::CanSetFollowerInactive(Follower const* follower, bool inactive) const
+{
+    // only champions can be set aside
+    if (!follower || IsTroop(follower->Entry))
+        return GARRISON_ERROR_INVALID_FOLLOWER;
+
+    if (inactive)
+        return follower->IsActive() ? GARRISON_SUCCESS : GARRISON_ERROR_FOLLOWER_INACTIVE;
+
+    if (follower->IsActive())
+        return GARRISON_ERROR_FOLLOWER_ACTIVE;
+
+    GarrFollowerTypeEntry const* followerType = sGarrFollowerTypeStore.LookupEntry(follower->Entry->GarrFollowerTypeID);
+    if (followerType && CountActiveChampions() >= followerType->MaxFollowers)
+        return GARRISON_ERROR_AT_FOLLOWER_HARD_CAP;
+
+    if (!_activationsRemaining)
+        return GARRISON_ERROR_FOLLOWER_ACTIVATION_UNAVAILABLE;
+
+    if (!_owner->HasEnoughMoney(FOLLOWER_ACTIVATION_COST))
+        return GARRISON_ERROR_NOT_ENOUGH_GOLD;
 
     return GARRISON_SUCCESS;
 }

@@ -26,6 +26,7 @@
 #include <list>
 #include <map>
 
+class ClassHall;
 class Player;
 struct GarrAbilityEntry;
 struct GarrFollowerEntry;
@@ -34,7 +35,10 @@ struct GarrFollowerEntry;
 class TC_GAME_API ClassHallFollowers
 {
 public:
-    explicit ClassHallFollowers(Player* owner);
+    // followers a character may activate per day
+    static constexpr uint32 DAILY_FOLLOWER_ACTIVATIONS = 1;
+
+    ClassHallFollowers(Player* owner, ClassHall const* classHall);
 
     void LoadFromDB(PreparedQueryResult followers);
     void SaveToDB(CharacterDatabaseTransaction trans) const;
@@ -43,6 +47,11 @@ public:
     void BuildInfo(WorldPackets::Garrison::GarrisonInfo& info) const;
 
     void AddFollower(uint32 garrFollowerId);
+    void SetFollowerInactive(uint64 dbId, bool inactive);
+
+    uint32 GetActivationsRemaining() const { return _activationsRemaining; }
+    void SetActivationsRemaining(uint32 activations) { _activationsRemaining = activations; }
+    void ResetActivations();
 
 private:
     struct Follower
@@ -54,13 +63,17 @@ private:
     };
 
     GarrisonError CanAddFollower(GarrFollowerEntry const* follower) const;
+    GarrisonError CanSetFollowerInactive(Follower const* follower, bool inactive) const;
+    void SendActivationsRemaining() const;
     std::list<GarrAbilityEntry const*> GetAbilities(GarrFollowerEntry const* follower, uint32 quality) const;
     uint32 GetClassSpec(GarrFollowerEntry const* follower) const;
     uint32 CountActiveChampions() const;
     uint32 CountTroops(uint32 garrClassSpecId) const;
 
     Player* _owner;
+    ClassHall const* _classHall;
     std::map<uint64 /*dbId*/, Follower> _followers;
+    uint32 _activationsRemaining;
 };
 
 #endif // ClassHallFollowers_h__
