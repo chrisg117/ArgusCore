@@ -75,10 +75,12 @@ private:
     GarrisonError CanResearch(GarrTalentEntry const* talent) const;
     void FinishResearch(Talent& talent);
     void UpdateResearchEndTime();
+    void ApplyPerk(Talent const& talent);
 
     Player* _owner;
     std::map<uint32 /*garrTalentId*/, Talent> _talents;
     time_t _researchEndTime;    // when the talent being researched is done, 0 if there is none
+    bool _passivePerksApplied;
 };
 
 #endif // ClassHallTalents_h__

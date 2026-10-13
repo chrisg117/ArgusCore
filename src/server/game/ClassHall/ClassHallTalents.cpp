@@ -23,13 +23,15 @@
 #include "GarrisonPackets.h"
 #include "Log.h"
 #include "Player.h"
+#include "SpellInfo.h"
+#include "SpellMgr.h"
 
 time_t ClassHallTalents::Talent::GetResearchEndTime() const
 {
     return ResearchStartTime + Entry->ResearchDurationSecs;
 }
 
-ClassHallTalents::ClassHallTalents(Player* owner) : _owner(owner), _researchEndTime(0)
+ClassHallTalents::ClassHallTalents(Player* owner) : _owner(owner), _researchEndTime(0), _passivePerksApplied(false)
 {
 }
 
@@ -97,6 +99,18 @@ void ClassHallTalents::BuildInfo(WorldPackets::Garrison::GarrisonInfo& info) con
 
 void ClassHallTalents::Update()
 {
+    if (!_passivePerksApplied)
+    {
+        // passive auras are not saved, and nothing can be cast while the character is still loading
+        for (auto const& [talentId, talent] : _talents)
+            if (talent.IsResearched())
+                if (SpellInfo const* perkSpell = sSpellMgr->GetSpellInfo(talent.Entry->PerkSpellID, DIFFICULTY_NONE))
+                    if (perkSpell->IsPassive())
+                        ApplyPerk(talent);
+
+        _passivePerksApplied = true;
+    }
+
     time_t now = GameTime::GetGameTime();
     if (!_researchEndTime || _researchEndTime > now)
         return;
@@ -117,6 +131,27 @@ void ClassHallTalents::FinishResearch(Talent& talent)
     talentCompleted.GarrTalentID = talent.Entry->ID;
     talentCompleted.Flags = talent.Flags;
     _owner->SendDirectMessage(talentCompleted.Write());
+
+    ApplyPerk(talent);
+}
+
+void ClassHallTalents::ApplyPerk(Talent const& talent)
+{
+    uint32 spellId = talent.Entry->PerkSpellID;
+    if (!spellId || _owner->HasAura(spellId))
+        return;
+
+    if (!ConditionMgr::IsPlayerMeetingCondition(_owner, talent.Entry->PerkPlayerConditionID))
+        return;
+
+    if (!sSpellMgr->GetSpellInfo(spellId, DIFFICULTY_NONE))
+    {
+        TC_LOG_ERROR("entities.player", "ClassHallTalents::ApplyPerk: GarrTalent {} has unknown perk spell {}, not cast.",
+            talent.Entry->ID, spellId);
+        return;
+    }
+
+    _owner->CastSpell(_owner, spellId, true);
 }
 
 void ClassHallTalents::UpdateResearchEndTime()
