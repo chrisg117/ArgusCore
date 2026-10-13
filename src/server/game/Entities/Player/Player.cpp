@@ -28326,7 +28326,7 @@ void Player::DeleteGarrison()
 
 void Player::CreateClassHall(uint32 garrSiteId)
 {
-    // a class hall is never replaced: it holds the followers and research earned so far
+    // a second create never replaces a class hall the character already has
     if (_classHall)
     {
         WorldPackets::Garrison::GarrisonCreateResult garrisonCreateResult;
