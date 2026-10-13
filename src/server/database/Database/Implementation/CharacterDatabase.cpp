@@ -701,6 +701,9 @@ void CharacterDatabaseConnection::DoPrepareStatements()
     PrepareStatement(CHAR_SEL_CHARACTER_CLASS_HALL_TALENTS, "SELECT talentId, researchStartTime, flags FROM character_class_hall_talent WHERE guid = ?", CONNECTION_ASYNC);
     PrepareStatement(CHAR_INS_CHARACTER_CLASS_HALL_TALENT, "INSERT INTO character_class_hall_talent (guid, talentId, researchStartTime, flags) VALUES (?, ?, ?, ?)", CONNECTION_ASYNC);
     PrepareStatement(CHAR_DEL_CHARACTER_CLASS_HALL_TALENTS, "DELETE FROM character_class_hall_talent WHERE guid = ?", CONNECTION_ASYNC);
+    PrepareStatement(CHAR_SEL_CHARACTER_CLASS_HALL_FOLLOWERS, "SELECT dbId, followerId, quality, level, itemLevelWeapon, itemLevelArmor, xp, durability, status FROM character_class_hall_follower WHERE guid = ?", CONNECTION_ASYNC);
+    PrepareStatement(CHAR_INS_CHARACTER_CLASS_HALL_FOLLOWER, "INSERT INTO character_class_hall_follower (dbId, guid, followerId, quality, level, itemLevelWeapon, itemLevelArmor, xp, durability, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", CONNECTION_ASYNC);
+    PrepareStatement(CHAR_DEL_CHARACTER_CLASS_HALL_FOLLOWERS, "DELETE FROM character_class_hall_follower WHERE guid = ?", CONNECTION_ASYNC);
 
     // Black Market
     PrepareStatement(CHAR_SEL_BLACKMARKET_AUCTIONS, "SELECT marketId, currentBid, time, numBids, bidder FROM blackmarket_auctions", CONNECTION_SYNCH);

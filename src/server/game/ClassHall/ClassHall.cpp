@@ -24,11 +24,11 @@
 #include "Log.h"
 #include "Player.h"
 
-ClassHall::ClassHall(Player* owner) : _owner(owner), _siteLevel(nullptr), _talents(owner)
+ClassHall::ClassHall(Player* owner) : _owner(owner), _siteLevel(nullptr), _talents(owner), _followers(owner)
 {
 }
 
-bool ClassHall::LoadFromDB(PreparedQueryResult classHall, PreparedQueryResult talents)
+bool ClassHall::LoadFromDB(PreparedQueryResult classHall, PreparedQueryResult talents, PreparedQueryResult followers)
 {
     if (!classHall)
         return false;
@@ -44,6 +44,7 @@ bool ClassHall::LoadFromDB(PreparedQueryResult classHall, PreparedQueryResult ta
     }
 
     _talents.LoadFromDB(std::move(talents));
+    _followers.LoadFromDB(std::move(followers));
     return true;
 }
 
@@ -55,6 +56,7 @@ void ClassHall::SaveToDB(CharacterDatabaseTransaction trans) const
     trans->Append(stmt);
 
     _talents.SaveToDB(trans);
+    _followers.SaveToDB(trans);
 }
 
 void ClassHall::DeleteFromDB(ObjectGuid::LowType ownerGuid, CharacterDatabaseTransaction trans)
@@ -64,6 +66,7 @@ void ClassHall::DeleteFromDB(ObjectGuid::LowType ownerGuid, CharacterDatabaseTra
     trans->Append(stmt);
 
     ClassHallTalents::DeleteFromDB(ownerGuid, trans);
+    ClassHallFollowers::DeleteFromDB(ownerGuid, trans);
 }
 
 bool ClassHall::Create(uint32 garrSiteId)
@@ -87,6 +90,7 @@ void ClassHall::BuildInfo(WorldPackets::Garrison::GarrisonInfo& info) const
     info.GarrSiteLevelID = _siteLevel->ID;
 
     _talents.BuildInfo(info);
+    _followers.BuildInfo(info);
 }
 
 void ClassHall::Update()

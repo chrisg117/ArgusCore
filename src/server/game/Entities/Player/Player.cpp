@@ -17962,7 +17962,8 @@ bool Player::LoadFromDB(ObjectGuid guid, CharacterDatabaseQueryHolder const& hol
 
     std::unique_ptr<ClassHall> classHall = std::make_unique<ClassHall>(this);
     if (classHall->LoadFromDB(holder.GetPreparedResult(PLAYER_LOGIN_QUERY_LOAD_CLASS_HALL),
-        holder.GetPreparedResult(PLAYER_LOGIN_QUERY_LOAD_CLASS_HALL_TALENTS)))
+        holder.GetPreparedResult(PLAYER_LOGIN_QUERY_LOAD_CLASS_HALL_TALENTS),
+        holder.GetPreparedResult(PLAYER_LOGIN_QUERY_LOAD_CLASS_HALL_FOLLOWERS)))
         _classHall = std::move(classHall);
 
     _InitHonorLevelOnLoadFromDB(fields.honor, fields.honorLevel, fields.prestigeLevel);
