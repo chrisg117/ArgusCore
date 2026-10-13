@@ -38,6 +38,7 @@
 #include "GameObjectAI.h"
 #include "GameTime.h"
 #include "Garrison.h"
+#include "GarrisonMgr.h"
 #include "GossipDef.h"
 #include "GridNotifiers.h"
 #include "GridNotifiersImpl.h"
@@ -5383,7 +5384,12 @@ void Spell::EffectCreateGarrison()
     if (!unitTarget || unitTarget->GetTypeId() != TYPEID_PLAYER)
         return;
 
-    unitTarget->ToPlayer()->CreateGarrison(effectInfo->MiscValue);
+    Player* player = unitTarget->ToPlayer();
+    GarrTypeEntry const* garrType = sGarrisonMgr.GetGarrTypeEntryForSite(effectInfo->MiscValue);
+    if (garrType && garrType->ID == GARRISON_TYPE_CLASS_ORDER)
+        player->CreateClassHall(effectInfo->MiscValue);
+    else
+        player->CreateGarrison(effectInfo->MiscValue);
 }
 
 void Spell::EffectCreateConversation()
