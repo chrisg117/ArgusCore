@@ -233,22 +233,29 @@ Commit 2, on Gairy:
 2. With the row changed to site level `999999`: the login succeeds and
    Server.log has one error naming it. Restore the row afterwards.
 
-Commit 3, on Gairy, starting with no row:
+Commit 3, starting with no row:
 
-1. `.cast self 185506 triggered`, `.save`. The table has `(1, 560)`.
+1. On Gairy: `.cast self 185506 triggered`, `.save`. The table has
+   `(1, 560)`, and Gairy has no Warlords garrison row.
 2. Cast it again. The table still has exactly that row.
-3. `.cast self 156020 triggered`, `.save`. `character_garrison` has a
-   Warlords row, so the old path still works.
+3. A character dump of Gairy contains the class hall row.
+4. A throwaway character is given a hall and then deleted. Its row is gone.
+5. On Lindsey: `.cast self 156020 triggered`, `.save`. `character_garrison`
+   has a Warlords row, so the old path still works.
 
-Commit 4, on Gairy, after a relog:
+Commit 4, after a relog:
 
-1. `/dump C_Garrison.HasGarrison(3)` prints `true`.
-2. `/dump C_Garrison.HasGarrison(2)` prints `true`.
-3. `/dump C_Garrison.GetLandingPageGarrisonType()` prints `3`.
+1. Gairy (hall only): `/dump C_Garrison.HasGarrison(3)` prints `true`,
+   `HasGarrison(2)` prints `false`, and
+   `/dump C_Garrison.GetLandingPageGarrisonType()` prints `3`.
+2. Lindsey (Warlords only): `HasGarrison(2)` prints `true` and
+   `HasGarrison(3)` prints `false`.
+3. Gairy after also casting 156020 (both): both print `true`.
+4. A character with neither: both print `false`.
 
-Gairy's Warlords garrison row is removed by hand after testing. Whether the
-class hall row stays is the user's call, since the priest hall content will
-create it through a quest later.
+The Warlords garrison rows on Gairy and Lindsey are removed by hand after
+testing. Whether Gairy's class hall row stays is the user's call, since the
+priest hall content will create it through a quest later.
 
 ## Open points
 
