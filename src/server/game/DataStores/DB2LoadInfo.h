@@ -1649,6 +1649,40 @@ struct GarrFollowerLoadInfo
     static constexpr DB2LoadInfo Instance{ Fields, 32, &GarrFollowerMeta::Instance, HOTFIX_SEL_GARR_FOLLOWER };
 };
 
+struct GarrFollowerQualityLoadInfo
+{
+    static constexpr DB2FieldMeta Fields[8] =
+    {
+        { .IsSigned = false, .Type = FT_INT, .Name = "ID" },
+        { .IsSigned = false, .Type = FT_INT, .Name = "XpToNextQuality" },
+        { .IsSigned = false, .Type = FT_SHORT, .Name = "ShipmentXP" },
+        { .IsSigned = false, .Type = FT_BYTE, .Name = "Quality" },
+        { .IsSigned = false, .Type = FT_BYTE, .Name = "AbilityCount" },
+        { .IsSigned = false, .Type = FT_BYTE, .Name = "TraitCount" },
+        { .IsSigned = false, .Type = FT_BYTE, .Name = "GarrFollowerTypeID" },
+        { .IsSigned = false, .Type = FT_INT, .Name = "ClassSpecID" },
+    };
+
+    static constexpr DB2LoadInfo Instance{ Fields, 8, &GarrFollowerQualityMeta::Instance, HOTFIX_SEL_GARR_FOLLOWER_QUALITY };
+};
+
+struct GarrFollowerTypeLoadInfo
+{
+    static constexpr DB2FieldMeta Fields[8] =
+    {
+        { .IsSigned = false, .Type = FT_INT, .Name = "ID" },
+        { .IsSigned = false, .Type = FT_SHORT, .Name = "MaxItemLevel" },
+        { .IsSigned = false, .Type = FT_BYTE, .Name = "MaxFollowers" },
+        { .IsSigned = false, .Type = FT_BYTE, .Name = "MaxFollowerBuildingType" },
+        { .IsSigned = false, .Type = FT_BYTE, .Name = "GarrTypeID" },
+        { .IsSigned = false, .Type = FT_BYTE, .Name = "LevelRangeBias" },
+        { .IsSigned = false, .Type = FT_BYTE, .Name = "ItemLevelRangeBias" },
+        { .IsSigned = false, .Type = FT_BYTE, .Name = "Flags" },
+    };
+
+    static constexpr DB2LoadInfo Instance{ Fields, 8, &GarrFollowerTypeMeta::Instance, HOTFIX_SEL_GARR_FOLLOWER_TYPE };
+};
+
 struct GarrFollowerXAbilityLoadInfo
 {
     static constexpr DB2FieldMeta Fields[4] =
