@@ -26,9 +26,27 @@
 #include "SpellInfo.h"
 #include "SpellMgr.h"
 
+namespace
+{
+struct TalentCost
+{
+    uint32 CurrencyId;
+    int32 CurrencyAmount;
+    int32 Gold;
+};
+
+TalentCost GetTalentCost(GarrTalentEntry const* talent, bool isSwap)
+{
+    if (isSwap)
+        return { talent->RespecCostCurrencyTypesID, talent->RespecCost, talent->RespecGoldCost };
+
+    return { talent->ResearchCostCurrencyTypesID, talent->ResearchCost, talent->ResearchGoldCost };
+}
+}
+
 time_t ClassHallTalents::Talent::GetResearchEndTime() const
 {
-    return ResearchStartTime + Entry->ResearchDurationSecs;
+    return ResearchStartTime + ((Flags & CLASS_HALL_TALENT_FLAG_RESPEC) ? Entry->RespecDurationSecs : Entry->ResearchDurationSecs);
 }
 
 ClassHallTalents::ClassHallTalents(Player* owner) : _owner(owner), _researchEndTime(0), _passivePerksApplied(false)
@@ -124,7 +142,7 @@ void ClassHallTalents::Update()
 
 void ClassHallTalents::FinishResearch(Talent& talent)
 {
-    talent.Flags |= CLASS_HALL_TALENT_FLAG_RESEARCHED;
+    talent.Flags = (talent.Flags & ~CLASS_HALL_TALENT_FLAG_RESPEC) | CLASS_HALL_TALENT_FLAG_RESEARCHED;
 
     WorldPackets::Garrison::GarrisonTalentCompleted talentCompleted;
     talentCompleted.GarrTypeID = GARRISON_TYPE_CLASS_ORDER;
@@ -154,6 +172,12 @@ void ClassHallTalents::ApplyPerk(Talent const& talent)
     _owner->CastSpell(_owner, spellId, true);
 }
 
+void ClassHallTalents::RemovePerk(Talent const& talent)
+{
+    if (uint32 spellId = talent.Entry->PerkSpellID)
+        _owner->RemoveAurasDueToSpell(spellId);
+}
+
 void ClassHallTalents::UpdateResearchEndTime()
 {
     _researchEndTime = 0;
@@ -173,15 +197,33 @@ void ClassHallTalents::Research(uint32 garrTalentId)
     researchTalentResult.Talent.GarrTalentID = garrTalentId;
     if (result == GARRISON_SUCCESS)
     {
-        if (entry->ResearchCost > 0)
-            _owner->RemoveCurrency(entry->ResearchCostCurrencyTypesID, entry->ResearchCost, CurrencyDestroyReason::Garrison);
+        Talent const* replaced = GetResearchedTalentInRow(entry);
+        TalentCost cost = GetTalentCost(entry, replaced != nullptr);
+        if (cost.CurrencyAmount > 0)
+            _owner->RemoveCurrency(cost.CurrencyId, cost.CurrencyAmount, CurrencyDestroyReason::Garrison);
 
-        if (entry->ResearchGoldCost > 0)
-            _owner->ModifyMoney(-int64(entry->ResearchGoldCost) * GOLD, false);
+        if (cost.Gold > 0)
+            _owner->ModifyMoney(-int64(cost.Gold) * GOLD, false);
+
+        uint32 flags = 0;
+        if (replaced)
+        {
+            // a swap: the row's researched talent goes at once, the new one takes the respec time
+            RemovePerk(*replaced);
+
+            WorldPackets::Garrison::GarrisonTalentRemoved talentRemoved;
+            talentRemoved.GarrTypeID = GARRISON_TYPE_CLASS_ORDER;
+            talentRemoved.GarrTalentID = replaced->Entry->ID;
+            _owner->SendDirectMessage(talentRemoved.Write());
+
+            _talents.erase(replaced->Entry->ID);
+            flags = CLASS_HALL_TALENT_FLAG_RESPEC;
+        }
 
         Talent& talent = _talents[garrTalentId];
         talent.Entry = entry;
         talent.ResearchStartTime = GameTime::GetGameTime();
+        talent.Flags = flags;
 
         researchTalentResult.Talent.ResearchStartTime = talent.ResearchStartTime;
         researchTalentResult.Talent.Flags = talent.Flags;
@@ -226,33 +268,39 @@ GarrisonError ClassHallTalents::CanResearch(GarrTalentEntry const* talent) const
 
     // only one talent can be researched at a time
     bool previousRowResearched = talent->Tier == 0;
-    bool sameRowResearched = false;
     for (auto const& [otherId, other] : _talents)
     {
         if (!other.IsResearched())
             return GARRISON_ERROR_ALREADY_RESEARCHING_TALENT;
 
-        if (other.Entry->GarrTalentTreeID != talent->GarrTalentTreeID)
-            continue;
-
-        if (other.Entry->Tier == talent->Tier - 1)
+        if (other.Entry->GarrTalentTreeID == talent->GarrTalentTreeID && other.Entry->Tier == talent->Tier - 1)
             previousRowResearched = true;
-        else if (other.Entry->Tier == talent->Tier)
-            sameRowResearched = true;
     }
 
     if (!ConditionMgr::IsPlayerMeetingCondition(_owner, talent->PlayerConditionID))
         return GARRISON_ERROR_FAILED_CONDITION;
 
-    // a row opens when a talent of the row before it is researched, and holds one talent
-    if (!previousRowResearched || sameRowResearched)
+    // a row opens when a talent of the row before it is researched
+    if (!previousRowResearched)
         return GARRISON_ERROR_INVALID_TIER;
 
-    if (talent->ResearchCost > 0 && !_owner->HasCurrency(talent->ResearchCostCurrencyTypesID, talent->ResearchCost))
+    // choosing another talent in a row that has a researched one is a swap, with its own cost
+    TalentCost cost = GetTalentCost(talent, GetResearchedTalentInRow(talent) != nullptr);
+    if (cost.CurrencyAmount > 0 && !_owner->HasCurrency(cost.CurrencyId, cost.CurrencyAmount))
         return GARRISON_ERROR_NOT_ENOUGH_CURRENCY;
 
-    if (talent->ResearchGoldCost > 0 && !_owner->HasEnoughMoney(uint64(talent->ResearchGoldCost) * GOLD))
+    if (cost.Gold > 0 && !_owner->HasEnoughMoney(uint64(cost.Gold) * GOLD))
         return GARRISON_ERROR_NOT_ENOUGH_GOLD;
 
     return GARRISON_SUCCESS;
+}
+
+ClassHallTalents::Talent const* ClassHallTalents::GetResearchedTalentInRow(GarrTalentEntry const* talent) const
+{
+    for (auto const& [otherId, other] : _talents)
+        if (other.IsResearched() && other.Entry != talent && other.Entry->GarrTalentTreeID == talent->GarrTalentTreeID
+            && other.Entry->Tier == talent->Tier)
+            return &other;
+
+    return nullptr;
 }

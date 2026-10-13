@@ -38,7 +38,8 @@ namespace WorldPackets
 
 enum ClassHallTalentFlags : uint32
 {
-    CLASS_HALL_TALENT_FLAG_RESEARCHED   = 0x1     // a talent without it is still being researched
+    CLASS_HALL_TALENT_FLAG_RESEARCHED   = 0x1,    // a talent without it is still being researched
+    CLASS_HALL_TALENT_FLAG_RESPEC       = 0x2     // being researched as a swap, for the respec time
 };
 
 // The talents (hall upgrades) a character has chosen in the research tree of its class hall.
@@ -73,9 +74,11 @@ private:
     };
 
     GarrisonError CanResearch(GarrTalentEntry const* talent) const;
+    Talent const* GetResearchedTalentInRow(GarrTalentEntry const* talent) const;
     void FinishResearch(Talent& talent);
     void UpdateResearchEndTime();
     void ApplyPerk(Talent const& talent);
+    void RemovePerk(Talent const& talent);
 
     Player* _owner;
     std::map<uint32 /*garrTalentId*/, Talent> _talents;
