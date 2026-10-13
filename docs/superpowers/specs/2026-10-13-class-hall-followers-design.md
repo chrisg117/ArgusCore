@@ -61,6 +61,18 @@ The priest's followers:
 `GarrFollowerType.db2` has one row per follower type. Row 4 (class hall):
 garrison type 3, at most 5 active followers, item level cap 950.
 
+`GarrFollowerXAbility.db2` lists a follower's abilities per faction. A
+priest champion has six rows per faction: its spec, two abilities and
+three "Empty Equipment Slot" abilities (flag 0x1, a trait). A troop has
+one. `GarrFollowerQuality.db2` says how many of them a follower has at
+each quality: for follower type 4, quality 1 has 2 abilities and no
+equipment slot, quality 2 has 3 and none, quality 3 has 3 and 1, quality 4
+has 3 and 2, qualities 5 and 6 have 3 and 3. The spec counts as an ability.
+
+`GarrClassSpecPlayerCond.db2` has up to two rows per troop kind, each with
+a player condition and an order: for Acolytes, "Group of Acolytes"
+(condition 42849, order 0) and "Netherlight Paragons" (41906, order 1).
+
 A champion is granted by a spell: 219756 "Follower: Calia Menethil" has one
 effect of type 220 (add garrison follower) whose value is the follower id,
 856. The quest "Champion: Calia Menethil" (43271) casts it as its reward.
@@ -70,8 +82,10 @@ effect of type 220 (add garrison follower) whose value is the follower id,
 ## What the core already has
 
 - `GarrFollower.db2`, `GarrClassSpec.db2`, `GarrFollowerXAbility.db2` and
-  `GarrAbility.db2` are loaded. `GarrFollowerType.db2` is not; its layout
-  is in `DB2Metadata.h`.
+  `GarrAbility.db2` are loaded. `GarrFollowerType.db2`,
+  `GarrFollowerQuality.db2` and `GarrClassSpecPlayerCond.db2` are not;
+  their layouts are in `DB2Metadata.h`. `GarrisonMgr` indexes abilities of
+  Warlords followers only.
 - The follower entry of the garrison info reply (id, follower, quality,
   level, item levels, experience, durability, building, mission, abilities,
   zone support spell, status, custom name), and the list of followers in
@@ -87,7 +101,11 @@ effect of type 220 (add garrison follower) whose value is the follower id,
   `CMSG_GARRISON_REMOVE_FOLLOWER` (0x32F8),
   `CMSG_GARRISON_REQUEST_CLASS_SPEC_CATEGORY_INFO` (0x32D5),
   `SMSG_GARRISON_FOLLOWER_CHANGED_STATUS` (0x2915),
-  `SMSG_GARRISON_NUM_FOLLOWER_ACTIVATIONS_REMAINING` (0x2917).
+  `SMSG_GARRISON_NUM_FOLLOWER_ACTIVATIONS_REMAINING` (0x2917) and
+  `SMSG_GARRISON_FOLLOWER_CHANGED_DURABILITY` (0x2904).
+- The character dump does not include Warlords followers (the core marks
+  it as not done): their ids are global and the dump cannot renumber
+  them.
 - The follower status flags: favorite 0x01, exhausted 0x02, inactive 0x04,
   troop 0x08, no experience gain 0x10.
 
@@ -98,7 +116,8 @@ the three request handlers and their replies.
 
 In scope:
 
-- Loading `GarrFollowerType.db2`.
+- Loading `GarrFollowerType.db2`, `GarrFollowerQuality.db2` and (with the
+  troop kinds) `GarrClassSpecPlayerCond.db2`.
 - `ClassHallFollowers`, its table, and its place in the hall's load, save,
   delete and info reply.
 - Gaining a follower from spell effect 220, with the rules below, and the
@@ -116,6 +135,10 @@ Out of scope:
 - Troop orders and recruiting, the real source of troops. Troops are
   tested with rows planted by hand.
 - Renaming, favorites, and assigning to buildings.
+- Followers in the character dump. Their ids are global, and the dump has
+  no renumbering for follower ids (it leaves the Warlords followers out
+  for the same reason). A dumped character loads with its hall and talents
+  and without followers.
 - Anything for Warlords followers. The shared requests are answered for
   class hall followers only; a request about a Warlords follower is left
   as it is today (ignored).
@@ -136,10 +159,13 @@ Out of scope:
 
 ## Design
 
-### 1. Follower type store
+### 1. Stores
 
-Load `GarrFollowerType.db2` like any other store, with its hotfix table. It
-gives the limit of active followers for the class hall.
+Load `GarrFollowerType.db2` and `GarrFollowerQuality.db2` like any other
+store, each with its hotfix table. The first gives the limit of active
+followers for the class hall, the second how many abilities and equipment
+slots a follower shows at its quality. `GarrClassSpecPlayerCond.db2` is
+loaded by the troop kinds commit, which is its only user.
 
 ### 2. `ClassHallFollowers`
 
@@ -164,14 +190,16 @@ It can:
 `ClassHall` owns one and forwards load, save, delete and the info entry to
 it.
 
-A follower's abilities are not saved. They are the ones the client data
-lists for it (`GarrFollowerXAbility.db2`, for the character's faction),
-read when the follower is loaded or added. Nothing in this piece changes
-them.
+A follower's abilities are not saved. They are worked out from client
+data when the follower is loaded or added: of the rows
+`GarrFollowerXAbility.db2` lists for it and the character's faction, in id
+order, the first N that are not traits and the first M that are, where N
+and M are the ability and trait counts `GarrFollowerQuality.db2` gives for
+the follower's type and quality. Nothing in this piece changes them.
 
 ### 3. Storage
 
-One new table. No existing table changes.
+One new table, and one new column on `character_class_hall` (section 5).
 
 `character_class_hall_follower`:
 
@@ -206,9 +234,8 @@ garrison, because the client identifies a follower by this id alone. It
 starts from the highest id in either follower table. This is the one change
 to `GarrisonMgr`.
 
-The table is added to the character dump list, with its `dbId` handled the
-way the dump handles the Warlords follower id. Character deletion removes
-its rows.
+The table is not added to the character dump list (see "Out of scope").
+Character deletion removes its rows.
 
 ### 4. Gaining a follower
 
@@ -255,8 +282,18 @@ state.
 - Asking for the state a champion already has is refused with "follower
   inactive" or "follower active".
 
-The follower's status flag changes and the client is told with
-`SMSG_GARRISON_FOLLOWER_CHANGED_STATUS`.
+The follower's status flag changes and the client is told. Two replies
+could carry it: 0x2915, which this core calls "follower changed status"
+and WowPacketParser "follower changed flags" (no parser exists), and
+0x2904, which WowPacketParser calls "update follower" (a result and the
+whole follower). Whichever the client follows is used; see "Open points".
+
+How many activations are left today is kept on the hall, in a new column
+`followerActivationsRemaining` of `character_class_hall`, sent in the
+hall's info entry and after each activation (0x2917, "follower activations
+set": the site and the number), and set back to the daily number when the
+character's daily quests reset, where the Warlords garrison resets its
+own.
 
 ### 6. Removing
 
@@ -267,30 +304,37 @@ dismissed follows what the client offers (see "Open points").
 
 ### 7. Troop limits
 
-`CMSG_GARRISON_REQUEST_CLASS_SPEC_CATEGORY_INFO` asks, for a follower
-type, how many followers of each troop kind the character has and may
-have. The reply lists, for each kind the character's class has: the class
-spec, the count owned and the limit.
+`CMSG_GARRISON_REQUEST_CLASS_SPEC_CATEGORY_INFO` names a follower type.
+The reply (WowPacketParser: "get class spec category info result", 0x2901,
+a number this core does not define yet) lists, for each troop kind, the
+class spec and one `GarrClassSpecPlayerCond` row. The client works out the
+counts and limits itself from its follower list and its data.
+
+For each troop kind that followers of the character's class use, the row
+sent is the one with the highest order whose player condition the
+character meets. A kind with no row met is left out.
 
 ## Commit sequence
 
 Each commit builds without new warnings, boots, and is checked in game
 before the next one starts.
 
-1. `feat(engine,sql)`: load `GarrFollowerType.db2`
+1. `feat(engine,sql)`: load `GarrFollowerType.db2` and
+   `GarrFollowerQuality.db2`
 2. `feat(engine,sql)`: store class hall followers and report them to the
    client
-3. `feat(engine)`: add a class hall follower from its spell
-4. `feat(engine)`: set a class hall follower active or inactive
-5. `feat(engine)`: dismiss a class hall follower
-6. `feat(engine)`: report the class hall's troop limits
+3. `feat(engine)`: add the garrison follower packets
+4. `feat(engine)`: add a class hall follower from its spell
+5. `feat(engine,sql)`: set a class hall follower active or inactive
+6. `feat(engine)`: dismiss a class hall follower
+7. `feat(engine,sql)`: report the class hall's troop kinds
 
-Commits 1 and 2 change widely included headers and share one long build.
-Commits 3 to 6 change the class hall files, a few source files and the
-packet files. Any packet additions are grouped into as few long builds as
-the opcode list allows; planning decides.
+Three long builds: commits 1 and 2 (store and statement headers), commits
+3 to 6 (the opcode list and the session header), and commit 7 (a store
+header again). Commits that share a build are still tested one after the
+other.
 
-Commits 5 and 6 are the least certain. If the client's expectations turn
+Commits 6 and 7 are the least certain. If the client's expectations turn
 out to differ from this design, they move to a follow-up and the commits
 before them stand.
 
@@ -349,11 +393,10 @@ Commit 2, with rows planted by hand:
 2. `.save`, log out. The rows are unchanged.
 3. A row with follower id `999999`, and one with a Warlords follower id:
    login succeeds, Server.log has one error for each.
-4. A character dump contains the follower rows.
-5. A throwaway character with planted follower rows is deleted. Its rows
+4. A throwaway character with planted follower rows is deleted. Its rows
    are gone.
 
-Commit 3:
+Commit 4:
 
 1. Cast Calia's spell. She appears in the list without a relog, and after
    `.save` the table has her row.
@@ -366,21 +409,21 @@ Commit 3:
 6. A Warlords follower spell still reaches the Warlords path (read in
    review; there is no Warlords garrison on the test character).
 
-Commit 4:
+Commit 5:
 
 1. Set a champion inactive from the list, then active. The list follows
    without a relog and the status is saved.
 2. With five active champions, activating a sixth is refused.
 3. The cost and the daily limit behave as retail's.
 
-Commit 5:
+Commit 6:
 
 1. Dismiss a troop from the list. It is gone without a relog and its row
    is gone after `.save`.
 2. What the client offers for a champion is recorded, and the server
    agrees with it.
 
-Commit 6:
+Commit 7:
 
 1. The troop counts and limits show where the client displays them.
 
@@ -392,24 +435,31 @@ deleted, and Gairy is put back exactly as she was.
 Each is settled in planning or by the in-game check named, and the spec is
 corrected in the same sitting if the answer differs.
 
-- **Reply layouts.** `SMSG_GARRISON_FOLLOWER_CHANGED_STATUS` and
-  `SMSG_GARRISON_NUM_FOLLOWER_ACTIVATIONS_REMAINING` have numbers but no
-  packet class; the troop limits reply has neither in this core. Planning
-  takes names, numbers and layouts from WowPacketParser where it has them
-  and infers the rest; each is confirmed in game by the commit that first
-  uses it.
-- **The request layouts** of the three unhandled requests, from
-  WowPacketParser, confirmed by the packet log.
+- **Reply layouts.** From WowPacketParser: 0x2917 is the site and the
+  number of activations; 0x2904 is a result and the follower; 0x2901 is
+  the follower type and a list of (class spec, class spec condition row).
+  0x2915 has no parser. Which of 0x2915 and 0x2904 the client follows for
+  a status change is found by sending both by hand before the commit that
+  needs it.
+- **The request layouts.** From WowPacketParser: set inactive is the
+  follower's id and a bit (6.x layout); the troop request is the follower
+  type. The dismiss request has no parser. All three are read from the
+  packet log before their handlers are written, since the log records
+  requests the server does not handle yet.
+- **Whether the client sends these requests without a mission NPC window
+  open.** The research request needed its NPC. If these do too, the tests
+  open the window by sending the "open mission NPC" reply by hand.
 - **A champion gained while five are active:** whether retail adds it
-  inactive or refuses it. Commit 3 or 4, from what the client shows.
+  inactive or refuses it. Commit 4 or 5, from what the client shows.
 - **The reactivation cost and daily limit:** whether the numbers are in
-  client data or fixed, and what the client displays for them. Commit 4.
-- **Which followers can be dismissed.** Commit 5, from what the client
+  client data or fixed, and what the client displays for them. Commit 5.
+- **Which followers can be dismissed.** Commit 6, from what the client
   offers.
 - **Whether a newly gained follower shows without a relog** with the
-  existing "add follower result" reply for a class hall. Commit 3.
-- **Abilities.** Whether the fixed list from `GarrFollowerXAbility.db2` is
-  what the client shows for a fresh champion and troop. Commit 2.
+  existing "add follower result" reply for a class hall. Commit 4.
+- **Abilities.** Whether the list worked out from the two data files is
+  what retail shows for a fresh champion (its spec and one ability, no
+  equipment slot) and for a troop. Commit 2.
 - **The Warlords code passes the follower's own id** to the recruit
   criteria, where the criteria compares a follower id. That looks like a
   bug in the Warlords path; it is not touched here, and the class hall
