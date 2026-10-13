@@ -1794,6 +1794,22 @@ struct GarrTalentTreeLoadInfo
     static constexpr DB2LoadInfo Instance{ Fields, 6, &GarrTalentTreeMeta::Instance, HOTFIX_SEL_GARR_TALENT_TREE };
 };
 
+struct GarrTypeLoadInfo
+{
+    static constexpr DB2FieldMeta Fields[7] =
+    {
+        { .IsSigned = false, .Type = FT_INT, .Name = "ID" },
+        { .IsSigned = false, .Type = FT_INT, .Name = "Flags" },
+        { .IsSigned = false, .Type = FT_INT, .Name = "PrimaryCurrencyTypeID" },
+        { .IsSigned = false, .Type = FT_INT, .Name = "SecondaryCurrencyTypeID" },
+        { .IsSigned = false, .Type = FT_INT, .Name = "ExpansionID" },
+        { .IsSigned = true, .Type = FT_INT, .Name = "MapIDs1" },
+        { .IsSigned = true, .Type = FT_INT, .Name = "MapIDs2" },
+    };
+
+    static constexpr DB2LoadInfo Instance{ Fields, 7, &GarrTypeMeta::Instance, HOTFIX_SEL_GARR_TYPE };
+};
+
 struct GemPropertiesLoadInfo
 {
     static constexpr DB2FieldMeta Fields[4] =

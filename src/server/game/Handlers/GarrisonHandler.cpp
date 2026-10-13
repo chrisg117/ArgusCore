@@ -16,14 +16,27 @@
  */
 
 #include "WorldSession.h"
+#include "ClassHall.h"
 #include "Garrison.h"
 #include "GarrisonPackets.h"
 #include "Player.h"
 
 void WorldSession::HandleGetGarrisonInfo(WorldPackets::Garrison::GetGarrisonInfo& /*getGarrisonInfo*/)
 {
+    // the client asks once and expects every garrison the character has in one reply
+    WorldPackets::Garrison::GetGarrisonInfoResult garrisonInfo;
+    garrisonInfo.FactionIndex = _player->GetTeam() == HORDE ? GARRISON_FACTION_INDEX_HORDE : GARRISON_FACTION_INDEX_ALLIANCE;
+
     if (Garrison* garrison = _player->GetGarrison())
-        garrison->SendInfo();
+        garrison->BuildInfo(garrisonInfo.Garrisons.emplace_back());
+
+    if (ClassHall const* classHall = _player->GetClassHall())
+        classHall->BuildInfo(garrisonInfo.Garrisons.emplace_back());
+
+    if (garrisonInfo.Garrisons.empty())
+        return;
+
+    SendPacket(garrisonInfo.Write());
 }
 
 void WorldSession::HandleGarrisonPurchaseBuilding(WorldPackets::Garrison::GarrisonPurchaseBuilding& garrisonPurchaseBuilding)

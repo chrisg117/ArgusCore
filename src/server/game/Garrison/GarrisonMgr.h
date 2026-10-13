@@ -32,6 +32,7 @@ struct GarrAbilityEntry;
 struct GarrFollowerEntry;
 struct GarrSiteLevelEntry;
 struct GarrSiteLevelPlotInstEntry;
+struct GarrTypeEntry;
 
 struct FinalizeGarrisonPlotGOInfo
 {
@@ -64,6 +65,7 @@ public:
     void Initialize();
 
     GarrSiteLevelEntry const* GetGarrSiteLevelEntry(uint32 garrSiteId, uint32 level) const;
+    GarrTypeEntry const* GetGarrTypeEntryForSite(uint32 garrSiteId) const;
     std::vector<GarrSiteLevelPlotInstEntry const*> const* GetGarrPlotInstForSiteLevel(uint32 garrSiteLevelId) const;
     GameObjectsEntry const* GetPlotGameObject(uint32 mapId, uint32 garrPlotInstanceId) const;
     bool IsPlotMatchingBuilding(uint32 garrPlotId, uint32 garrBuildingId) const;
