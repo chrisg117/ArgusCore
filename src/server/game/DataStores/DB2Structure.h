@@ -1426,6 +1426,17 @@ struct GarrClassSpecEntry
     uint32 ID;
 };
 
+struct GarrClassSpecPlayerCondEntry
+{
+    uint32 ID;
+    LocalizedString Name;
+    int32 IconFileDataID;
+    uint8 OrderIndex;
+    uint32 GarrClassSpecID;
+    uint32 PlayerConditionID;
+    int32 FlavorGarrStringID;
+};
+
 struct GarrFollowerEntry
 {
     LocalizedString HordeSourceText;

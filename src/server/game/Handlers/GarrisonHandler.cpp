@@ -106,3 +106,9 @@ void WorldSession::HandleGarrisonRemoveFollower(WorldPackets::Garrison::Garrison
     if (ClassHall* classHall = _player->GetClassHall())
         classHall->GetFollowers().RemoveFollower(garrisonRemoveFollower.FollowerDBID);
 }
+
+void WorldSession::HandleGarrisonRequestClassSpecCategoryInfo(WorldPackets::Garrison::GarrisonRequestClassSpecCategoryInfo& garrisonRequestClassSpecCategoryInfo)
+{
+    if (ClassHall const* classHall = _player->GetClassHall())
+        classHall->GetFollowers().SendClassSpecCategoryInfo(garrisonRequestClassSpecCategoryInfo.GarrFollowerTypeID);
+}

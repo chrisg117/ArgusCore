@@ -17,12 +17,14 @@
 
 #include "ClassHallFollowers.h"
 #include "ClassHall.h"
+#include "ConditionMgr.h"
 #include "DatabaseEnv.h"
 #include "DB2Stores.h"
 #include "GarrisonMgr.h"
 #include "Log.h"
 #include "Player.h"
 #include <algorithm>
+#include <set>
 
 namespace
 {
@@ -211,6 +213,47 @@ void ClassHallFollowers::ResetActivations()
 {
     _activationsRemaining = DAILY_FOLLOWER_ACTIVATIONS;
     SendActivationsRemaining();
+}
+
+void ClassHallFollowers::SendClassSpecCategoryInfo(uint32 garrFollowerTypeId) const
+{
+    WorldPackets::Garrison::GarrisonGetClassSpecCategoryInfoResult categoryInfoResult;
+    categoryInfoResult.GarrFollowerTypeID = garrFollowerTypeId;
+
+    if (garrFollowerTypeId == FOLLOWER_TYPE_CLASS_ORDER)
+    {
+        // the kinds of troops the class of the owner has
+        std::set<uint32> classSpecs;
+        for (GarrFollowerEntry const* follower : sGarrFollowerStore)
+            if (follower->GarrTypeID == GARRISON_TYPE_CLASS_ORDER && follower->ChrClassID == _owner->GetClass() && IsTroop(follower))
+                classSpecs.insert(GetClassSpec(follower));
+
+        for (uint32 classSpec : classSpecs)
+        {
+            // a kind goes by the last of its names whose condition the owner meets
+            GarrClassSpecPlayerCondEntry const* current = nullptr;
+            for (GarrClassSpecPlayerCondEntry const* classSpecPlayerCond : sGarrClassSpecPlayerCondStore)
+            {
+                if (classSpecPlayerCond->GarrClassSpecID != classSpec)
+                    continue;
+
+                if (current && current->OrderIndex >= classSpecPlayerCond->OrderIndex)
+                    continue;
+
+                if (ConditionMgr::IsPlayerMeetingCondition(_owner, classSpecPlayerCond->PlayerConditionID))
+                    current = classSpecPlayerCond;
+            }
+
+            if (!current)
+                continue;
+
+            WorldPackets::Garrison::GarrisonClassSpecCategoryInfo& categoryInfo = categoryInfoResult.CategoryInfos.emplace_back();
+            categoryInfo.GarrClassSpecID = classSpec;
+            categoryInfo.GarrClassSpecPlayerCondID = current->ID;
+        }
+    }
+
+    _owner->SendDirectMessage(categoryInfoResult.Write());
 }
 
 void ClassHallFollowers::SendActivationsRemaining() const

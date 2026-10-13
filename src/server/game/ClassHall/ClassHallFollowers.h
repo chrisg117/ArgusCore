@@ -54,6 +54,8 @@ public:
     void SetActivationsRemaining(uint32 activations) { _activationsRemaining = activations; }
     void ResetActivations();
 
+    void SendClassSpecCategoryInfo(uint32 garrFollowerTypeId) const;
+
 private:
     struct Follower
     {

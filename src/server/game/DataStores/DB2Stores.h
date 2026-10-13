@@ -99,6 +99,7 @@ TC_GAME_API extern DB2Storage<GarrAbilityEntry>                     sGarrAbility
 TC_GAME_API extern DB2Storage<GarrBuildingEntry>                    sGarrBuildingStore;
 TC_GAME_API extern DB2Storage<GarrBuildingPlotInstEntry>            sGarrBuildingPlotInstStore;
 TC_GAME_API extern DB2Storage<GarrClassSpecEntry>                   sGarrClassSpecStore;
+TC_GAME_API extern DB2Storage<GarrClassSpecPlayerCondEntry>         sGarrClassSpecPlayerCondStore;
 TC_GAME_API extern DB2Storage<GarrFollowerEntry>                    sGarrFollowerStore;
 TC_GAME_API extern DB2Storage<GarrFollowerQualityEntry>             sGarrFollowerQualityStore;
 TC_GAME_API extern DB2Storage<GarrFollowerTypeEntry>                sGarrFollowerTypeStore;
