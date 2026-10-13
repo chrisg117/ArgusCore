@@ -76,3 +76,18 @@ void WorldSession::HandleGarrisonRequestScoutingMap(WorldPackets::Garrison::Garr
     result.Active = true;
     SendPacket(result.Write());
 }
+
+void WorldSession::HandleGarrisonResearchTalent(WorldPackets::Garrison::GarrisonResearchTalent& garrisonResearchTalent)
+{
+    if (ClassHall* classHall = _player->GetClassHall())
+    {
+        classHall->GetTalents().Research(garrisonResearchTalent.GarrTalentID);
+        return;
+    }
+
+    WorldPackets::Garrison::GarrisonResearchTalentResult researchTalentResult;
+    researchTalentResult.Result = GARRISON_ERROR_NO_GARRISON;
+    researchTalentResult.GarrTypeID = GARRISON_TYPE_CLASS_ORDER;
+    researchTalentResult.Talent.GarrTalentID = garrisonResearchTalent.GarrTalentID;
+    SendPacket(researchTalentResult.Write());
+}

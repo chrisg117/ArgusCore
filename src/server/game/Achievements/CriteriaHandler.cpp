@@ -19,6 +19,7 @@
 #include "BattlePetMgr.h"
 #include "BattlefieldMgr.h"
 #include "Battleground.h"
+#include "ClassHall.h"
 #include "CollectionMgr.h"
 #include "Creature.h"
 #include "CriteriaHandler.h"
@@ -2999,9 +3000,20 @@ bool CriteriaHandler::ModifierSatisfied(ModifierTreeEntry const* modifier, uint6
                 return false;
             break;
         }
-        case ModifierTreeType::GarrisonTalentSelected: // 201 NYI
-        case ModifierTreeType::GarrisonTalentResearched: // 202 NYI
-            return false;
+        case ModifierTreeType::GarrisonTalentSelected: // 201
+        {
+            ClassHall const* classHall = referencePlayer->GetClassHall();
+            if (!classHall || !classHall->GetTalents().HasTalent(reqValue))
+                return false;
+            break;
+        }
+        case ModifierTreeType::GarrisonTalentResearched: // 202
+        {
+            ClassHall const* classHall = referencePlayer->GetClassHall();
+            if (!classHall || !classHall->GetTalents().IsResearched(reqValue))
+                return false;
+            break;
+        }
         case ModifierTreeType::PlayerHasRestriction: // 203
         {
             std::vector<uint32> const& characterRestrictions = referencePlayer->GetDynamicValues(PLAYER_DYNAMIC_FIELD_CHARACTER_RESTRICTIONS);
@@ -3022,8 +3034,13 @@ bool CriteriaHandler::ModifierSatisfied(ModifierTreeEntry const* modifier, uint6
                 return false;
             break;
         }
-        case ModifierTreeType::GarrisonTalentResearchInProgress: // 207 NYI
-            return false;
+        case ModifierTreeType::GarrisonTalentResearchInProgress: // 207
+        {
+            ClassHall const* classHall = referencePlayer->GetClassHall();
+            if (!classHall || !classHall->GetTalents().IsResearching(reqValue))
+                return false;
+            break;
+        }
         case ModifierTreeType::PlayerEquippedArtifactAppearanceSet: // 208
         {
             if (Aura const* artifactAura = referencePlayer->GetAura(ARTIFACTS_ALL_WEAPONS_GENERAL_WEAPON_EQUIPPED_PASSIVE))

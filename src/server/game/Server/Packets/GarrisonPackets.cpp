@@ -393,4 +393,35 @@ WorldPacket const* GarrisonOpenTalentNpc::Write()
 
     return &_worldPacket;
 }
+
+void GarrisonResearchTalent::Read()
+{
+    _worldPacket >> GarrTalentID;
+}
+
+WorldPacket const* GarrisonResearchTalentResult::Write()
+{
+    _worldPacket << uint32(Result);
+    _worldPacket << int32(GarrTypeID);
+    _worldPacket << Talent;
+
+    return &_worldPacket;
+}
+
+WorldPacket const* GarrisonTalentCompleted::Write()
+{
+    _worldPacket << int32(GarrTypeID);
+    _worldPacket << int32(GarrTalentID);
+    _worldPacket << int32(Flags);
+
+    return &_worldPacket;
+}
+
+WorldPacket const* GarrisonTalentRemoved::Write()
+{
+    _worldPacket << int32(GarrTypeID);
+    _worldPacket << int32(GarrTalentID);
+
+    return &_worldPacket;
+}
 }
