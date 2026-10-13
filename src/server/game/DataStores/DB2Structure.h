@@ -1552,6 +1552,30 @@ struct GarrSiteLevelPlotInstEntry
     uint8 UiMarkerSize;
 };
 
+struct GarrTalentEntry
+{
+    LocalizedString Name;
+    LocalizedString Description;
+    int32 IconFileDataID;
+    int32 ResearchDurationSecs;
+    int8 Tier;
+    int8 UiOrder;
+    int8 Flags;
+    uint32 ID;
+    uint32 GarrTalentTreeID;
+    uint32 GarrAbilityID;
+    uint32 PlayerConditionID;
+    int32 ResearchCost;
+    uint32 ResearchCostCurrencyTypesID;
+    int32 ResearchGoldCost;
+    uint32 PerkSpellID;
+    uint32 PerkPlayerConditionID;
+    int32 RespecCost;
+    uint32 RespecCostCurrencyTypesID;
+    int32 RespecDurationSecs;
+    int32 RespecGoldCost;
+};
+
 struct GarrTalentTreeEntry
 {
     uint32 ID;
