@@ -378,6 +378,52 @@ WorldPacket const* GarrisonRemoveFollowerResult::Write()
     return &_worldPacket;
 }
 
+void GarrisonRemoveFollower::Read()
+{
+    _worldPacket >> NpcGUID;
+    _worldPacket >> FollowerDBID;
+}
+
+void GarrisonSetFollowerInactive::Read()
+{
+    _worldPacket >> FollowerDBID;
+    _worldPacket >> Bits<1>(Inactive);
+}
+
+WorldPacket const* GarrisonFollowerChangedStatus::Write()
+{
+    _worldPacket << uint32(Result);
+    _worldPacket << Follower;
+
+    return &_worldPacket;
+}
+
+WorldPacket const* GarrisonNumFollowerActivationsRemaining::Write()
+{
+    _worldPacket << uint32(GarrSiteID);
+    _worldPacket << uint32(Activations);
+
+    return &_worldPacket;
+}
+
+void GarrisonRequestClassSpecCategoryInfo::Read()
+{
+    _worldPacket >> GarrFollowerTypeID;
+}
+
+WorldPacket const* GarrisonGetClassSpecCategoryInfoResult::Write()
+{
+    _worldPacket << int32(GarrFollowerTypeID);
+    _worldPacket << Size<uint32>(CategoryInfos);
+    for (GarrisonClassSpecCategoryInfo const& categoryInfo : CategoryInfos)
+    {
+        _worldPacket << int32(categoryInfo.GarrClassSpecID);
+        _worldPacket << int32(categoryInfo.GarrClassSpecPlayerCondID);
+    }
+
+    return &_worldPacket;
+}
+
 WorldPacket const* GarrisonBuildingActivated::Write()
 {
     _worldPacket << uint32(GarrPlotInstanceID);
