@@ -38,7 +38,8 @@ is the finished state of the server.
    `feat(scripts,sql)`, `chore(local)`. Engine and content never share a
    commit.
 6. One SQL file per logical change, named `YYYY_MM_DD_NN_<db>.sql` under
-   `sql/updates/<db>/master/`, safe to re-run where the SQL allows it.
+   `sql/updates/<db>/master/`, safe to re-run where the SQL allows it. The
+   date is the server's date (UTC), the clock git stamps commits with.
 7. Once a branch is pushed or merged, never rebase or amend it. If `main`
    has moved when engine work is to be offered upstream, cherry-pick onto a
    fresh `upstream/<topic>` branch cut from `main`.

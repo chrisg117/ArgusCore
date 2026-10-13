@@ -1779,6 +1779,35 @@ struct GarrSiteLevelPlotInstLoadInfo
     static constexpr DB2LoadInfo Instance{ Fields, 6, &GarrSiteLevelPlotInstMeta::Instance, HOTFIX_SEL_GARR_SITE_LEVEL_PLOT_INST };
 };
 
+struct GarrTalentLoadInfo
+{
+    static constexpr DB2FieldMeta Fields[20] =
+    {
+        { .IsSigned = false, .Type = FT_STRING, .Name = "Name" },
+        { .IsSigned = false, .Type = FT_STRING, .Name = "Description" },
+        { .IsSigned = true, .Type = FT_INT, .Name = "IconFileDataID" },
+        { .IsSigned = true, .Type = FT_INT, .Name = "ResearchDurationSecs" },
+        { .IsSigned = true, .Type = FT_BYTE, .Name = "Tier" },
+        { .IsSigned = true, .Type = FT_BYTE, .Name = "UiOrder" },
+        { .IsSigned = true, .Type = FT_BYTE, .Name = "Flags" },
+        { .IsSigned = false, .Type = FT_INT, .Name = "ID" },
+        { .IsSigned = false, .Type = FT_INT, .Name = "GarrTalentTreeID" },
+        { .IsSigned = false, .Type = FT_INT, .Name = "GarrAbilityID" },
+        { .IsSigned = false, .Type = FT_INT, .Name = "PlayerConditionID" },
+        { .IsSigned = true, .Type = FT_INT, .Name = "ResearchCost" },
+        { .IsSigned = false, .Type = FT_INT, .Name = "ResearchCostCurrencyTypesID" },
+        { .IsSigned = true, .Type = FT_INT, .Name = "ResearchGoldCost" },
+        { .IsSigned = false, .Type = FT_INT, .Name = "PerkSpellID" },
+        { .IsSigned = false, .Type = FT_INT, .Name = "PerkPlayerConditionID" },
+        { .IsSigned = true, .Type = FT_INT, .Name = "RespecCost" },
+        { .IsSigned = false, .Type = FT_INT, .Name = "RespecCostCurrencyTypesID" },
+        { .IsSigned = true, .Type = FT_INT, .Name = "RespecDurationSecs" },
+        { .IsSigned = true, .Type = FT_INT, .Name = "RespecGoldCost" },
+    };
+
+    static constexpr DB2LoadInfo Instance{ Fields, 20, &GarrTalentMeta::Instance, HOTFIX_SEL_GARR_TALENT };
+};
+
 struct GarrTalentTreeLoadInfo
 {
     static constexpr DB2FieldMeta Fields[6] =
