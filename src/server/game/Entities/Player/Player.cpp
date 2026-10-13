@@ -40,6 +40,7 @@
 #include "ChatPackets.h"
 #include "ChatTextBuilder.h"
 #include "CinematicMgr.h"
+#include "ClassHall.h"
 #include "CombatLogPackets.h"
 #include "CombatPackets.h"
 #include "Common.h"
@@ -4114,6 +4115,8 @@ void Player::DeleteFromDB(ObjectGuid playerguid, uint32 accountId, bool updateRe
             Corpse::DeleteFromDB(playerguid, trans);
 
             Garrison::DeleteFromDB(guid, trans);
+
+            ClassHall::DeleteFromDB(guid, trans);
 
             sCharacterCache->DeleteCharacterCacheEntry(playerguid, name);
             break;
@@ -17954,6 +17957,10 @@ bool Player::LoadFromDB(ObjectGuid guid, CharacterDatabaseQueryHolder const& hol
         holder.GetPreparedResult(PLAYER_LOGIN_QUERY_LOAD_GARRISON_FOLLOWER_ABILITIES)))
         _garrison = std::move(garrison);
 
+    std::unique_ptr<ClassHall> classHall = std::make_unique<ClassHall>(this);
+    if (classHall->LoadFromDB(holder.GetPreparedResult(PLAYER_LOGIN_QUERY_LOAD_CLASS_HALL)))
+        _classHall = std::move(classHall);
+
     _InitHonorLevelOnLoadFromDB(fields.honor, fields.honorLevel, fields.prestigeLevel);
 
     _restMgr->LoadRestBonus(REST_TYPE_HONOR, fields.honorRestState, fields.honorRestBonus);
@@ -19868,6 +19875,9 @@ void Player::SaveToDB(LoginDatabaseTransaction loginTransaction, CharacterDataba
     _SaveCUFProfiles(trans);
     if (_garrison)
         _garrison->SaveToDB(trans);
+
+    if (_classHall)
+        _classHall->SaveToDB(trans);
 
     // check if stats should only be saved on logout
     // save stats can be out of transaction
