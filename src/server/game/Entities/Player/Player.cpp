@@ -15843,9 +15843,9 @@ void Player::SetQuestCompletedBit(uint32 questId, bool completed)
 
     uint32 flag = 1 << ((questBit - 1) % QUESTS_COMPLETED_BITS_PER_BLOCK);
     if (completed)
-        SetFlag(PLAYER_FIELD_QUEST_COMPLETED, flag);
+        SetFlag(PLAYER_FIELD_QUEST_COMPLETED + fieldOffset, flag);
     else
-        RemoveFlag(PLAYER_FIELD_QUEST_COMPLETED, flag);
+        RemoveFlag(PLAYER_FIELD_QUEST_COMPLETED + fieldOffset, flag);
 }
 
 void Player::AreaExploredOrEventHappens(uint32 questId)
