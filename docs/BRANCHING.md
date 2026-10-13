@@ -85,6 +85,12 @@ An engine branch cannot run on its own, because the Docker files are only on
 
 - `engine/class-hall-foundation`: class hall engine, first piece. Landed in
   `dev`.
+- `engine/class-hall-talents`: class hall engine, second piece (research,
+  finish, swap, talent spell, condition checks), stacked on the foundation.
+  Landed in `dev`.
+- `engine/quest-completed-bit`: one fix, cut from `main`: quest completed
+  bits were written to the wrong block. The talents need it. Landed in
+  `dev`.
 - `feature/broken-shore-scenario`: Broken Shore intro scenario.
 - `feature/priest-artifact-weapon`: shadow priest artifact content, stacked
   on the Broken Shore branch.
