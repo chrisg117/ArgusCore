@@ -25,6 +25,14 @@
 class Player;
 struct GarrSiteLevelEntry;
 
+namespace WorldPackets
+{
+    namespace Garrison
+    {
+        struct GarrisonInfo;
+    }
+}
+
 // A Legion class hall (garrison type 3). It shares the garrison packets with the Warlords
 // garrison but none of its plots, buildings or maps, so it is kept as its own class.
 class TC_GAME_API ClassHall
@@ -37,6 +45,8 @@ public:
     static void DeleteFromDB(ObjectGuid::LowType ownerGuid, CharacterDatabaseTransaction trans);
 
     bool Create(uint32 garrSiteId);
+
+    void BuildInfo(WorldPackets::Garrison::GarrisonInfo& info) const;
 
 private:
     Player* _owner;

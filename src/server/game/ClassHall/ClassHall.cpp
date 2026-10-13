@@ -18,6 +18,7 @@
 #include "ClassHall.h"
 #include "DatabaseEnv.h"
 #include "DB2Stores.h"
+#include "Garrison.h"
 #include "GarrisonMgr.h"
 #include "GarrisonPackets.h"
 #include "Log.h"
@@ -72,4 +73,11 @@ bool ClassHall::Create(uint32 garrSiteId)
     garrisonCreateResult.GarrSiteLevelID = _siteLevel->ID;
     _owner->SendDirectMessage(garrisonCreateResult.Write());
     return true;
+}
+
+void ClassHall::BuildInfo(WorldPackets::Garrison::GarrisonInfo& info) const
+{
+    info.GarrTypeID = GARRISON_TYPE_CLASS_ORDER;
+    info.GarrSiteID = _siteLevel->GarrSiteID;
+    info.GarrSiteLevelID = _siteLevel->ID;
 }
