@@ -2,8 +2,9 @@
 
 Date: 2026-10-13
 Branch: `engine/class-hall-talents`, stacked on `engine/class-hall-foundation`
-Status: awaiting review
+Status: implemented and tested in game; landed in `dev` on 2026-10-13
 Builds on: `2026-10-12-class-hall-foundation-design.md`
+Needs: `engine/quest-completed-bit` (see "What the tests showed")
 
 ## Goal
 
@@ -85,6 +86,12 @@ Other facts:
   swap, and redraws on the events `GARRISON_TALENT_UPDATE` and
   `GARRISON_TALENT_COMPLETE`. It works out which talents are available by
   itself, so the server's rules must agree with it.
+- The client only sends the request while the window is open through an
+  NPC (`SMSG_GARRISON_OPEN_TALENT_NPC`). Opened with
+  `ToggleOrderHallTalentUI()`, the window shows the tree but its confirm
+  button sends nothing.
+- The client keeps one talent per row. Sent two talents of the same row, it
+  shows the later one.
 
 ## What the core already has
 
@@ -112,18 +119,21 @@ WowPacketParser. Its 9.0.1 table names them, in this order, directly after
 the garrison "upgrade result" reply. The 7.3.5 table has exactly three
 unnamed numbers at that place:
 
-| Reply | Number (inferred) | Contents (from the 8.0.1 parser) |
-|-------|-------------------|----------------------------------|
-| Research talent result | 0x28FE | result code, garrison type, a "do not alert" bit, the talent (id, start time, flags) |
+| Reply | Number | Contents |
+|-------|--------|----------|
+| Research talent result | 0x28FE | result code, garrison type, the talent (id, start time, flags) |
 | Talent completed | 0x28FF | garrison type, talent id, flags |
-| Talent removed | 0x2900 | garrison type, talent id (no parser exists; smallest plausible layout) |
+| Talent removed | 0x2900 | garrison type, talent id |
 
-WowPacketParser names five talent flag values: researched 0x1, respec 0x2,
-researching 0x4, ongoing 0x8, do not reset 0x10. They come from a later
-client.
+All three numbers and layouts were inferred this way and then confirmed
+against the 7.3.5 client (see "What the tests showed"). The 8.0.1 parser has
+a "do not alert" bit in the result reply; this client has none.
 
-Both the numbers and the layouts are inferences. Each is confirmed in game
-by the commit that first uses it. See "Open points".
+Talent flags, as this client reads them: 0x1 is researched; a talent with a
+start time and no flag is being researched; 0x2 is being researched as a
+swap, counted with the swap time. WowPacketParser names more values (0x4
+researching, 0x8 ongoing, 0x10 do not reset) from a later client; they are
+not used.
 
 ## Scope
 
@@ -271,8 +281,9 @@ spell is cast on the character, provided the talent's spell condition is
 unset or met.
 
 Passive spells are also cast at login for every finished talent, because
-the core does not save passive auras. The condition is checked again then.
-A spell that is not passive is cast only once, at finish.
+the core does not save passive auras. This happens on the first update
+after login, not during load, so the condition is checked against a fully
+loaded character. A spell that is not passive is cast only once, at finish.
 
 When a talent is removed (section 7), the aura of its player spell is
 removed.
@@ -304,8 +315,12 @@ different, finished talent.
 
 Rows with a single talent cannot be swapped.
 
-Swap is the last commit. If the client's expectations turn out to differ
-from this, swap moves to a follow-up and the seven commits before it stand.
+While it runs, the new talent carries flag 0x2, which makes the client count
+down with the swap time. The flag is cleared when it finishes.
+
+In the client data, every two-talent row of the twelve class trees has a
+swap cost and a swap time. The only rows where both are zero are in the
+class-less trees, which are refused.
 
 ## Commit sequence
 
@@ -334,11 +349,12 @@ builds.
 ## Error handling
 
 - Saved talent that does not exist in client data: skipped, one error
-  logged, login continues.
+  logged, login continues. The next save then drops the row, because saving
+  rewrites the character's rows from what was loaded.
 - Saved talents for a character whose hall row is missing or bad: not
-  loaded, because the hall itself is not loaded.
+  loaded, because the hall itself is not loaded. The rows stay untouched.
 - Two saved talents both still running (possible only through a hand
-  edit): both load; they finish in start order.
+  edit): both load; talents due at the same moment finish in id order.
 - Request for a talent the character cannot research: refused with the
   error from the table in section 4. Nothing is taken.
 - Player spell that does not exist: nothing is cast, one error logged, the
@@ -359,10 +375,10 @@ Test setup, done by hand and never committed:
 - Gairy (priest, level 100) is given a class hall with
   `.cast self 185506 triggered`, and Order Resources with the currency GM
   command.
-- The research window is opened with `/run ToggleOrderHallTalentUI()`; the
-  client falls back to the character's class tree when no NPC named one.
-  Only if that fails is a gossip option of the talent type planted on a
-  spawned NPC.
+- The research window is opened through an NPC: a gossip option of the
+  talent type (32) planted on Archon Torias (110725), spawned with
+  `.npc add`. `/run ToggleOrderHallTalentUI()` shows the tree but cannot
+  research (see "What the tests showed").
 - Row 0 also needs one completed class hall quest (see "Open points"), so
   Gairy is given quest 42210 as rewarded.
 - "Moving the start time back" means editing `researchStartTime` in the
@@ -433,33 +449,50 @@ Commit 8, with 446 finished and enough resources:
 After testing, Gairy's talent rows, the planted gossip row and the hall row
 are removed by hand, and the integration branch is deleted.
 
-## Open points
+## What the tests showed
 
-Each is settled by the in-game check named, and the spec is corrected in
-the same sitting if the answer differs.
+The open points of the design, with the answer the in-game tests of
+2026-10-13 gave (7.3.5 client, packet log on the server).
 
-- **The reply numbers and layouts** are inferred. Commit 4 confirms the
-  result reply, commit 5 the completed reply, commit 8 the removed reply.
-  If one is wrong and cannot be found, the fallback is to resend the full
-  garrison info reply, which is a known packet; nothing else in the design
-  depends on the three replies.
-- **The flag value for each state.** Commit 2, step 2 answers it before any
-  code depends on it.
+- **The reply numbers and layouts** are confirmed: result 0x28FE (no "do
+  not alert" bit), completed 0x28FF, removed 0x2900. The fallback of
+  resending the full garrison info was not needed.
+- **The flag value for each state:** 0x1 researched, no flag being
+  researched, 0x2 being researched as a swap.
 - **Whether the row-before rule needs that talent finished or only
   chosen.** Settled in planning without a test: the two cannot differ.
   While a talent is still running, every other request is refused as
   "already researching", so by the time a request can pass, the talent in
   the row before is finished. The server asks for a finished one.
-- **Whether the old talent stays active while a swap is running.** The
-  design removes it at once. Commit 8 shows whether the client agrees.
-- **What the client shows for a swap's cost and time.** Commit 8.
+- **Whether the old talent stays active while a swap is running.** It is
+  removed at once, and the client follows: the old talent shows as
+  unselected and its spell is gone.
+- **What the client shows for a swap's cost and time.** The server took the
+  swap cost (500) and the window counted down from one day. The window's
+  own availability and cost figures for the swap were not recorded.
 - **Condition 41975** (the spell condition of the twelve row 0 talents)
-  is not in `PlayerCondition.db2`, neither as a record nor as a copied
-  row. The core treats a condition id with no row as met, so the spell is
-  cast. Planning found this; the cast commit confirms it.
+  is not in `PlayerCondition.db2`. The core treats a condition id with no
+  row as met, and spell 219866 was cast.
 - **Row 0 has a quest gate.** Its unlock condition (41962) needs level 100
-  and one completed quest out of twelve, one per class. The engine does
-  nothing special for it; the existing condition code evaluates it.
+  and one completed quest out of twelve, one per class; any of the twelve
+  passes, whatever the character's class. The engine does nothing special
+  for it.
+
+Found by the tests and not foreseen in the design:
+
+- **Quest completed bits were written to the wrong place.**
+  `Player::SetQuestCompletedBit` wrote every bit to the first block, so
+  neither the client nor the server saw a rewarded quest as completed, and
+  no row 0 talent could be researched. Fixed on its own branch,
+  `engine/quest-completed-bit`, cut from `main`. This piece cannot be used
+  without it.
+- **The window must be opened through an NPC** for the client to send a
+  research request. The core already does that for a gossip option of the
+  talent type; the NPCs and their gossip are content.
+- **The client keeps one talent per row**, which is why a swap replaces the
+  old talent on the client as well.
+- **Check 201 (talent selected)** could not be tested in game: the client
+  data has no row using it with a priest talent. It was read in review.
 
 ## What comes next
 
