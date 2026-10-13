@@ -87,6 +87,22 @@ GarrSiteLevelEntry const* GarrisonMgr::GetGarrSiteLevelEntry(uint32 garrSiteId, 
     return nullptr;
 }
 
+GarrTypeEntry const* GarrisonMgr::GetGarrTypeEntryForSite(uint32 garrSiteId) const
+{
+    GarrSiteLevelEntry const* siteLevel = GetGarrSiteLevelEntry(garrSiteId, 1);
+    if (!siteLevel)
+        return nullptr;
+
+    // a site belongs to the type that lists its map or, for instanced garrison maps, the parent of its map
+    MapEntry const* map = sMapStore.LookupEntry(siteLevel->MapID);
+    for (GarrTypeEntry const* garrType : sGarrTypeStore)
+        for (int32 mapId : garrType->MapIDs)
+            if (mapId > 0 && (mapId == int32(siteLevel->MapID) || (map && mapId == map->ParentMapID)))
+                return garrType;
+
+    return nullptr;
+}
+
 std::vector<GarrSiteLevelPlotInstEntry const*> const* GarrisonMgr::GetGarrPlotInstForSiteLevel(uint32 garrSiteLevelId) const
 {
     auto itr = _garrisonPlotInstBySiteLevel.find(garrSiteLevelId);
