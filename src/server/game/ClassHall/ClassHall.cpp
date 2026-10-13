@@ -88,3 +88,8 @@ void ClassHall::BuildInfo(WorldPackets::Garrison::GarrisonInfo& info) const
 
     _talents.BuildInfo(info);
 }
+
+void ClassHall::Update()
+{
+    _talents.Update();
+}

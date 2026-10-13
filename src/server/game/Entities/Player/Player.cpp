@@ -1047,6 +1047,9 @@ void Player::Update(uint32 p_time)
 
     m_achievementMgr->UpdateTimedCriteria(Milliseconds(p_time));
 
+    if (_classHall)
+        _classHall->Update();
+
     DoMeleeAttackIfReady();
 
     if (HasPlayerFlag(PLAYER_FLAGS_RESTING))

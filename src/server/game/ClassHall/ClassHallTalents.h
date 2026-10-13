@@ -53,6 +53,8 @@ public:
 
     void BuildInfo(WorldPackets::Garrison::GarrisonInfo& info) const;
 
+    void Update();
+
     void Research(uint32 garrTalentId);
 
     bool HasTalent(uint32 garrTalentId) const;
@@ -67,12 +69,16 @@ private:
         uint32 Flags = 0;
 
         bool IsResearched() const { return (Flags & CLASS_HALL_TALENT_FLAG_RESEARCHED) != 0; }
+        time_t GetResearchEndTime() const;
     };
 
     GarrisonError CanResearch(GarrTalentEntry const* talent) const;
+    void FinishResearch(Talent& talent);
+    void UpdateResearchEndTime();
 
     Player* _owner;
     std::map<uint32 /*garrTalentId*/, Talent> _talents;
+    time_t _researchEndTime;    // when the talent being researched is done, 0 if there is none
 };
 
 #endif // ClassHallTalents_h__

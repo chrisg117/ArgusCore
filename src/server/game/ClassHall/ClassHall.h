@@ -49,6 +49,8 @@ public:
 
     void BuildInfo(WorldPackets::Garrison::GarrisonInfo& info) const;
 
+    void Update();
+
     ClassHallTalents& GetTalents() { return _talents; }
     ClassHallTalents const& GetTalents() const { return _talents; }
 

@@ -24,7 +24,12 @@
 #include "Log.h"
 #include "Player.h"
 
-ClassHallTalents::ClassHallTalents(Player* owner) : _owner(owner)
+time_t ClassHallTalents::Talent::GetResearchEndTime() const
+{
+    return ResearchStartTime + Entry->ResearchDurationSecs;
+}
+
+ClassHallTalents::ClassHallTalents(Player* owner) : _owner(owner), _researchEndTime(0)
 {
 }
 
@@ -51,6 +56,8 @@ void ClassHallTalents::LoadFromDB(PreparedQueryResult talents)
         talent.ResearchStartTime = fields[1].GetInt64();
         talent.Flags = fields[2].GetUInt32();
     } while (talents->NextRow());
+
+    UpdateResearchEndTime();
 }
 
 void ClassHallTalents::SaveToDB(CharacterDatabaseTransaction trans) const
@@ -88,6 +95,38 @@ void ClassHallTalents::BuildInfo(WorldPackets::Garrison::GarrisonInfo& info) con
     }
 }
 
+void ClassHallTalents::Update()
+{
+    time_t now = GameTime::GetGameTime();
+    if (!_researchEndTime || _researchEndTime > now)
+        return;
+
+    for (auto& [talentId, talent] : _talents)
+        if (!talent.IsResearched() && talent.GetResearchEndTime() <= now)
+            FinishResearch(talent);
+
+    UpdateResearchEndTime();
+}
+
+void ClassHallTalents::FinishResearch(Talent& talent)
+{
+    talent.Flags |= CLASS_HALL_TALENT_FLAG_RESEARCHED;
+
+    WorldPackets::Garrison::GarrisonTalentCompleted talentCompleted;
+    talentCompleted.GarrTypeID = GARRISON_TYPE_CLASS_ORDER;
+    talentCompleted.GarrTalentID = talent.Entry->ID;
+    talentCompleted.Flags = talent.Flags;
+    _owner->SendDirectMessage(talentCompleted.Write());
+}
+
+void ClassHallTalents::UpdateResearchEndTime()
+{
+    _researchEndTime = 0;
+    for (auto const& [talentId, talent] : _talents)
+        if (!talent.IsResearched() && (!_researchEndTime || talent.GetResearchEndTime() < _researchEndTime))
+            _researchEndTime = talent.GetResearchEndTime();
+}
+
 void ClassHallTalents::Research(uint32 garrTalentId)
 {
     GarrTalentEntry const* entry = sGarrTalentStore.LookupEntry(garrTalentId);
@@ -111,6 +150,8 @@ void ClassHallTalents::Research(uint32 garrTalentId)
 
         researchTalentResult.Talent.ResearchStartTime = talent.ResearchStartTime;
         researchTalentResult.Talent.Flags = talent.Flags;
+
+        UpdateResearchEndTime();
     }
 
     _owner->SendDirectMessage(researchTalentResult.Write());
