@@ -305,7 +305,7 @@ different, finished talent.
 Rows with a single talent cannot be swapped.
 
 Swap is the last commit. If the client's expectations turn out to differ
-from this, swap moves to a follow-up and the six commits before it stand.
+from this, swap moves to a follow-up and the seven commits before it stand.
 
 ## Commit sequence
 
@@ -315,16 +315,21 @@ before the next one starts.
 1. `feat(engine,sql)`: load `GarrTalent.db2`
 2. `feat(engine,sql)`: store class hall talents and report them to the
    client
-3. `feat(engine)`: research a class hall talent
-4. `feat(engine)`: finish class hall research on time
-5. `feat(engine)`: cast a finished class hall talent's spell
-6. `feat(engine)`: answer the garrison talent condition checks
-7. `feat(engine)`: swap a class hall talent
+3. `feat(engine)`: add the garrison talent packets
+4. `feat(engine)`: research a class hall talent
+5. `feat(engine)`: finish class hall research on time
+6. `feat(engine)`: cast a finished class hall talent's spell
+7. `feat(engine)`: answer the garrison talent condition checks
+8. `feat(engine)`: swap a class hall talent
 
-Commits 1 to 3 change widely included headers (DB2 structures, database
-statements, opcodes and the session), so each is a build of about 40
-minutes. Commits 4 to 7 change only the class hall files and a few source
-files (`Player.cpp`, `CriteriaHandler.cpp`), so they are short builds.
+Commits 1, 2 and 4 change widely included headers (DB2 structures, database
+statements, the session), so each is a build of about 40 minutes. Commit 3
+defines all three replies at once and has no behaviour of its own; it is
+built together with commit 4, because the opcode list is also included
+almost everywhere and adding the replies one at a time would cost two more
+full builds. Commits 5 to 8 change only the class hall files and a few
+source files (`Player.cpp`, `CriteriaHandler.cpp`), so they are short
+builds.
 
 ## Error handling
 
@@ -354,8 +359,12 @@ Test setup, done by hand and never committed:
 - Gairy (priest, level 100) is given a class hall with
   `.cast self 185506 triggered`, and Order Resources with the currency GM
   command.
-- From commit 3 on, one gossip option of the talent type is planted on a
-  spawned NPC so the research window can be opened.
+- The research window is opened with `/run ToggleOrderHallTalentUI()`; the
+  client falls back to the character's class tree when no NPC named one.
+  Only if that fails is a gossip option of the talent type planted on a
+  spawned NPC.
+- Row 0 also needs one completed class hall quest (see "Open points"), so
+  Gairy is given quest 42210 as rewarded.
 - "Moving the start time back" means editing `researchStartTime` in the
   table while Gairy is offline.
 
@@ -374,15 +383,14 @@ Commit 2, with rows planted by hand for talents of tree 134:
 1. Log in, `.save`, log out. The rows are unchanged.
 2. `/dump C_Garrison.GetTalent(446)` for a row with each candidate flag
    value. Record what the client reports as selected, researched and being
-   researched, and what it reports for the next row's availability. This
-   fixes the flag values and the row-before rule.
+   researched. This fixes the flag values.
 3. A row with talent id `999999`: login succeeds, Server.log has one error
    naming it.
 4. A character dump contains the talent rows.
 5. A throwaway character with a hall and a talent row is deleted. Its rows
    are gone.
 
-Commit 3, starting with no talents and 100 Order Resources:
+Commit 4, starting with no talents and 100 Order Resources:
 
 1. Open the window and research Divine Fate (446). Gairy has 50 resources
    left, the window shows the countdown without a relog, and after `.save`
@@ -394,7 +402,7 @@ Commit 3, starting with no talents and 100 Order Resources:
 4. Request a row 1 talent (452) with no row 0 talent finished. Refused.
 5. Request a talent of another class's tree (402). Refused.
 
-Commit 4:
+Commit 5:
 
 1. Research 446, log out, move the start time back by more than 2 hours,
    log in. The window shows it finished and the row's flags say so after
@@ -402,12 +410,12 @@ Commit 4:
 2. Research the next one, move the start time back to leave about a minute,
    log in and wait with the window open. It finishes without a relog.
 
-Commit 5:
+Commit 6:
 
 1. After 446 finishes, Gairy has the aura of spell 219866 (`.list auras`).
 2. After a relog the aura is there again.
 
-Commit 6:
+Commit 7:
 
 1. A condition that checks talent 446 is false before research and true
    after it finishes. The in-progress check is true only while it runs.
@@ -415,7 +423,7 @@ Commit 6:
    only when a player condition built on that check passes; planning picks
    the exact rows from `ModifierTree.db2` and `PlayerCondition.db2`.
 
-Commit 7, with 446 finished and enough resources:
+Commit 8, with 446 finished and enough resources:
 
 1. Request 447. Gairy pays 500, 446 and the aura of 219866 are gone, 447
    shows as researching with a one-day countdown, and the window follows
@@ -430,22 +438,28 @@ are removed by hand, and the integration branch is deleted.
 Each is settled by the in-game check named, and the spec is corrected in
 the same sitting if the answer differs.
 
-- **The reply numbers and layouts** are inferred. Commit 3 confirms the
-  result reply, commit 4 the completed reply, commit 7 the removed reply.
+- **The reply numbers and layouts** are inferred. Commit 4 confirms the
+  result reply, commit 5 the completed reply, commit 8 the removed reply.
   If one is wrong and cannot be found, the fallback is to resend the full
   garrison info reply, which is a known packet; nothing else in the design
   depends on the three replies.
 - **The flag value for each state.** Commit 2, step 2 answers it before any
   code depends on it.
 - **Whether the row-before rule needs that talent finished or only
-  chosen.** Commit 2, step 2 shows what the client itself treats as
-  available; the server rule follows the client.
+  chosen.** Settled in planning without a test: the two cannot differ.
+  While a talent is still running, every other request is refused as
+  "already researching", so by the time a request can pass, the talent in
+  the row before is finished. The server asks for a finished one.
 - **Whether the old talent stays active while a swap is running.** The
-  design removes it at once. Commit 7 shows whether the client agrees.
-- **What the client shows for a swap's cost and time.** Commit 7.
+  design removes it at once. Commit 8 shows whether the client agrees.
+- **What the client shows for a swap's cost and time.** Commit 8.
 - **Condition 41975** (the spell condition of the twelve row 0 talents)
-  was not found among the plain records of `PlayerCondition.db2` by the
-  reader used; it may be a copied row. Planning checks what it requires.
+  is not in `PlayerCondition.db2`, neither as a record nor as a copied
+  row. The core treats a condition id with no row as met, so the spell is
+  cast. Planning found this; the cast commit confirms it.
+- **Row 0 has a quest gate.** Its unlock condition (41962) needs level 100
+  and one completed quest out of twelve, one per class. The engine does
+  nothing special for it; the existing condition code evaluates it.
 
 ## What comes next
 
