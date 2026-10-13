@@ -73,6 +73,7 @@ class Bag;
 class Battleground;
 class Channel;
 class CinematicMgr;
+class ClassHall;
 class Creature;
 class DynamicObject;
 class Garrison;
@@ -924,6 +925,7 @@ enum PlayerLoginQueryIndex
     PLAYER_LOGIN_QUERY_LOAD_GARRISON_BUILDINGS,
     PLAYER_LOGIN_QUERY_LOAD_GARRISON_FOLLOWERS,
     PLAYER_LOGIN_QUERY_LOAD_GARRISON_FOLLOWER_ABILITIES,
+    PLAYER_LOGIN_QUERY_LOAD_CLASS_HALL,
     MAX_PLAYER_LOGIN_QUERY
 };
 
@@ -2775,6 +2777,9 @@ class TC_GAME_API Player final : public Unit, public GridObject<Player>
         void DeleteGarrison();
         Garrison* GetGarrison() const { return _garrison.get(); }
 
+        void CreateClassHall(uint32 garrSiteId);
+        ClassHall* GetClassHall() const { return _classHall.get(); }
+
         bool IsAdvancedCombatLoggingEnabled() const { return _advancedCombatLoggingEnabled; }
         void SetAdvancedCombatLogging(bool enabled) { _advancedCombatLoggingEnabled = enabled; }
 
@@ -3237,6 +3242,7 @@ class TC_GAME_API Player final : public Unit, public GridObject<Player>
         uint32 _activeCheats;
 
         std::unique_ptr<Garrison> _garrison;
+        std::unique_ptr<ClassHall> _classHall;
 
         bool _advancedCombatLoggingEnabled;
 

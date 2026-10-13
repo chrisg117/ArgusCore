@@ -1562,6 +1562,16 @@ struct GarrTalentTreeEntry
     int32 GarrTypeID;
 };
 
+struct GarrTypeEntry
+{
+    uint32 ID;
+    uint32 Flags;
+    uint32 PrimaryCurrencyTypeID;
+    uint32 SecondaryCurrencyTypeID;
+    uint32 ExpansionID;
+    int32 MapIDs[2];
+};
+
 struct GemPropertiesEntry
 {
     uint32 ID;
