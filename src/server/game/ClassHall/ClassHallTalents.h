@@ -20,6 +20,7 @@
 
 #include "Define.h"
 #include "DatabaseEnvFwd.h"
+#include "Garrison.h"
 #include "ObjectGuid.h"
 #include <ctime>
 #include <map>
@@ -35,6 +36,11 @@ namespace WorldPackets
     }
 }
 
+enum ClassHallTalentFlags : uint32
+{
+    CLASS_HALL_TALENT_FLAG_RESEARCHED   = 0x1     // a talent without it is still being researched
+};
+
 // The talents (hall upgrades) a character has chosen in the research tree of its class hall.
 class TC_GAME_API ClassHallTalents
 {
@@ -47,13 +53,23 @@ public:
 
     void BuildInfo(WorldPackets::Garrison::GarrisonInfo& info) const;
 
+    void Research(uint32 garrTalentId);
+
+    bool HasTalent(uint32 garrTalentId) const;
+    bool IsResearched(uint32 garrTalentId) const;
+    bool IsResearching(uint32 garrTalentId) const;
+
 private:
     struct Talent
     {
         GarrTalentEntry const* Entry = nullptr;
         time_t ResearchStartTime = 0;
         uint32 Flags = 0;
+
+        bool IsResearched() const { return (Flags & CLASS_HALL_TALENT_FLAG_RESEARCHED) != 0; }
     };
+
+    GarrisonError CanResearch(GarrTalentEntry const* talent) const;
 
     Player* _owner;
     std::map<uint32 /*garrTalentId*/, Talent> _talents;

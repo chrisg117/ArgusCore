@@ -16,8 +16,10 @@
  */
 
 #include "ClassHallTalents.h"
+#include "ConditionMgr.h"
 #include "DatabaseEnv.h"
 #include "DB2Stores.h"
+#include "GameTime.h"
 #include "GarrisonPackets.h"
 #include "Log.h"
 #include "Player.h"
@@ -84,4 +86,97 @@ void ClassHallTalents::BuildInfo(WorldPackets::Garrison::GarrisonInfo& info) con
         packetTalent.ResearchStartTime = talent.ResearchStartTime;
         packetTalent.Flags = talent.Flags;
     }
+}
+
+void ClassHallTalents::Research(uint32 garrTalentId)
+{
+    GarrTalentEntry const* entry = sGarrTalentStore.LookupEntry(garrTalentId);
+    GarrisonError result = CanResearch(entry);
+
+    WorldPackets::Garrison::GarrisonResearchTalentResult researchTalentResult;
+    researchTalentResult.Result = result;
+    researchTalentResult.GarrTypeID = GARRISON_TYPE_CLASS_ORDER;
+    researchTalentResult.Talent.GarrTalentID = garrTalentId;
+    if (result == GARRISON_SUCCESS)
+    {
+        if (entry->ResearchCost > 0)
+            _owner->RemoveCurrency(entry->ResearchCostCurrencyTypesID, entry->ResearchCost, CurrencyDestroyReason::Garrison);
+
+        if (entry->ResearchGoldCost > 0)
+            _owner->ModifyMoney(-int64(entry->ResearchGoldCost) * GOLD, false);
+
+        Talent& talent = _talents[garrTalentId];
+        talent.Entry = entry;
+        talent.ResearchStartTime = GameTime::GetGameTime();
+
+        researchTalentResult.Talent.ResearchStartTime = talent.ResearchStartTime;
+        researchTalentResult.Talent.Flags = talent.Flags;
+    }
+
+    _owner->SendDirectMessage(researchTalentResult.Write());
+}
+
+bool ClassHallTalents::HasTalent(uint32 garrTalentId) const
+{
+    return _talents.find(garrTalentId) != _talents.end();
+}
+
+bool ClassHallTalents::IsResearched(uint32 garrTalentId) const
+{
+    auto itr = _talents.find(garrTalentId);
+    return itr != _talents.end() && itr->second.IsResearched();
+}
+
+bool ClassHallTalents::IsResearching(uint32 garrTalentId) const
+{
+    auto itr = _talents.find(garrTalentId);
+    return itr != _talents.end() && !itr->second.IsResearched();
+}
+
+GarrisonError ClassHallTalents::CanResearch(GarrTalentEntry const* talent) const
+{
+    if (!talent)
+        return GARRISON_ERROR_INVALID_TALENT;
+
+    GarrTalentTreeEntry const* tree = sGarrTalentTreeStore.LookupEntry(talent->GarrTalentTreeID);
+    if (!tree || tree->GarrTypeID != GARRISON_TYPE_CLASS_ORDER)
+        return GARRISON_ERROR_INVALID_TALENT;
+
+    if (tree->ClassID != int32(_owner->GetClass()))
+        return GARRISON_ERROR_INVALID_CLASS;
+
+    if (HasTalent(talent->ID))
+        return GARRISON_ERROR_INVALID_TALENT;
+
+    // only one talent can be researched at a time
+    bool previousRowResearched = talent->Tier == 0;
+    bool sameRowResearched = false;
+    for (auto const& [otherId, other] : _talents)
+    {
+        if (!other.IsResearched())
+            return GARRISON_ERROR_ALREADY_RESEARCHING_TALENT;
+
+        if (other.Entry->GarrTalentTreeID != talent->GarrTalentTreeID)
+            continue;
+
+        if (other.Entry->Tier == talent->Tier - 1)
+            previousRowResearched = true;
+        else if (other.Entry->Tier == talent->Tier)
+            sameRowResearched = true;
+    }
+
+    if (!ConditionMgr::IsPlayerMeetingCondition(_owner, talent->PlayerConditionID))
+        return GARRISON_ERROR_FAILED_CONDITION;
+
+    // a row opens when a talent of the row before it is researched, and holds one talent
+    if (!previousRowResearched || sameRowResearched)
+        return GARRISON_ERROR_INVALID_TIER;
+
+    if (talent->ResearchCost > 0 && !_owner->HasCurrency(talent->ResearchCostCurrencyTypesID, talent->ResearchCost))
+        return GARRISON_ERROR_NOT_ENOUGH_CURRENCY;
+
+    if (talent->ResearchGoldCost > 0 && !_owner->HasEnoughMoney(uint64(talent->ResearchGoldCost) * GOLD))
+        return GARRISON_ERROR_NOT_ENOUGH_GOLD;
+
+    return GARRISON_SUCCESS;
 }
