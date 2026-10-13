@@ -411,6 +411,51 @@ namespace WorldPackets
             int32 GarrTalentTreeID = 0;
             int32 FriendshipFactionID = 0; // Always 0 except on The Deaths of Chromie Scenario
         };
+
+        class GarrisonResearchTalent final : public ClientPacket
+        {
+        public:
+            explicit GarrisonResearchTalent(WorldPacket&& packet) : ClientPacket(CMSG_GARRISON_RESEARCH_TALENT, std::move(packet)) { }
+
+            void Read() override;
+
+            int32 GarrTalentID = 0;
+        };
+
+        class GarrisonResearchTalentResult final : public ServerPacket
+        {
+        public:
+            explicit GarrisonResearchTalentResult() : ServerPacket(SMSG_GARRISON_RESEARCH_TALENT_RESULT, 4 + 4 + 4 + 4 + 4) { }
+
+            WorldPacket const* Write() override;
+
+            uint32 Result = 0;
+            int32 GarrTypeID = 0;
+            GarrisonTalent Talent;
+        };
+
+        class GarrisonTalentCompleted final : public ServerPacket
+        {
+        public:
+            explicit GarrisonTalentCompleted() : ServerPacket(SMSG_GARRISON_TALENT_COMPLETED, 4 + 4 + 4) { }
+
+            WorldPacket const* Write() override;
+
+            int32 GarrTypeID = 0;
+            int32 GarrTalentID = 0;
+            int32 Flags = 0;
+        };
+
+        class GarrisonTalentRemoved final : public ServerPacket
+        {
+        public:
+            explicit GarrisonTalentRemoved() : ServerPacket(SMSG_GARRISON_TALENT_REMOVED, 4 + 4) { }
+
+            WorldPacket const* Write() override;
+
+            int32 GarrTypeID = 0;
+            int32 GarrTalentID = 0;
+        };
     }
 }
 

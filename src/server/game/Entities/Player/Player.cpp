@@ -1047,6 +1047,9 @@ void Player::Update(uint32 p_time)
 
     m_achievementMgr->UpdateTimedCriteria(Milliseconds(p_time));
 
+    if (_classHall)
+        _classHall->Update();
+
     DoMeleeAttackIfReady();
 
     if (HasPlayerFlag(PLAYER_FLAGS_RESTING))
@@ -15843,9 +15846,9 @@ void Player::SetQuestCompletedBit(uint32 questId, bool completed)
 
     uint32 flag = 1 << ((questBit - 1) % QUESTS_COMPLETED_BITS_PER_BLOCK);
     if (completed)
-        SetFlag(PLAYER_FIELD_QUEST_COMPLETED, flag);
+        SetFlag(PLAYER_FIELD_QUEST_COMPLETED + fieldOffset, flag);
     else
-        RemoveFlag(PLAYER_FIELD_QUEST_COMPLETED, flag);
+        RemoveFlag(PLAYER_FIELD_QUEST_COMPLETED + fieldOffset, flag);
 }
 
 void Player::AreaExploredOrEventHappens(uint32 questId)
@@ -17958,7 +17961,8 @@ bool Player::LoadFromDB(ObjectGuid guid, CharacterDatabaseQueryHolder const& hol
         _garrison = std::move(garrison);
 
     std::unique_ptr<ClassHall> classHall = std::make_unique<ClassHall>(this);
-    if (classHall->LoadFromDB(holder.GetPreparedResult(PLAYER_LOGIN_QUERY_LOAD_CLASS_HALL)))
+    if (classHall->LoadFromDB(holder.GetPreparedResult(PLAYER_LOGIN_QUERY_LOAD_CLASS_HALL),
+        holder.GetPreparedResult(PLAYER_LOGIN_QUERY_LOAD_CLASS_HALL_TALENTS)))
         _classHall = std::move(classHall);
 
     _InitHonorLevelOnLoadFromDB(fields.honor, fields.honorLevel, fields.prestigeLevel);
