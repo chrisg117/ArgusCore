@@ -28,6 +28,9 @@
 #include "Log.h"
 #include "Player.h"
 #include <algorithm>
+#include <cmath>
+#include <random>
+#include <set>
 
 namespace
 {
@@ -36,6 +39,25 @@ constexpr time_t MISSION_OFFER_INTERVAL = MINUTE;
 
 // recruitment, zone support and invasion missions are other mechanisms, never on the table
 constexpr uint8 NonTableMissionTypes[] = { 11, 51, 52, 57 };
+
+// what an ability effect (GarrAbilityEffect.AbilityAction) does, for those the success chance reads
+enum AbilityAction : uint8
+{
+    ABILITY_ACTION_COUNTER_MECHANIC             = 0,    // counters a threat type, with a weight
+    ABILITY_ACTION_SUCCESS_CHANCE               = 2,    // a flat bonus
+    ABILITY_ACTION_SUCCESS_CHANCE_WITH_SPEC     = 22,   // a flat bonus when a follower of a class spec is on the team
+    ABILITY_ACTION_SUCCESS_CHANCE_WITH_MECHANIC = 23,   // a flat bonus when the mission has a threat of a type
+    ABILITY_ACTION_NO_BONUS_LOOT                = 29    // a threat's: the chance stops at 100
+};
+
+bool HasEffect(uint32 garrAbilityId, uint8 abilityAction)
+{
+    for (GarrAbilityEffectEntry const* effect : sGarrAbilityEffectStore)
+        if (effect->GarrAbilityID == garrAbilityId && effect->AbilityAction == abilityAction)
+            return true;
+
+    return false;
+}
 }
 
 ClassHallMissions::ClassHallMissions(Player* owner, ClassHall* classHall) : _owner(owner), _classHall(classHall), _nextMissionDbId(1),
@@ -219,6 +241,171 @@ void ClassHallMissions::OfferMissions(bool notify)
     Trinity::Containers::RandomResize(rotating, ROTATING_MISSIONS_ON_OFFER - rotatingOnOffer);
     for (GarrMissionEntry const* mission : rotating)
         AddMission(mission, now, notify);
+}
+
+// The threats a mission has. Where the client data names an encounter set or a threat set, the
+// client draws one member with std::minstd_rand seeded with the mission's db id, one value per set,
+// in order: each encounter row (by OrderIndex) and then the threat rows of the encounter drawn.
+// The server makes the same draw, so both work out the chance from the same threats.
+std::vector<GarrMechanicEntry const*> ClassHallMissions::GetMechanics(GarrMissionEntry const* mission, uint64 dbId)
+{
+    std::vector<GarrMissionXEncounterEntry const*> encounters;
+    for (GarrMissionXEncounterEntry const* encounter : sGarrMissionXEncounterStore)
+        if (encounter->GarrMissionID == mission->ID)
+            encounters.push_back(encounter);
+
+    std::stable_sort(encounters.begin(), encounters.end(), [](GarrMissionXEncounterEntry const* left, GarrMissionXEncounterEntry const* right)
+    {
+        return left->OrderIndex < right->OrderIndex;
+    });
+
+    std::minstd_rand random{ std::minstd_rand::result_type(dbId) };
+    std::vector<GarrMechanicEntry const*> mechanics;
+    for (GarrMissionXEncounterEntry const* missionEncounter : encounters)
+    {
+        uint32 encounterId = missionEncounter->GarrEncounterID;
+        if (missionEncounter->GarrEncounterSetID)
+        {
+            std::vector<uint32> members;
+            for (GarrEncounterSetXEncounterEntry const* member : sGarrEncounterSetXEncounterStore)
+                if (member->GarrEncounterSetID == missionEncounter->GarrEncounterSetID)
+                    members.push_back(member->GarrEncounterID);
+
+            if (members.empty())
+                continue;
+
+            encounterId = members[random() % members.size()];
+        }
+
+        for (GarrEncounterXMechanicEntry const* encounterMechanic : sGarrEncounterXMechanicStore)
+        {
+            if (encounterMechanic->GarrEncounterID != encounterId)
+                continue;
+
+            uint32 mechanicId = encounterMechanic->GarrMechanicID;
+            if (encounterMechanic->GarrMechanicSetID)
+            {
+                std::vector<uint32> members;
+                for (GarrMechanicSetXMechanicEntry const* member : sGarrMechanicSetXMechanicStore)
+                    if (member->GarrMechanicSetID == encounterMechanic->GarrMechanicSetID)
+                        members.push_back(member->GarrMechanicID);
+
+                if (members.empty())
+                    continue;
+
+                mechanicId = members[random() % members.size()];
+            }
+
+            if (GarrMechanicEntry const* mechanic = sGarrMechanicStore.LookupEntry(mechanicId))
+                mechanics.push_back(mechanic);
+        }
+    }
+
+    return mechanics;
+}
+
+// how a champion measures up to a mission, from -1 to 1: its level, and its item level unless it is
+// above the mission's level; troops are always 0
+double ClassHallMissions::GetBias(GarrMissionEntry const* mission, ClassHallFollowers::Follower const& follower)
+{
+    GarrFollowerTypeEntry const* followerType = sGarrFollowerTypeStore.LookupEntry(mission->GarrFollowerTypeID);
+    if (!followerType || !followerType->LevelRangeBias || !followerType->ItemLevelRangeBias || (follower.PacketInfo.FollowerStatus & FOLLOWER_STATUS_TROOP))
+        return 0.0;
+
+    int32 level = int32(follower.PacketInfo.FollowerLevel);
+    double bias = double(level - mission->TargetLevel) / followerType->LevelRangeBias;
+    if (level <= mission->TargetLevel)
+    {
+        int32 itemLevel = int32(follower.PacketInfo.ItemLevelWeapon + follower.PacketInfo.ItemLevelArmor) / 2;
+        bias += double(itemLevel - int32(mission->TargetItemLevel)) / followerType->ItemLevelRangeBias;
+    }
+
+    return std::clamp(bias, -1.0, 1.0);
+}
+
+// The chance the client shows for a team, worked out the way the client does (measured from the
+// client's own numbers): champions bring power by their bias, abilities counter threats up to each
+// threat type's factor, and both are measured against the threats' factors; flat bonuses are added
+// on top. An uncountered threat that takes the bonus loot keeps the chance at 100.
+uint32 ClassHallMissions::GetSuccessChance(Mission const& mission, std::vector<ClassHallFollowers::Follower const*> const& team) const
+{
+    std::vector<GarrMechanicEntry const*> mechanics = GetMechanics(mission.Entry, mission.PacketInfo.DbID);
+    std::map<uint8 /*garrMechanicTypeId*/, double> factors;
+    double totalFactor = 0.0;
+    for (GarrMechanicEntry const* mechanic : mechanics)
+    {
+        factors[mechanic->GarrMechanicTypeID] += mechanic->Factor;
+        totalFactor += mechanic->Factor;
+    }
+
+    ClassHallFollowers const& followers = _classHall->GetFollowers();
+    std::set<uint32> classSpecs;
+    for (ClassHallFollowers::Follower const* follower : team)
+        classSpecs.insert(followers.GetClassSpec(follower->Entry));
+
+    double power = 0.0;
+    double flat = 0.0;
+    std::map<uint8 /*garrMechanicTypeId*/, double> counterWeights;
+    for (ClassHallFollowers::Follower const* follower : team)
+    {
+        bool troop = (follower->PacketInfo.FollowerStatus & FOLLOWER_STATUS_TROOP) != 0;
+        double bias = GetBias(mission.Entry, *follower);
+
+        // a champion far below the mission adds nothing, not even its traits
+        if (!troop)
+        {
+            if (bias <= -1.0)
+                continue;
+
+            power += bias < 0.0 ? 100.0 * (1.0 + bias) : 100.0 + 50.0 * bias;
+        }
+
+        for (GarrAbilityEntry const* ability : follower->PacketInfo.AbilityID)
+        {
+            for (GarrAbilityEffectEntry const* effect : sGarrAbilityEffectStore)
+            {
+                if (effect->GarrAbilityID != ability->ID)
+                    continue;
+
+                switch (effect->AbilityAction)
+                {
+                    case ABILITY_ACTION_COUNTER_MECHANIC:
+                        if (!effect->AbilityTargetType)
+                            counterWeights[effect->GarrMechanicTypeID] += bias < 0.0 ? effect->CombatWeightBase * (1.0 + bias)
+                                : effect->CombatWeightBase + (effect->CombatWeightMax - effect->CombatWeightBase) * bias;
+                        break;
+                    case ABILITY_ACTION_SUCCESS_CHANCE:
+                        flat += effect->ActionValueFlat;
+                        break;
+                    case ABILITY_ACTION_SUCCESS_CHANCE_WITH_SPEC:
+                        if (classSpecs.contains(uint32(effect->ActionRecordID)))
+                            flat += effect->ActionValueFlat;
+                        break;
+                    case ABILITY_ACTION_SUCCESS_CHANCE_WITH_MECHANIC:
+                        if (factors.contains(effect->GarrMechanicTypeID))
+                            flat += effect->ActionValueFlat;
+                        break;
+                    default:
+                        break;
+                }
+            }
+        }
+    }
+
+    double countered = 0.0;
+    for (auto const& [mechanicTypeId, factor] : factors)
+    {
+        auto itr = counterWeights.find(mechanicTypeId);
+        if (itr != counterWeights.end())
+            countered += std::min(itr->second, factor);
+    }
+
+    double chance = 100.0 * (power + countered) / (totalFactor + 100.0) + flat;
+    for (GarrMechanicEntry const* mechanic : mechanics)
+        if (!counterWeights.contains(mechanic->GarrMechanicTypeID) && HasEffect(mechanic->GarrAbilityID, ABILITY_ACTION_NO_BONUS_LOOT))
+            chance = std::min(chance, 100.0);
+
+    return uint32(std::max(0.0, std::nearbyint(chance)));
 }
 
 void ClassHallMissions::OpenNpc(ObjectGuid npcGuid)

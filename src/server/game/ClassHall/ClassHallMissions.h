@@ -19,13 +19,16 @@
 #define ClassHallMissions_h__
 
 #include "Define.h"
+#include "ClassHallFollowers.h"
 #include "DatabaseEnvFwd.h"
 #include "GarrisonPackets.h"
 #include "ObjectGuid.h"
 #include <map>
+#include <vector>
 
 class ClassHall;
 class Player;
+struct GarrMechanicEntry;
 struct GarrMissionEntry;
 
 // the states of a mission, as the client knows them
@@ -70,6 +73,10 @@ private:
     static void InitMission(Mission& mission, GarrMissionEntry const* entry, uint64 dbId, time_t offerTime);
     bool IsConditionMet(GarrMissionEntry const* mission) const;
     void AddMission(GarrMissionEntry const* entry, time_t offerTime, bool notify);
+
+    static std::vector<GarrMechanicEntry const*> GetMechanics(GarrMissionEntry const* mission, uint64 dbId);
+    static double GetBias(GarrMissionEntry const* mission, ClassHallFollowers::Follower const& follower);
+    uint32 GetSuccessChance(Mission const& mission, std::vector<ClassHallFollowers::Follower const*> const& team) const;
 
     Player* _owner;
     ClassHall* _classHall;
