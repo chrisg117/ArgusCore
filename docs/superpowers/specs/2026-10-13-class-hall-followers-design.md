@@ -2,7 +2,7 @@
 
 Date: 2026-10-13
 Branch: `engine/class-hall-followers`, stacked on `engine/class-hall-talents`
-Status: awaiting review
+Status: implemented and tested in game; landed in `dev` on 2026-10-14
 Builds on: `2026-10-12-class-hall-foundation-design.md`,
 `2026-10-13-class-hall-talents-design.md`
 
@@ -297,22 +297,31 @@ own.
 
 ### 6. Removing
 
-`CMSG_GARRISON_REMOVE_FOLLOWER` names a follower. If it is a follower of
-this hall and may be dismissed, it is dropped and
-`SMSG_GARRISON_REMOVE_FOLLOWER_RESULT` is sent. Which followers may be
-dismissed follows what the client offers (see "Open points").
+`CMSG_GARRISON_REMOVE_FOLLOWER` names the mission NPC the client has open
+and a follower. The NPC must be a mission NPC in reach. If the follower is
+a troop of this hall, it is dropped and
+`SMSG_GARRISON_REMOVE_FOLLOWER_RESULT` is sent with "destroyed" set. A
+champion or an id the hall does not own is refused with "invalid
+follower". What the client's own menu offers was not seen (see "What the
+tests showed").
 
 ### 7. Troop limits
 
 `CMSG_GARRISON_REQUEST_CLASS_SPEC_CATEGORY_INFO` names a follower type.
-The reply (WowPacketParser: "get class spec category info result", 0x2901,
-a number this core does not define yet) lists, for each troop kind, the
-class spec and one `GarrClassSpecPlayerCond` row. The client works out the
+The reply (`SMSG_GARRISON_GET_CLASS_SPEC_CATEGORY_INFO_RESULT`, 0x2901,
+added by this work) lists, for each troop kind, the class spec and one
+`GarrClassSpecPlayerCond` row. The client works out the
 counts and limits itself from its follower list and its data.
 
 For each troop kind that followers of the character's class use, the row
 sent is the one with the highest order whose player condition the
 character meets. A kind with no row met is left out.
+
+None of the 70 player conditions these rows name is in the client's
+`PlayerCondition.db2`: they are server-side data. Until content defines
+them (a `hotfixes.player_condition` row or `world.conditions` rows of the
+player condition source type), the core treats each as met, so every kind
+goes by its last name and every kind of the class is listed.
 
 ## Commit sequence
 
@@ -337,6 +346,10 @@ other.
 Commits 6 and 7 are the least certain. If the client's expectations turn
 out to differ from this design, they move to a follow-up and the commits
 before them stand.
+
+All seven landed, followed by one fix from the final review:
+
+8. `fix(engine)`: leave requests about Warlords followers to the garrison
 
 ## Error handling
 
@@ -430,40 +443,74 @@ Commit 7:
 After testing, every planted row is removed, the integration branch is
 deleted, and Gairy is put back exactly as she was.
 
-## Open points
+## What the tests showed
 
-Each is settled in planning or by the in-game check named, and the spec is
-corrected in the same sitting if the answer differs.
+Tested on the 7.3.5 client (build 26972) on 2026-10-13 and 2026-10-14 with
+hand-planted followers, the champion and troop spells, the packet log and
+hand-sent packets.
 
-- **Reply layouts.** From WowPacketParser: 0x2917 is the site and the
-  number of activations; 0x2904 is a result and the follower; 0x2901 is
-  the follower type and a list of (class spec, class spec condition row).
-  0x2915 has no parser. Which of 0x2915 and 0x2904 the client follows for
-  a status change is found by sending both by hand before the commit that
-  needs it.
-- **The request layouts.** From WowPacketParser: set inactive is the
-  follower's id and a bit (6.x layout); the troop request is the follower
-  type. The dismiss request has no parser. All three are read from the
-  packet log before their handlers are written, since the log records
-  requests the server does not handle yet.
-- **Whether the client sends these requests without a mission NPC window
-  open.** The research request needed its NPC. If these do too, the tests
-  open the window by sending the "open mission NPC" reply by hand.
-- **A champion gained while five are active:** whether retail adds it
-  inactive or refuses it. Commit 4 or 5, from what the client shows.
-- **The reactivation cost and daily limit:** whether the numbers are in
-  client data or fixed, and what the client displays for them. Commit 5.
-- **Which followers can be dismissed.** Commit 6, from what the client
-  offers.
-- **Whether a newly gained follower shows without a relog** with the
-  existing "add follower result" reply for a class hall. Commit 4.
-- **Abilities.** Whether the list worked out from the two data files is
-  what retail shows for a fresh champion (its spec and one ability, no
-  equipment slot) and for a troop. Commit 2.
+Packets, as the client sends and accepts them:
+
+| Packet | Number | Layout |
+|--------|--------|--------|
+| `CMSG_GARRISON_SET_FOLLOWER_INACTIVE` | 0x32C5 | `uint64` follower id, one bit "inactive" |
+| `CMSG_GARRISON_REMOVE_FOLLOWER` | 0x32F8 | packed guid of the mission NPC, `uint64` follower id |
+| `CMSG_GARRISON_REQUEST_CLASS_SPEC_CATEGORY_INFO` | 0x32D5 | `uint32` follower type |
+| `SMSG_GARRISON_FOLLOWER_CHANGED_STATUS` | 0x2915 | `uint32` result, follower |
+| `SMSG_GARRISON_NUM_FOLLOWER_ACTIVATIONS_REMAINING` | 0x2917 | `uint32` garrison site id, `uint32` count |
+| `SMSG_GARRISON_GET_CLASS_SPEC_CATEGORY_INFO_RESULT` | 0x2901 | `int32` follower type, `uint32` count, then per kind `int32` class spec, `int32` class spec condition row |
+
+- **Status change.** 0x2915 with a result and the follower updates the
+  client's follower and fires its list update event. 0x2904 with the same
+  layout also updates the follower but fires no event; it is not used.
+  With a non-zero result the client ignores the follower in the reply.
+- **Activations.** 0x2917 is keyed by the garrison site (161 for the
+  priest hall), not the garrison type; with the type the client ignores
+  it.
+- **Which requests need a mission NPC.** Set inactive and the troop
+  request are sent without one. The dismiss request is only sent after the
+  server has named a mission NPC (`SMSG_GARRISON_OPEN_MISSION_NPC`), and
+  carries that NPC. The server checks it.
+- **What the client holds back.** It sends no activation request when its
+  own count of activations is 0, and none for a follower it does not
+  know. The server's checks for those were reached by sending the client
+  packets that made it believe otherwise; each refused with the right
+  error and changed nothing.
+- **A champion gained while five are active** is added inactive.
+- **Activation** costs 250 gold (the client shows the cost itself; no data
+  file has it) and uses the one activation of the day. The daily reset
+  gives it back, for online characters with a packet and for offline ones
+  in the database. Setting inactive is free.
+- **A newly gained follower shows without a relog.** The existing "add
+  follower result" reply works for a class hall; the client prints
+  "recruited" and asks for the troop kinds again.
+- **Abilities.** A fresh champion shows its spec and one ability and no
+  equipment slot; a troop shows its one ability.
+- **The quest objective "Recruit Calia"** (quest 43270, a criteria tree)
+  is ticked by the cast, because the class hall passes the follower id to
+  the recruit criteria.
+- **Troop kinds.** The reply works: the client lists each kind with its
+  count and limit. Which name a kind goes by depends on player conditions
+  that are server-side data (section 7).
+
+Still open, for the pieces named:
+
+- **What the mission window's menu offers** for a champion and a troop.
+  The window does not open from a hand-sent "open mission NPC" packet
+  alone. Until the missions piece opens it, the server lets troops be
+  dismissed and refuses champions.
+- **Troop kinds of class-less troops** (the Argus troops, followers 1055
+  to 1060) are not reported: the reply only covers kinds of the
+  character's class. To decide with the conditions content, before the
+  shipments piece.
+- **The player conditions of the troop kinds** are content, per class.
+  The shipments piece must not decide what can be recruited from them
+  until that content exists.
 - **The Warlords code passes the follower's own id** to the recruit
-  criteria, where the criteria compares a follower id. That looks like a
-  bug in the Warlords path; it is not touched here, and the class hall
-  passes the follower id.
+  criteria, where the criteria compares a follower id. Not touched.
+- **The Warlords follower save** deletes followers through a join with
+  their ability rows, so a Warlords follower without ability rows (only
+  possible by hand) makes the character's save fail. Not touched.
 
 ## What comes next
 
