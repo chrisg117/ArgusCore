@@ -352,6 +352,10 @@ void GarrisonMgr::InitializeDbIdSequences()
 {
     if (QueryResult result = CharacterDatabase.Query("SELECT MAX(dbId) FROM character_garrison_followers"))
         _followerDbIdGenerator = (*result)[0].GetUInt64() + 1;
+
+    // class hall followers take their ids from the same generator
+    if (QueryResult result = CharacterDatabase.Query("SELECT MAX(dbId) FROM character_class_hall_follower"))
+        _followerDbIdGenerator = std::max(_followerDbIdGenerator, (*result)[0].GetUInt64() + 1);
 }
 
 void GarrisonMgr::LoadPlotFinalizeGOInfo()

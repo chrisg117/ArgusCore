@@ -1426,6 +1426,17 @@ struct GarrClassSpecEntry
     uint32 ID;
 };
 
+struct GarrClassSpecPlayerCondEntry
+{
+    uint32 ID;
+    LocalizedString Name;
+    int32 IconFileDataID;
+    uint8 OrderIndex;
+    uint32 GarrClassSpecID;
+    uint32 PlayerConditionID;
+    int32 FlavorGarrStringID;
+};
+
 struct GarrFollowerEntry
 {
     LocalizedString HordeSourceText;
@@ -1460,6 +1471,30 @@ struct GarrFollowerEntry
     uint8 HordeFlavorGarrStringID;
     uint8 AllianceFlavorGarrStringID;
     uint32 ID;
+};
+
+struct GarrFollowerQualityEntry
+{
+    uint32 ID;
+    uint32 XpToNextQuality;
+    uint16 ShipmentXP;
+    uint8 Quality;
+    uint8 AbilityCount;
+    uint8 TraitCount;
+    uint8 GarrFollowerTypeID;
+    uint32 ClassSpecID;
+};
+
+struct GarrFollowerTypeEntry
+{
+    uint32 ID;
+    uint16 MaxItemLevel;
+    uint8 MaxFollowers;
+    uint8 MaxFollowerBuildingType;
+    uint8 GarrTypeID;
+    uint8 LevelRangeBias;
+    uint8 ItemLevelRangeBias;
+    uint8 Flags;
 };
 
 struct GarrFollowerXAbilityEntry

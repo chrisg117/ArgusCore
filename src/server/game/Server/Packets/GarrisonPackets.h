@@ -390,6 +390,77 @@ namespace WorldPackets
             uint32 Destroyed = 0;
         };
 
+        class GarrisonRemoveFollower final : public ClientPacket
+        {
+        public:
+            explicit GarrisonRemoveFollower(WorldPacket&& packet) : ClientPacket(CMSG_GARRISON_REMOVE_FOLLOWER, std::move(packet)) { }
+
+            void Read() override;
+
+            ObjectGuid NpcGUID;
+            uint64 FollowerDBID = 0;
+        };
+
+        class GarrisonSetFollowerInactive final : public ClientPacket
+        {
+        public:
+            explicit GarrisonSetFollowerInactive(WorldPacket&& packet) : ClientPacket(CMSG_GARRISON_SET_FOLLOWER_INACTIVE, std::move(packet)) { }
+
+            void Read() override;
+
+            uint64 FollowerDBID = 0;
+            bool Inactive = false;
+        };
+
+        class GarrisonFollowerChangedStatus final : public ServerPacket
+        {
+        public:
+            explicit GarrisonFollowerChangedStatus() : ServerPacket(SMSG_GARRISON_FOLLOWER_CHANGED_STATUS, 4 + 8 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 5 * 4 + 4) { }
+
+            WorldPacket const* Write() override;
+
+            uint32 Result = 0;
+            GarrisonFollower Follower;
+        };
+
+        class GarrisonNumFollowerActivationsRemaining final : public ServerPacket
+        {
+        public:
+            explicit GarrisonNumFollowerActivationsRemaining() : ServerPacket(SMSG_GARRISON_NUM_FOLLOWER_ACTIVATIONS_REMAINING, 4 + 4) { }
+
+            WorldPacket const* Write() override;
+
+            uint32 GarrSiteID = 0;
+            uint32 Activations = 0;
+        };
+
+        class GarrisonRequestClassSpecCategoryInfo final : public ClientPacket
+        {
+        public:
+            explicit GarrisonRequestClassSpecCategoryInfo(WorldPacket&& packet) : ClientPacket(CMSG_GARRISON_REQUEST_CLASS_SPEC_CATEGORY_INFO, std::move(packet)) { }
+
+            void Read() override;
+
+            uint32 GarrFollowerTypeID = 0;
+        };
+
+        struct GarrisonClassSpecCategoryInfo
+        {
+            int32 GarrClassSpecID = 0;
+            int32 GarrClassSpecPlayerCondID = 0;
+        };
+
+        class GarrisonGetClassSpecCategoryInfoResult final : public ServerPacket
+        {
+        public:
+            explicit GarrisonGetClassSpecCategoryInfoResult() : ServerPacket(SMSG_GARRISON_GET_CLASS_SPEC_CATEGORY_INFO_RESULT, 4 + 4) { }
+
+            WorldPacket const* Write() override;
+
+            int32 GarrFollowerTypeID = 0;
+            std::vector<GarrisonClassSpecCategoryInfo> CategoryInfos;
+        };
+
         class GarrisonBuildingActivated final : public ServerPacket
         {
         public:

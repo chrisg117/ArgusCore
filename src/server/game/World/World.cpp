@@ -40,6 +40,7 @@
 #include "Chat.h"
 #include "ChatCommand.h"
 #include "ChatPackets.h"
+#include "ClassHallFollowers.h"
 #include "Config.h"
 #include "Containers.h"
 #include "ConversationDataStore.h"
@@ -3159,6 +3160,10 @@ void World::DailyReset()
 
     stmt = CharacterDatabase.GetPreparedStatement(CHAR_UPD_CHARACTER_GARRISON_FOLLOWER_ACTIVATIONS);
     stmt->setUInt32(0, 1);
+    CharacterDatabase.Execute(stmt);
+
+    stmt = CharacterDatabase.GetPreparedStatement(CHAR_UPD_CHARACTER_CLASS_HALL_FOLLOWER_ACTIVATIONS);
+    stmt->setUInt32(0, ClassHallFollowers::DAILY_FOLLOWER_ACTIVATIONS);
     CharacterDatabase.Execute(stmt);
 
     // reset all quest status in memory
