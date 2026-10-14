@@ -703,6 +703,51 @@ struct CharSectionsLoadInfo
     static constexpr DB2LoadInfo Instance{ Fields, 10, &CharSectionsMeta::Instance, HOTFIX_SEL_CHAR_SECTIONS };
 };
 
+struct CharShipmentLoadInfo
+{
+    static constexpr DB2FieldMeta Fields[10] =
+    {
+        { .IsSigned = false, .Type = FT_INT, .Name = "ID" },
+        { .IsSigned = false, .Type = FT_INT, .Name = "TreasureID" },
+        { .IsSigned = false, .Type = FT_INT, .Name = "Duration" },
+        { .IsSigned = true, .Type = FT_INT, .Name = "SpellID" },
+        { .IsSigned = true, .Type = FT_INT, .Name = "DummyItemID" },
+        { .IsSigned = true, .Type = FT_INT, .Name = "OnCompleteSpellID" },
+        { .IsSigned = false, .Type = FT_SHORT, .Name = "ContainerID" },
+        { .IsSigned = false, .Type = FT_SHORT, .Name = "GarrFollowerID" },
+        { .IsSigned = false, .Type = FT_BYTE, .Name = "MaxShipments" },
+        { .IsSigned = false, .Type = FT_BYTE, .Name = "Flags" },
+    };
+
+    static constexpr DB2LoadInfo Instance{ Fields, 10, &CharShipmentMeta::Instance, HOTFIX_SEL_CHAR_SHIPMENT };
+};
+
+struct CharShipmentContainerLoadInfo
+{
+    static constexpr DB2FieldMeta Fields[17] =
+    {
+        { .IsSigned = false, .Type = FT_INT, .Name = "ID" },
+        { .IsSigned = false, .Type = FT_STRING, .Name = "PendingText" },
+        { .IsSigned = false, .Type = FT_STRING, .Name = "Description" },
+        { .IsSigned = false, .Type = FT_INT, .Name = "WorkingSpellVisualID" },
+        { .IsSigned = false, .Type = FT_SHORT, .Name = "UiTextureKitID" },
+        { .IsSigned = false, .Type = FT_SHORT, .Name = "WorkingDisplayInfoID" },
+        { .IsSigned = false, .Type = FT_SHORT, .Name = "SmallDisplayInfoID" },
+        { .IsSigned = false, .Type = FT_SHORT, .Name = "MediumDisplayInfoID" },
+        { .IsSigned = false, .Type = FT_SHORT, .Name = "LargeDisplayInfoID" },
+        { .IsSigned = false, .Type = FT_SHORT, .Name = "CrossFactionID" },
+        { .IsSigned = false, .Type = FT_BYTE, .Name = "BaseCapacity" },
+        { .IsSigned = false, .Type = FT_BYTE, .Name = "GarrBuildingType" },
+        { .IsSigned = false, .Type = FT_BYTE, .Name = "GarrTypeID" },
+        { .IsSigned = false, .Type = FT_BYTE, .Name = "MediumThreshold" },
+        { .IsSigned = false, .Type = FT_BYTE, .Name = "LargeThreshold" },
+        { .IsSigned = true, .Type = FT_BYTE, .Name = "Faction" },
+        { .IsSigned = false, .Type = FT_INT, .Name = "CompleteSpellVisualID" },
+    };
+
+    static constexpr DB2LoadInfo Instance{ Fields, 17, &CharShipmentContainerMeta::Instance, HOTFIX_SEL_CHAR_SHIPMENT_CONTAINER };
+};
+
 struct CharStartOutfitLoadInfo
 {
     static constexpr DB2FieldMeta Fields[31] =

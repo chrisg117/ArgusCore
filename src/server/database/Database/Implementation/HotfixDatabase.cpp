@@ -242,6 +242,20 @@ void HotfixDatabaseConnection::DoPrepareStatements()
         "BaseSection, VariationIndex, ColorIndex FROM char_sections WHERE (`VerifiedBuild` > 0) = ?", CONNECTION_SYNCH);
     PREPARE_MAX_ID_STMT(HOTFIX_SEL_CHAR_SECTIONS, "SELECT MAX(ID) + 1 FROM char_sections", CONNECTION_SYNCH);
 
+    // CharShipment.db2
+    PrepareStatement(HOTFIX_SEL_CHAR_SHIPMENT, "SELECT ID, TreasureID, Duration, SpellID, DummyItemID, OnCompleteSpellID, ContainerID, GarrFollowerID, "
+        "MaxShipments, Flags FROM char_shipment WHERE (`VerifiedBuild` > 0) = ?", CONNECTION_SYNCH);
+    PREPARE_MAX_ID_STMT(HOTFIX_SEL_CHAR_SHIPMENT, "SELECT MAX(ID) + 1 FROM char_shipment", CONNECTION_SYNCH);
+
+    // CharShipmentContainer.db2
+    PrepareStatement(HOTFIX_SEL_CHAR_SHIPMENT_CONTAINER, "SELECT ID, PendingText, Description, WorkingSpellVisualID, UiTextureKitID, "
+        "WorkingDisplayInfoID, SmallDisplayInfoID, MediumDisplayInfoID, LargeDisplayInfoID, CrossFactionID, BaseCapacity, GarrBuildingType, "
+        "GarrTypeID, MediumThreshold, LargeThreshold, Faction, CompleteSpellVisualID FROM char_shipment_container"
+        " WHERE (`VerifiedBuild` > 0) = ?", CONNECTION_SYNCH);
+    PREPARE_MAX_ID_STMT(HOTFIX_SEL_CHAR_SHIPMENT_CONTAINER, "SELECT MAX(ID) + 1 FROM char_shipment_container", CONNECTION_SYNCH);
+    PREPARE_LOCALE_STMT(HOTFIX_SEL_CHAR_SHIPMENT_CONTAINER, "SELECT ID, PendingText_lang, Description_lang FROM char_shipment_container_locale"
+        " WHERE (`VerifiedBuild` > 0) = ? AND locale = ?", CONNECTION_SYNCH);
+
     // CharStartOutfit.db2
     PrepareStatement(HOTFIX_SEL_CHAR_START_OUTFIT, "SELECT ID, ItemID1, ItemID2, ItemID3, ItemID4, ItemID5, ItemID6, ItemID7, ItemID8, ItemID9, "
         "ItemID10, ItemID11, ItemID12, ItemID13, ItemID14, ItemID15, ItemID16, ItemID17, ItemID18, ItemID19, ItemID20, ItemID21, ItemID22, ItemID23, "

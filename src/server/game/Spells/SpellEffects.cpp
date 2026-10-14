@@ -301,7 +301,7 @@ NonDefaultConstructible<SpellEffectHandlerFn> SpellEffectHandlers[TOTAL_SPELL_EF
     &Spell::EffectJumpDest,                                 //213 SPELL_EFFECT_JUMP_DEST_2
     &Spell::EffectCreateGarrison,                           //214 SPELL_EFFECT_CREATE_GARRISON
     &Spell::EffectNULL,                                     //215 SPELL_EFFECT_UPGRADE_CHARACTER_SPELLS
-    &Spell::EffectNULL,                                     //216 SPELL_EFFECT_CREATE_SHIPMENT
+    &Spell::EffectCreateShipment,                           //216 SPELL_EFFECT_CREATE_SHIPMENT
     &Spell::EffectNULL,                                     //217 SPELL_EFFECT_UPGRADE_GARRISON
     &Spell::EffectNULL,                                     //218 SPELL_EFFECT_218
     &Spell::EffectCreateConversation,                       //219 SPELL_EFFECT_CREATE_CONVERSATION
@@ -5471,6 +5471,19 @@ void Spell::EffectAddGarrisonFollower()
 
     if (Garrison* garrison = player->GetGarrison())
         garrison->AddFollower(effectInfo->MiscValue);
+}
+
+void Spell::EffectCreateShipment()
+{
+    if (effectHandleMode != SPELL_EFFECT_HANDLE_HIT_TARGET)
+        return;
+
+    if (!unitTarget || unitTarget->GetTypeId() != TYPEID_PLAYER)
+        return;
+
+    // only class hall orders are made; the hall refuses any other
+    if (ClassHall* classHall = unitTarget->ToPlayer()->GetClassHall())
+        classHall->GetShipments().CreateShipment(sCharShipmentStore.LookupEntry(effectInfo->MiscValue));
 }
 
 void Spell::EffectCreateHeirloomItem()
