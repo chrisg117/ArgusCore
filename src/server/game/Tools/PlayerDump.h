@@ -41,6 +41,8 @@ enum DumpTableType
 
     DTT_CHAR_TRANSMOG,  // <- guid                          // character_transmog_outfits
 
+    DTT_CLASS_HALL_FOLLOWER, // <- follower db ids          // character_class_hall_follower
+
     DTT_MAIL,           //    -> mail ids collection        // mail
                         //    -> item_text
 
