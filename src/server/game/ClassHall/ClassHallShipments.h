@@ -23,6 +23,7 @@
 #include "DatabaseEnvFwd.h"
 #include "Garrison.h"
 #include "ObjectGuid.h"
+#include "SharedDefines.h"
 #include <map>
 #include <vector>
 
@@ -52,6 +53,10 @@ public:
     void OpenNpc(ObjectGuid npcGuid, uint32 charShipmentId);
     void SendShipmentInfo(ObjectGuid npcGuid) const;
 
+    void RequestShipments(ObjectGuid npcGuid, uint32 count);
+    void CreateShipment(CharShipmentEntry const* shipment);
+    static SpellCastResult CheckCreateShipmentCast(Player const* caster, uint32 charShipmentId);
+
 private:
     struct Shipment
     {
@@ -66,6 +71,9 @@ private:
 
     static bool IsTroopShipment(CharShipmentEntry const* shipment);
     GarrisonError CanOfferShipment(CharShipmentEntry const* shipment) const;
+    GarrisonError CanCreateShipment(CharShipmentEntry const* shipment) const;
+    uint32 GetCapacity(CharShipmentEntry const* shipment) const;
+    uint32 GetAvailableShipments(CharShipmentEntry const* shipment) const;
     std::vector<Shipment const*> GetPendingShipments(uint32 charShipmentContainerId) const;
 
     Player* _owner;

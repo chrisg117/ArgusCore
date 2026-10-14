@@ -331,6 +331,7 @@ namespace WorldPackets
         class GarrisonResearchTalent;
         class GarrisonSetFollowerInactive;
         class GarrisonRequestShipmentInfo;
+        class CreateShipment;
     }
 
     namespace Guild
@@ -1826,6 +1827,7 @@ class TC_GAME_API WorldSession
         void HandleGarrisonRemoveFollower(WorldPackets::Garrison::GarrisonRemoveFollower& garrisonRemoveFollower);
         void HandleGarrisonRequestClassSpecCategoryInfo(WorldPackets::Garrison::GarrisonRequestClassSpecCategoryInfo& garrisonRequestClassSpecCategoryInfo);
         void HandleGarrisonRequestShipmentInfo(WorldPackets::Garrison::GarrisonRequestShipmentInfo& garrisonRequestShipmentInfo);
+        void HandleCreateShipment(WorldPackets::Garrison::CreateShipment& createShipment);
 
         // Battle Pets
         void HandleBattlePetRequestJournal(WorldPackets::BattlePet::BattlePetRequestJournal& battlePetRequestJournal);

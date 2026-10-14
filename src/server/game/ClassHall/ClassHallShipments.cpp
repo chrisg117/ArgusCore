@@ -68,6 +68,39 @@ GarrisonError ClassHallShipments::CanOfferShipment(CharShipmentEntry const* ship
     return GARRISON_SUCCESS;
 }
 
+GarrisonError ClassHallShipments::CanCreateShipment(CharShipmentEntry const* shipment) const
+{
+    GarrisonError error = CanOfferShipment(shipment);
+    if (error != GARRISON_SUCCESS)
+        return error;
+
+    if (!GetAvailableShipments(shipment))
+        return GARRISON_ERROR_AT_CLASS_SPEC_CAP;
+
+    return GARRISON_SUCCESS;
+}
+
+// as the client counts it: the order's own maximum, but never above the limit of the troop kind
+uint32 ClassHallShipments::GetCapacity(CharShipmentEntry const* shipment) const
+{
+    GarrFollowerEntry const* follower = sGarrFollowerStore.LookupEntry(shipment->GarrFollowerID);
+    uint32 capacity = shipment->MaxShipments;
+    if (GarrClassSpecEntry const* classSpec = sGarrClassSpecStore.LookupEntry(_classHall->GetFollowers().GetClassSpec(follower)))
+        capacity = std::min<uint32>(capacity, classSpec->FollowerClassLimit);
+
+    return capacity;
+}
+
+// troops of the kind already owned and orders already placed both use up the capacity
+uint32 ClassHallShipments::GetAvailableShipments(CharShipmentEntry const* shipment) const
+{
+    ClassHallFollowers const& followers = _classHall->GetFollowers();
+    GarrFollowerEntry const* follower = sGarrFollowerStore.LookupEntry(shipment->GarrFollowerID);
+    uint32 used = followers.CountTroops(followers.GetClassSpec(follower)) + uint32(GetPendingShipments(shipment->ContainerID).size());
+    uint32 capacity = GetCapacity(shipment);
+    return capacity > used ? capacity - used : 0;
+}
+
 // the orders of a container, oldest first
 std::vector<ClassHallShipments::Shipment const*> ClassHallShipments::GetPendingShipments(uint32 charShipmentContainerId) const
 {
@@ -163,9 +196,78 @@ void ClassHallShipments::SendShipmentInfo(ObjectGuid npcGuid) const
     WorldPackets::Garrison::GetShipmentInfoResponse shipmentInfo;
     shipmentInfo.Success = true;
     shipmentInfo.ShipmentRecID = _openShipment->ID;
-    shipmentInfo.MaxShipments = _openShipment->MaxShipments;
+    shipmentInfo.MaxShipments = GetCapacity(_openShipment);
     for (Shipment const* shipment : GetPendingShipments(_openShipment->ContainerID))
         shipment->BuildPacketInfo(shipmentInfo.Shipments.emplace_back());
 
     _owner->SendDirectMessage(shipmentInfo.Write());
+}
+
+void ClassHallShipments::RequestShipments(ObjectGuid npcGuid, uint32 count)
+{
+    if (npcGuid != _openNpc || !_openShipment)
+        return;
+
+    GarrisonError error = CanCreateShipment(_openShipment);
+    if (error != GARRISON_SUCCESS)
+    {
+        WorldPackets::Garrison::CreateShipmentResponse createShipmentResponse;
+        createShipmentResponse.ShipmentRecID = _openShipment->ID;
+        createShipmentResponse.Result = error;
+        _owner->SendDirectMessage(createShipmentResponse.Write());
+        return;
+    }
+
+    // the order spell takes the cost, and its effect places the order
+    count = std::min(count, GetAvailableShipments(_openShipment));
+    for (uint32 i = 0; i < count; ++i)
+        if (_owner->CastSpell(_owner, _openShipment->SpellID) != SPELL_CAST_OK)
+            break;
+}
+
+void ClassHallShipments::CreateShipment(CharShipmentEntry const* shipment)
+{
+    if (CanCreateShipment(shipment) != GARRISON_SUCCESS)
+        return;
+
+    // the orders of a container are made one after another
+    time_t creationTime = GameTime::GetGameTime();
+    for (Shipment const* pending : GetPendingShipments(shipment->ContainerID))
+        creationTime = std::max(creationTime, pending->CreationTime + time_t(pending->Duration));
+
+    uint64 shipmentId = _nextShipmentId++;
+    Shipment& created = _shipments[shipmentId];
+    created.Entry = shipment;
+    created.Id = shipmentId;
+    created.CreationTime = creationTime;
+    created.Duration = shipment->Duration;
+
+    WorldPackets::Garrison::CreateShipmentResponse createShipmentResponse;
+    createShipmentResponse.ShipmentID = shipmentId;
+    createShipmentResponse.ShipmentRecID = shipment->ID;
+    createShipmentResponse.Result = GARRISON_SUCCESS;
+    _owner->SendDirectMessage(createShipmentResponse.Write());
+}
+
+// the check of an order spell, before its cost is taken
+SpellCastResult ClassHallShipments::CheckCreateShipmentCast(Player const* caster, uint32 charShipmentId)
+{
+    CharShipmentEntry const* shipment = sCharShipmentStore.LookupEntry(charShipmentId);
+    CharShipmentContainerEntry const* container = shipment ? sCharShipmentContainerStore.LookupEntry(shipment->ContainerID) : nullptr;
+    if (!container || container->GarrTypeID != GARRISON_TYPE_CLASS_ORDER)
+        return SPELL_CAST_OK;
+
+    ClassHall const* classHall = caster->GetClassHall();
+    if (!classHall)
+        return SPELL_FAILED_NO_BUILDING_FOR_SHIPMENT;
+
+    switch (classHall->GetShipments().CanCreateShipment(shipment))
+    {
+        case GARRISON_SUCCESS:
+            return SPELL_CAST_OK;
+        case GARRISON_ERROR_AT_CLASS_SPEC_CAP:
+            return SPELL_FAILED_SHIPMENTS_FULL;
+        default:
+            return SPELL_FAILED_NO_SHIPMENTS_FOR_CONTAINER;
+    }
 }

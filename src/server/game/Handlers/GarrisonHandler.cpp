@@ -138,3 +138,12 @@ void WorldSession::HandleGarrisonRequestShipmentInfo(WorldPackets::Garrison::Gar
     if (ClassHall const* classHall = _player->GetClassHall())
         classHall->GetShipments().SendShipmentInfo(garrisonRequestShipmentInfo.NpcGUID);
 }
+
+void WorldSession::HandleCreateShipment(WorldPackets::Garrison::CreateShipment& createShipment)
+{
+    if (!_player->GetNPCIfCanInteractWith(createShipment.NpcGUID, UNIT_NPC_FLAG_GOSSIP, UNIT_NPC_FLAG_2_NONE))
+        return;
+
+    if (ClassHall* classHall = _player->GetClassHall())
+        classHall->GetShipments().RequestShipments(createShipment.NpcGUID, createShipment.Count);
+}
