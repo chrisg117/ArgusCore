@@ -23,4 +23,11 @@ void AdventureMapStartQuest::Read()
 {
     _worldPacket >> QuestID;
 }
+
+WorldPacket const* ShowAdventureMap::Write()
+{
+    _worldPacket << NpcGUID;
+
+    return &_worldPacket;
+}
 }

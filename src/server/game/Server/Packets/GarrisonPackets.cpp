@@ -161,18 +161,18 @@ ByteBuffer& operator<<(ByteBuffer& data, GarrisonInfo const& garrison)
         data << *mission;
 
     for (std::vector<GarrisonMissionReward> const& missionReward : garrison.MissionRewards)
+    {
         data << Size<uint32>(missionReward);
-
-    for (std::vector<GarrisonMissionReward> const& missionReward : garrison.MissionRewards)
         for (GarrisonMissionReward const& missionRewardItem : missionReward)
             data << missionRewardItem;
+    }
 
     for (std::vector<GarrisonMissionReward> const& missionReward : garrison.MissionOvermaxRewards)
+    {
         data << Size<uint32>(missionReward);
-
-    for (std::vector<GarrisonMissionReward> const& missionReward : garrison.MissionOvermaxRewards)
         for (GarrisonMissionReward const& missionRewardItem : missionReward)
             data << missionRewardItem;
+    }
 
     for (GarrisonMissionBonusAbility const* areaBonus : garrison.MissionAreaBonuses)
         data << *areaBonus;
@@ -540,6 +540,92 @@ WorldPacket const* GarrisonLandingPageShipmentInfo::Write()
     _worldPacket << Size<uint32>(Shipments);
     for (GarrisonShipment const& shipment : Shipments)
         _worldPacket << shipment;
+
+    return &_worldPacket;
+}
+
+void OpenMissionNpc::Read()
+{
+    _worldPacket >> NpcGUID;
+    _worldPacket >> GarrFollowerTypeID;
+}
+
+WorldPacket const* GarrisonAddMissionResult::Write()
+{
+    _worldPacket << int32(GarrTypeID);
+    _worldPacket << uint32(Result);
+    _worldPacket << uint8(State);
+    _worldPacket << Mission;
+    _worldPacket << Size<uint32>(Rewards);
+    _worldPacket << Size<uint32>(OvermaxRewards);
+    for (GarrisonMissionReward const& reward : Rewards)
+        _worldPacket << reward;
+
+    for (GarrisonMissionReward const& reward : OvermaxRewards)
+        _worldPacket << reward;
+
+    _worldPacket << Bits<1>(CanStart);
+    _worldPacket.FlushBits();
+
+    return &_worldPacket;
+}
+
+void GarrisonStartMission::Read()
+{
+    _worldPacket >> NpcGUID;
+    _worldPacket >> Size<uint32>(FollowerDBIDs);
+    _worldPacket >> GarrMissionID;
+    for (uint64& followerDbId : FollowerDBIDs)
+        _worldPacket >> followerDbId;
+}
+
+WorldPacket const* GarrisonStartMissionResult::Write()
+{
+    _worldPacket << uint32(Result);
+    _worldPacket << uint16(SessionMissionCount);
+    _worldPacket << Mission;
+    _worldPacket << Size<uint32>(FollowerDBIDs);
+    for (uint64 followerDbId : FollowerDBIDs)
+        _worldPacket << uint64(followerDbId);
+
+    return &_worldPacket;
+}
+
+void GarrisonCompleteMission::Read()
+{
+    _worldPacket >> NpcGUID;
+    _worldPacket >> GarrMissionID;
+}
+
+WorldPacket const* GarrisonCompleteMissionResult::Write()
+{
+    _worldPacket << uint32(Result);
+    _worldPacket << Mission;
+    _worldPacket << int32(GarrMissionID);
+    _worldPacket << Size<uint32>(Followers);
+    for (GarrisonMissionFollowerInfo const& follower : Followers)
+    {
+        _worldPacket << uint64(follower.FollowerDBID);
+        _worldPacket << uint32(follower.Flags);
+    }
+
+    _worldPacket << Bits<1>(Succeeded);
+    _worldPacket.FlushBits();
+
+    return &_worldPacket;
+}
+
+void GarrisonMissionBonusRoll::Read()
+{
+    _worldPacket >> NpcGUID;
+    _worldPacket >> GarrMissionID;
+}
+
+WorldPacket const* GarrisonMissionBonusRollResult::Write()
+{
+    _worldPacket << Mission;
+    _worldPacket << int32(GarrMissionID);
+    _worldPacket << uint32(Result);
 
     return &_worldPacket;
 }
