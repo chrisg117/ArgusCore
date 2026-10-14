@@ -470,4 +470,77 @@ WorldPacket const* GarrisonTalentRemoved::Write()
 
     return &_worldPacket;
 }
+
+ByteBuffer& operator<<(ByteBuffer& data, GarrisonShipment const& shipment)
+{
+    data << int32(shipment.ShipmentRecID);
+    data << uint64(shipment.ShipmentID);
+    data << uint64(shipment.AssignedFollowerDBID);
+    data << shipment.CreationTime;
+    data << int32(shipment.ShipmentDuration);
+    data << int32(shipment.BuildingTypeID);
+
+    return data;
+}
+
+WorldPacket const* OpenShipmentNpcFromGossip::Write()
+{
+    _worldPacket << NpcGUID;
+    _worldPacket << int32(CharShipmentContainerID);
+
+    return &_worldPacket;
+}
+
+void GarrisonRequestShipmentInfo::Read()
+{
+    _worldPacket >> NpcGUID;
+}
+
+WorldPacket const* GetShipmentInfoResponse::Write()
+{
+    _worldPacket.WriteBit(Success);
+    _worldPacket.FlushBits();
+
+    _worldPacket << int32(ShipmentRecID);
+    _worldPacket << int32(MaxShipments);
+    _worldPacket << Size<uint32>(Shipments);
+    _worldPacket << int32(PlotInstanceID);
+    for (GarrisonShipment const& shipment : Shipments)
+        _worldPacket << shipment;
+
+    return &_worldPacket;
+}
+
+void CreateShipment::Read()
+{
+    _worldPacket >> NpcGUID;
+    _worldPacket >> Count;
+}
+
+WorldPacket const* CreateShipmentResponse::Write()
+{
+    _worldPacket << uint64(ShipmentID);
+    _worldPacket << uint32(ShipmentRecID);
+    _worldPacket << uint32(Result);
+
+    return &_worldPacket;
+}
+
+WorldPacket const* CompleteShipmentResponse::Write()
+{
+    _worldPacket << uint64(ShipmentID);
+    _worldPacket << uint32(Result);
+
+    return &_worldPacket;
+}
+
+WorldPacket const* GarrisonLandingPageShipmentInfo::Write()
+{
+    _worldPacket << uint32(CurrentArtifactKnowledge);
+    _worldPacket << Size<uint32>(Shipments);
+    for (GarrisonShipment const& shipment : Shipments)
+        _worldPacket << shipment;
+
+    return &_worldPacket;
+}
 }
