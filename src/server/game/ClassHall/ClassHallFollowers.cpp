@@ -50,8 +50,8 @@ void ClassHallFollowers::LoadFromDB(PreparedQueryResult followers)
 
     do
     {
-        //           0           1        2      3                4               5   6           7       8
-        // SELECT dbId, followerId, quality, level, itemLevelWeapon, itemLevelArmor, xp, durability, status FROM character_class_hall_follower WHERE guid = ?
+        //           0           1        2      3                4               5   6           7       8          9
+        // SELECT dbId, followerId, quality, level, itemLevelWeapon, itemLevelArmor, xp, durability, status, missionId FROM character_class_hall_follower WHERE guid = ?
         Field* fields = followers->Fetch();
         uint64 dbId = fields[0].GetUInt64();
         uint32 followerId = fields[1].GetUInt32();
@@ -74,6 +74,7 @@ void ClassHallFollowers::LoadFromDB(PreparedQueryResult followers)
         follower.PacketInfo.Xp = fields[6].GetUInt32();
         follower.PacketInfo.Durability = fields[7].GetUInt32();
         follower.PacketInfo.FollowerStatus = fields[8].GetUInt32();
+        follower.PacketInfo.CurrentMissionID = fields[9].GetUInt32();
         follower.PacketInfo.AbilityID = GetAbilities(entry, follower.PacketInfo.Quality);
     } while (followers->NextRow());
 }
@@ -98,6 +99,7 @@ void ClassHallFollowers::SaveToDB(CharacterDatabaseTransaction trans) const
         stmt->setUInt32(index++, follower.PacketInfo.Xp);
         stmt->setUInt32(index++, follower.PacketInfo.Durability);
         stmt->setUInt32(index++, follower.PacketInfo.FollowerStatus);
+        stmt->setUInt32(index++, follower.PacketInfo.CurrentMissionID);
         trans->Append(stmt);
     }
 }
@@ -209,6 +211,19 @@ void ClassHallFollowers::SetFollowerInactive(uint64 dbId, bool inactive)
 
     followerChangedStatus.Follower = follower->PacketInfo;
     _owner->SendDirectMessage(followerChangedStatus.Write());
+}
+
+ClassHallFollowers::Follower const* ClassHallFollowers::GetFollower(uint64 dbId) const
+{
+    auto itr = _followers.find(dbId);
+    return itr != _followers.end() ? &itr->second : nullptr;
+}
+
+void ClassHallFollowers::SetFollowerMission(uint64 dbId, uint32 garrMissionId)
+{
+    auto itr = _followers.find(dbId);
+    if (itr != _followers.end())
+        itr->second.PacketInfo.CurrentMissionID = garrMissionId;
 }
 
 void ClassHallFollowers::ResetActivations()
