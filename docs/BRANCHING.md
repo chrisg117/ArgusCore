@@ -81,13 +81,16 @@ An engine branch cannot run on its own, because the Docker files are only on
    (`--no-ff`), merge `dev` into the feature branches, and delete the
    integration branch.
 
-## Current branches (2026-10-13)
+## Current branches (2026-10-14)
 
 - `engine/class-hall-foundation`: class hall engine, first piece. Landed in
   `dev`.
 - `engine/class-hall-talents`: class hall engine, second piece (research,
   finish, swap, talent spell, condition checks), stacked on the foundation.
   Landed in `dev`.
+- `engine/class-hall-followers`: class hall engine, third piece (owning
+  champions and troops: gain, active and inactive, dismiss, troop kinds),
+  stacked on the talents. Landed in `dev`.
 - `engine/quest-completed-bit`: one fix, cut from `main`: quest completed
   bits were written to the wrong block. The talents need it. Landed in
   `dev`.
