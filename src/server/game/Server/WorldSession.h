@@ -334,6 +334,7 @@ namespace WorldPackets
         class CreateShipment;
         class GarrisonRequestLandingPageShipmentInfo;
         class OpenMissionNpc;
+        class GarrisonStartMission;
     }
 
     namespace Guild
@@ -1832,6 +1833,7 @@ class TC_GAME_API WorldSession
         void HandleCreateShipment(WorldPackets::Garrison::CreateShipment& createShipment);
         void HandleGarrisonRequestLandingPageShipmentInfo(WorldPackets::Garrison::GarrisonRequestLandingPageShipmentInfo& garrisonRequestLandingPageShipmentInfo);
         void HandleOpenMissionNpc(WorldPackets::Garrison::OpenMissionNpc& openMissionNpc);
+        void HandleGarrisonStartMission(WorldPackets::Garrison::GarrisonStartMission& garrisonStartMission);
 
         // Battle Pets
         void HandleBattlePetRequestJournal(WorldPackets::BattlePet::BattlePetRequestJournal& battlePetRequestJournal);

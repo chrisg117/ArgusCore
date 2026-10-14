@@ -61,7 +61,7 @@ bool HasEffect(uint32 garrAbilityId, uint8 abilityAction)
 }
 
 ClassHallMissions::ClassHallMissions(Player* owner, ClassHall* classHall) : _owner(owner), _classHall(classHall), _nextMissionDbId(1),
-    _nextOfferTime(0)
+    _nextOfferTime(0), _sessionMissionCount(0)
 {
 }
 
@@ -209,9 +209,7 @@ void ClassHallMissions::OfferMissions(bool notify)
     // an offer leaves the table at its end time; the client drops it by itself, so nothing is sent
     for (auto itr = _missions.begin(); itr != _missions.end();)
     {
-        Mission const& mission = itr->second;
-        if (mission.PacketInfo.MissionState == CLASS_HALL_MISSION_STATE_OFFERED && mission.Entry->OfferDuration
-            && time_t(mission.PacketInfo.OfferTime) + time_t(mission.Entry->OfferDuration) <= now)
+        if (IsOfferExpired(itr->second, now))
             itr = _missions.erase(itr);
         else
             ++itr;
@@ -416,6 +414,88 @@ void ClassHallMissions::OpenNpc(ObjectGuid npcGuid)
     WorldPackets::AdventureMap::ShowAdventureMap showAdventureMap;
     showAdventureMap.NpcGUID = npcGuid;
     _owner->SendDirectMessage(showAdventureMap.Write());
+}
+
+// an offer that has run out stays held until the next look at the offers, but can no longer be taken
+bool ClassHallMissions::IsOfferExpired(Mission const& mission, time_t now)
+{
+    return mission.PacketInfo.MissionState == CLASS_HALL_MISSION_STATE_OFFERED && mission.Entry->OfferDuration
+        && time_t(mission.PacketInfo.OfferTime) + time_t(mission.Entry->OfferDuration) <= now;
+}
+
+// the requests made at the mission table name its NPC, which has to be the one opened and in reach
+bool ClassHallMissions::IsOpenNpc(ObjectGuid npcGuid) const
+{
+    return !npcGuid.IsEmpty() && npcGuid == _openNpc
+        && _owner->GetNPCIfCanInteractWith(npcGuid, UNIT_NPC_FLAG_NONE, UNIT_NPC_FLAG_2_GARRISON_MISSION_NPC);
+}
+
+GarrisonError ClassHallMissions::CanStartMission(Mission const* mission, std::vector<ClassHallFollowers::Follower const*> const& team) const
+{
+    if (!mission || mission->PacketInfo.MissionState != CLASS_HALL_MISSION_STATE_OFFERED || IsOfferExpired(*mission, GameTime::GetGameTime()))
+        return GARRISON_ERROR_MISSION_NOT_OFFERED;
+
+    // the client starts a mission only with at least one champion on it
+    if (team.empty() || team.size() > mission->Entry->MaxFollowers || std::all_of(team.begin(), team.end(), [](ClassHallFollowers::Follower const* follower)
+    {
+        return follower && (follower->PacketInfo.FollowerStatus & FOLLOWER_STATUS_TROOP);
+    }))
+        return GARRISON_ERROR_MISSION_SIZE_INVALID;
+
+    for (ClassHallFollowers::Follower const* follower : team)
+    {
+        if (!follower || follower->Entry->GarrFollowerTypeID != mission->Entry->GarrFollowerTypeID || !follower->IsActive()
+            || std::count(team.begin(), team.end(), follower) > 1)
+            return GARRISON_ERROR_INVALID_FOLLOWER;
+
+        if (follower->PacketInfo.CurrentMissionID)
+            return GARRISON_ERROR_FOLLOWER_ALREADY_ON_MISSION;
+    }
+
+    if (mission->Entry->MissionCost && mission->Entry->MissionCostCurrencyTypesID
+        && !_owner->HasCurrency(mission->Entry->MissionCostCurrencyTypesID, mission->Entry->MissionCost))
+        return GARRISON_ERROR_NOT_ENOUGH_CURRENCY;
+
+    return GARRISON_SUCCESS;
+}
+
+void ClassHallMissions::StartMission(ObjectGuid npcGuid, uint32 garrMissionId, std::vector<uint64> const& followerDbIds)
+{
+    if (!IsOpenNpc(npcGuid))
+        return;
+
+    auto itr = _missions.find(garrMissionId);
+    Mission* mission = itr != _missions.end() ? &itr->second : nullptr;
+
+    ClassHallFollowers& followers = _classHall->GetFollowers();
+    std::vector<ClassHallFollowers::Follower const*> team;
+    for (uint64 followerDbId : followerDbIds)
+        team.push_back(followers.GetFollower(followerDbId));
+
+    WorldPackets::Garrison::GarrisonStartMissionResult startMissionResult;
+    startMissionResult.Result = CanStartMission(mission, team);
+    startMissionResult.FollowerDBIDs = followerDbIds;
+    if (startMissionResult.Result == GARRISON_SUCCESS)
+    {
+        if (mission->Entry->MissionCost && mission->Entry->MissionCostCurrencyTypesID)
+            _owner->RemoveCurrency(mission->Entry->MissionCostCurrencyTypesID, int32(mission->Entry->MissionCost), CurrencyDestroyReason::Garrison);
+
+        mission->PacketInfo.SuccessChance = GetSuccessChance(*mission, team);
+        mission->PacketInfo.MissionState = CLASS_HALL_MISSION_STATE_IN_PROGRESS;
+        mission->PacketInfo.StartTime = GameTime::GetGameTime();
+        for (uint64 followerDbId : followerDbIds)
+            followers.SetFollowerMission(followerDbId, garrMissionId);
+
+        ++_sessionMissionCount;
+    }
+
+    if (mission)
+        startMissionResult.Mission = mission->PacketInfo;
+    else
+        startMissionResult.Mission.MissionRecID = garrMissionId;
+
+    startMissionResult.SessionMissionCount = _sessionMissionCount;
+    _owner->SendDirectMessage(startMissionResult.Write());
 }
 
 void ClassHallMissions::AddMission(GarrMissionEntry const* entry, time_t offerTime, bool notify)

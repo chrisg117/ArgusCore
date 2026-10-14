@@ -62,6 +62,8 @@ public:
 
     void OpenNpc(ObjectGuid npcGuid);
 
+    void StartMission(ObjectGuid npcGuid, uint32 garrMissionId, std::vector<uint64> const& followerDbIds);
+
 private:
     struct Mission
     {
@@ -73,6 +75,9 @@ private:
     static void InitMission(Mission& mission, GarrMissionEntry const* entry, uint64 dbId, time_t offerTime);
     bool IsConditionMet(GarrMissionEntry const* mission) const;
     void AddMission(GarrMissionEntry const* entry, time_t offerTime, bool notify);
+    static bool IsOfferExpired(Mission const& mission, time_t now);
+    bool IsOpenNpc(ObjectGuid npcGuid) const;
+    GarrisonError CanStartMission(Mission const* mission, std::vector<ClassHallFollowers::Follower const*> const& team) const;
 
     static std::vector<GarrMechanicEntry const*> GetMechanics(GarrMissionEntry const* mission, uint64 dbId);
     static double GetBias(GarrMissionEntry const* mission, ClassHallFollowers::Follower const& follower);
@@ -86,6 +91,9 @@ private:
 
     // the mission table the owner opened last; the client says nothing when it closes
     ObjectGuid _openNpc;
+
+    // missions started since login, which the client is told with each start
+    uint16 _sessionMissionCount;
 };
 
 #endif // ClassHallMissions_h__

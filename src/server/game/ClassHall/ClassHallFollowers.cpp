@@ -167,15 +167,17 @@ void ClassHallFollowers::RemoveFollower(uint64 dbId)
     removeFollowerResult.FollowerDBID = dbId;
     removeFollowerResult.GarrTypeID = GARRISON_TYPE_CLASS_ORDER;
 
-    // only troops can be dismissed
+    // only troops can be dismissed, and not while they are on a mission
     auto itr = _followers.find(dbId);
-    if (itr != _followers.end() && IsTroop(itr->second.Entry))
+    if (itr == _followers.end() || !IsTroop(itr->second.Entry))
+        removeFollowerResult.Result = GARRISON_ERROR_INVALID_FOLLOWER;
+    else if (itr->second.PacketInfo.CurrentMissionID)
+        removeFollowerResult.Result = GARRISON_ERROR_FOLLOWER_ALREADY_ON_MISSION;
+    else
     {
         _followers.erase(itr);
         removeFollowerResult.Destroyed = 1;
     }
-    else
-        removeFollowerResult.Result = GARRISON_ERROR_INVALID_FOLLOWER;
 
     _owner->SendDirectMessage(removeFollowerResult.Write());
 }
@@ -310,9 +312,12 @@ GarrisonError ClassHallFollowers::CanAddFollower(GarrFollowerEntry const* follow
 
 GarrisonError ClassHallFollowers::CanSetFollowerInactive(Follower const* follower, bool inactive) const
 {
-    // only champions can be set aside
+    // only champions can be set aside, and not while they are on a mission
     if (!follower || IsTroop(follower->Entry))
         return GARRISON_ERROR_INVALID_FOLLOWER;
+
+    if (follower->PacketInfo.CurrentMissionID)
+        return GARRISON_ERROR_FOLLOWER_ALREADY_ON_MISSION;
 
     if (inactive)
         return follower->IsActive() ? GARRISON_SUCCESS : GARRISON_ERROR_FOLLOWER_INACTIVE;

@@ -162,3 +162,10 @@ void WorldSession::HandleOpenMissionNpc(WorldPackets::Garrison::OpenMissionNpc& 
     if (ClassHall* classHall = _player->GetClassHall())
         classHall->GetMissions().OpenNpc(openMissionNpc.NpcGUID);
 }
+
+void WorldSession::HandleGarrisonStartMission(WorldPackets::Garrison::GarrisonStartMission& garrisonStartMission)
+{
+    if (ClassHall* classHall = _player->GetClassHall())
+        classHall->GetMissions().StartMission(garrisonStartMission.NpcGUID, garrisonStartMission.GarrMissionID,
+            std::vector<uint64>(garrisonStartMission.FollowerDBIDs.begin(), garrisonStartMission.FollowerDBIDs.end()));
+}
