@@ -249,6 +249,33 @@ void ClassHallShipments::CreateShipment(CharShipmentEntry const* shipment)
     _owner->SendDirectMessage(createShipmentResponse.Write());
 }
 
+void ClassHallShipments::CompleteShipments(uint32 charShipmentContainerId)
+{
+    for (Shipment const* shipment : GetPendingShipments(charShipmentContainerId))
+    {
+        if (!shipment->IsReady())
+            continue;
+
+        uint64 shipmentId = shipment->Id;
+        CharShipmentEntry const* entry = shipment->Entry;
+
+        // a troop kind at its limit keeps its finished orders until a troop is lost
+        if (_classHall->GetFollowers().AddFollower(entry->GarrFollowerID) != GARRISON_SUCCESS)
+            break;
+
+        _shipments.erase(shipmentId);
+
+        WorldPackets::Garrison::CompleteShipmentResponse completeShipmentResponse;
+        completeShipmentResponse.ShipmentID = shipmentId;
+        completeShipmentResponse.Result = GARRISON_SUCCESS;
+        _owner->SendDirectMessage(completeShipmentResponse.Write());
+
+        // the quest credit of an order comes from this spell
+        if (entry->OnCompleteSpellID)
+            _owner->CastSpell(_owner, entry->OnCompleteSpellID, true);
+    }
+}
+
 // the check of an order spell, before its cost is taken
 SpellCastResult ClassHallShipments::CheckCreateShipmentCast(Player const* caster, uint32 charShipmentId)
 {

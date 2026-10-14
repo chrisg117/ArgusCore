@@ -57,6 +57,8 @@ public:
     void CreateShipment(CharShipmentEntry const* shipment);
     static SpellCastResult CheckCreateShipmentCast(Player const* caster, uint32 charShipmentId);
 
+    void CompleteShipments(uint32 charShipmentContainerId);
+
 private:
     struct Shipment
     {

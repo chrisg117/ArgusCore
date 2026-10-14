@@ -46,7 +46,7 @@ public:
 
     void BuildInfo(WorldPackets::Garrison::GarrisonInfo& info) const;
 
-    void AddFollower(uint32 garrFollowerId);
+    GarrisonError AddFollower(uint32 garrFollowerId);
     void RemoveFollower(uint64 dbId);
     void SetFollowerInactive(uint64 dbId, bool inactive);
 

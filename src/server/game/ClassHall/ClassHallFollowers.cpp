@@ -117,17 +117,18 @@ void ClassHallFollowers::BuildInfo(WorldPackets::Garrison::GarrisonInfo& info) c
         info.Followers.push_back(&follower.PacketInfo);
 }
 
-void ClassHallFollowers::AddFollower(uint32 garrFollowerId)
+GarrisonError ClassHallFollowers::AddFollower(uint32 garrFollowerId)
 {
     GarrFollowerEntry const* entry = sGarrFollowerStore.LookupEntry(garrFollowerId);
 
     WorldPackets::Garrison::GarrisonAddFollowerResult addFollowerResult;
     addFollowerResult.GarrTypeID = GARRISON_TYPE_CLASS_ORDER;
-    addFollowerResult.Result = CanAddFollower(entry);
-    if (addFollowerResult.Result != GARRISON_SUCCESS)
+    GarrisonError error = CanAddFollower(entry);
+    addFollowerResult.Result = error;
+    if (error != GARRISON_SUCCESS)
     {
         _owner->SendDirectMessage(addFollowerResult.Write());
-        return;
+        return error;
     }
 
     // a champion gained while the active ones are at their limit starts inactive
@@ -155,6 +156,7 @@ void ClassHallFollowers::AddFollower(uint32 garrFollowerId)
     _owner->SendDirectMessage(addFollowerResult.Write());
 
     _owner->UpdateCriteria(CriteriaType::RecruitGarrisonFollower, garrFollowerId);
+    return GARRISON_SUCCESS;
 }
 
 void ClassHallFollowers::RemoveFollower(uint64 dbId)
