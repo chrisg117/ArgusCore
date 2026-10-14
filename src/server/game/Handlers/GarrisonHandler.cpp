@@ -169,3 +169,9 @@ void WorldSession::HandleGarrisonStartMission(WorldPackets::Garrison::GarrisonSt
         classHall->GetMissions().StartMission(garrisonStartMission.NpcGUID, garrisonStartMission.GarrMissionID,
             std::vector<uint64>(garrisonStartMission.FollowerDBIDs.begin(), garrisonStartMission.FollowerDBIDs.end()));
 }
+
+void WorldSession::HandleGarrisonCompleteMission(WorldPackets::Garrison::GarrisonCompleteMission& garrisonCompleteMission)
+{
+    if (ClassHall* classHall = _player->GetClassHall())
+        classHall->GetMissions().CompleteMission(garrisonCompleteMission.NpcGUID, garrisonCompleteMission.GarrMissionID);
+}

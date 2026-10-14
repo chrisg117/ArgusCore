@@ -27,6 +27,7 @@
 #include "GarrisonMgr.h"
 #include "Log.h"
 #include "Player.h"
+#include "Random.h"
 #include <algorithm>
 #include <cmath>
 #include <random>
@@ -496,6 +497,49 @@ void ClassHallMissions::StartMission(ObjectGuid npcGuid, uint32 garrMissionId, s
 
     startMissionResult.SessionMissionCount = _sessionMissionCount;
     _owner->SendDirectMessage(startMissionResult.Write());
+}
+
+void ClassHallMissions::CompleteMission(ObjectGuid npcGuid, uint32 garrMissionId)
+{
+    if (!IsOpenNpc(npcGuid))
+        return;
+
+    auto itr = _missions.find(garrMissionId);
+    if (itr == _missions.end())
+        return;
+
+    Mission& mission = itr->second;
+    WorldPackets::Garrison::GarrisonCompleteMissionResult completeMissionResult;
+    completeMissionResult.GarrMissionID = garrMissionId;
+
+    time_t endTime = time_t(mission.PacketInfo.StartTime) + mission.Entry->TravelDuration + mission.Entry->MissionDuration;
+    if (mission.PacketInfo.MissionState != CLASS_HALL_MISSION_STATE_IN_PROGRESS || endTime > GameTime::GetGameTime())
+    {
+        completeMissionResult.Result = GARRISON_ERROR_INVALID_MISSION_TIME;
+        completeMissionResult.Mission = mission.PacketInfo;
+        _owner->SendDirectMessage(completeMissionResult.Write());
+        return;
+    }
+
+    // a chance of 100 or more always succeeds; what lies above 100 is for the bonus rewards
+    completeMissionResult.Succeeded = mission.PacketInfo.SuccessChance >= 100 || roll_chance_i(int32(mission.PacketInfo.SuccessChance));
+
+    ClassHallFollowers& followers = _classHall->GetFollowers();
+    for (auto const& [dbId, follower] : followers.GetAllFollowers())
+        if (follower.PacketInfo.CurrentMissionID == garrMissionId)
+            completeMissionResult.Followers.push_back({ .FollowerDBID = dbId, .Flags = 0 });
+
+    for (WorldPackets::Garrison::GarrisonMissionFollowerInfo const& follower : completeMissionResult.Followers)
+        followers.SetFollowerMission(follower.FollowerDBID, 0);
+
+    mission.PacketInfo.MissionState = CLASS_HALL_MISSION_STATE_COMPLETED;
+    completeMissionResult.Mission = mission.PacketInfo;
+
+    // a failed mission is over; a successful one waits for its chest to be opened
+    if (!completeMissionResult.Succeeded)
+        _missions.erase(itr);
+
+    _owner->SendDirectMessage(completeMissionResult.Write());
 }
 
 void ClassHallMissions::AddMission(GarrMissionEntry const* entry, time_t offerTime, bool notify)

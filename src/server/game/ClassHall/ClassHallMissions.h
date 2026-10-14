@@ -63,6 +63,7 @@ public:
     void OpenNpc(ObjectGuid npcGuid);
 
     void StartMission(ObjectGuid npcGuid, uint32 garrMissionId, std::vector<uint64> const& followerDbIds);
+    void CompleteMission(ObjectGuid npcGuid, uint32 garrMissionId);
 
 private:
     struct Mission
