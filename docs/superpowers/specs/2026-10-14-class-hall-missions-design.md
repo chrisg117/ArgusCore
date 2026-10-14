@@ -249,9 +249,10 @@ follower column needs nothing: it holds a mission id, not a follower id.
 
 Run at login and from the hall's update, at most once a minute:
 
-1. **Remove** offered missions whose offer time has run out, and send one
-   `SMSG_DELETE_EXPIRED_MISSIONS_RESULT` naming them. Missions in progress
-   or completed never expire.
+1. **Remove** offered missions whose offer time has run out. No packet is
+   sent: 7.3.5's opcode list has no "delete expired missions" message, so
+   the client is expected to drop an offer at its own end time (checked in
+   game). Missions in progress or completed never expire.
 2. **Add** every mission with no offer time whose condition is met and that
    the character does not hold, has not finished, and could be offered
    (rules below).
@@ -279,8 +280,9 @@ offered again after completion.
 `CMSG_OPEN_MISSION_NPC` is answered when the NPC has
 `UNIT_NPC_FLAG_2_GARRISON_MISSION_NPC`, is in reach, and the character has
 a class hall: the NPC is remembered and `SMSG_GARRISON_OPEN_MISSION_NPC` is
-sent with follower type 4. `CMSG_GARRISON_CLOSE_MISSION_NPC`, if the
-client sends one, forgets it.
+sent with follower type 4. The client sends nothing when the table
+closes, so the remembered NPC simply stays until another is opened; the
+reach check on every request covers walking away.
 
 ### 6. Starting
 
@@ -426,8 +428,10 @@ Checks, in a few short logins with a handful of steps each:
 ## Open points
 
 - **The rotation's size**: how many rotating missions the table holds at
-  once. No source I may use states it. The owner may remember; otherwise a
-  number is proposed and recorded as a choice.
+  once. No source I may use states it and the owner does not remember, so
+  it is set to 10 as a deliberate choice, in one named constant
+  (`ROTATING_MISSIONS_ON_OFFER`). The owner may check videos later; the
+  change is one line.
 - **Random encounters and threats**: whether the client picks them itself
   or the server must, and if so how it tells the client (settled by the
   probe).
