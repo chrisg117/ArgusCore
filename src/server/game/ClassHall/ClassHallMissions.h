@@ -57,6 +57,8 @@ public:
     void OfferMissions(bool notify);
     static bool IsOfferable(GarrMissionEntry const* mission);
 
+    void OpenNpc(ObjectGuid npcGuid);
+
 private:
     struct Mission
     {
@@ -74,6 +76,9 @@ private:
     std::map<uint32 /*garrMissionId*/, Mission> _missions;
     uint64 _nextMissionDbId;
     time_t _nextOfferTime;
+
+    // the mission table the owner opened last; the client says nothing when it closes
+    ObjectGuid _openNpc;
 };
 
 #endif // ClassHallMissions_h__

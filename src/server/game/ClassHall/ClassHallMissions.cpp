@@ -16,6 +16,7 @@
  */
 
 #include "ClassHallMissions.h"
+#include "AdventureMapPackets.h"
 #include "ClassHall.h"
 #include "ConditionMgr.h"
 #include "Containers.h"
@@ -218,6 +219,16 @@ void ClassHallMissions::OfferMissions(bool notify)
     Trinity::Containers::RandomResize(rotating, ROTATING_MISSIONS_ON_OFFER - rotatingOnOffer);
     for (GarrMissionEntry const* mission : rotating)
         AddMission(mission, now, notify);
+}
+
+void ClassHallMissions::OpenNpc(ObjectGuid npcGuid)
+{
+    _openNpc = npcGuid;
+
+    // the class hall's table is the adventure map frame, which the garrison's open message does not show
+    WorldPackets::AdventureMap::ShowAdventureMap showAdventureMap;
+    showAdventureMap.NpcGUID = npcGuid;
+    _owner->SendDirectMessage(showAdventureMap.Write());
 }
 
 void ClassHallMissions::AddMission(GarrMissionEntry const* entry, time_t offerTime, bool notify)

@@ -153,3 +153,12 @@ void WorldSession::HandleGarrisonRequestLandingPageShipmentInfo(WorldPackets::Ga
     if (ClassHall const* classHall = _player->GetClassHall())
         classHall->GetShipments().SendLandingPageShipmentInfo();
 }
+
+void WorldSession::HandleOpenMissionNpc(WorldPackets::Garrison::OpenMissionNpc& openMissionNpc)
+{
+    if (!_player->GetNPCIfCanInteractWith(openMissionNpc.NpcGUID, UNIT_NPC_FLAG_NONE, UNIT_NPC_FLAG_2_GARRISON_MISSION_NPC))
+        return;
+
+    if (ClassHall* classHall = _player->GetClassHall())
+        classHall->GetMissions().OpenNpc(openMissionNpc.NpcGUID);
+}
