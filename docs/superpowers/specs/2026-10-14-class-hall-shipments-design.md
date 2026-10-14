@@ -2,7 +2,7 @@
 
 Date: 2026-10-14
 Branch: `engine/class-hall-shipments`, stacked on `engine/class-hall-followers`
-Status: draft, awaiting review
+Status: built and tested in game on 2026-10-14; landed in `dev`
 Builds on: `2026-10-12-class-hall-foundation-design.md`,
 `2026-10-13-class-hall-talents-design.md`,
 `2026-10-13-class-hall-followers-design.md`
@@ -270,8 +270,8 @@ on the options, with the gossip conditions the core already has.
 ### 5. The window's request
 
 `CMSG_GARRISON_REQUEST_SHIPMENT_INFO` names the NPC. It is answered when
-the NPC is the one remembered, is a shipment crafter, and is in reach.
-The reply has the remembered shipment, its `MaxShipments`, and the
+the NPC is the one remembered, has the gossip flag, and is in reach.
+The reply has the remembered shipment, its capacity (section 6), and the
 character's pending orders in that shipment's container, oldest first.
 
 ### 6. Ordering
@@ -286,10 +286,13 @@ answer.
 |-------|-------|
 | The shipment and its container exist, the container is a class hall container, and the shipment names a follower | operation not supported (66) |
 | The follower could be owned by this character (the followers piece's rules, leaving out its limit) | that rule's error |
-| Troops owned of the follower's kind, plus pending orders in the container, are below the shipment's `MaxShipments` | at class spec cap (81) |
+| Troops owned of the follower's kind, plus pending orders in the container, are below the capacity: the smaller of the shipment's `MaxShipments` and the kind's `FollowerClassLimit` | at class spec cap (81) |
 
-So with three Acolytes one more can be ordered and then waits, which is
-what `MaxShipments` being one above the limit allows.
+The capacity is the number the client's window offers: tested in game,
+the window caps a troop order at the kind's limit whatever maximum the
+server sends. So with three Acolytes none can be ordered. (The draft
+allowed one order beyond the limit; the test showed the client never
+offers it.)
 
 The request is answered in two steps:
 
@@ -317,7 +320,8 @@ by either hook: the effect does nothing for them, as today.
 
 ### 7. Collecting
 
-Using a game object of type 45 collects the character's ready orders of
+Clicking a game object of type 45 (the client reports it with
+`CMSG_GAME_OBJ_REPORT_USE`) collects the character's ready orders of
 the object's container, oldest first. For each:
 
 1. The follower is added through the followers piece. If that is refused
@@ -441,33 +445,43 @@ Commits 4 to 7, in one login and a short second one:
 After testing, every planted row is removed, the integration branch is
 deleted, and Gairy is put back exactly as she was.
 
-## Open points
+## What the tests showed
 
-Settled in game before the code that depends on them is written:
+Tested in game on 2026-10-14 with a priest and a hand-planted test menu.
 
-- **The info reply's layout in 7.3.5**, and whether the "owned" count the
-  window subtracts is sent by the server or worked out by the client from
-  its follower list.
-- **The complete reply's layout** (0x27DE).
-- **How the click on the object reaches the server**: as an ordinary game
-  object use (expected; the 7.3.5 opcode list has no "complete shipments"
-  request), or as a request this core does not name yet.
-- **What the object needs to be shown and clicked.** The client may ask
-  for the character's orders of a container, or expect them unasked
-  (0x27DF). If so, that reply is added to commit 6.
-- **Whether `MaxShipments` is the right number to send.** It follows from
-  the data and from how the window computes what is left; the window will
-  show whether three owned Acolytes leave one order.
+- **The window opens only from a gossip window.** The open reply
+  (0x27DA) works while a gossip window with the NPC is open; the client
+  then asks for the info and closes the gossip. Clicking an NPC that has
+  the shipment crafter flag sends a different request (0x32DD) and shows
+  no gossip, so recruiters keep the gossip flag only.
+- **The info reply keeps the Warlords layout**, with no "owned" count:
+  the client counts owned troops from its follower list. It shows the
+  kind's limit as the maximum whatever the server sends; hence the
+  capacity rule of section 6.
+- **The click on the object arrives as `CMSG_GAME_OBJ_REPORT_USE`**, not
+  as an ordinary use. The complete reply (0x27DE: order id, then a 32-bit
+  result) was accepted: a toast, the troop, and the quest credit.
+- **The hall report reply (0x27E0) starts with a 32-bit field** (artifact
+  knowledge) before the count; without it the client's list is empty.
+- **Ordering, refusing and collecting behaved as designed**: a request
+  for 1000 placed only the one allowed; the order spell cast by hand at
+  the cap was refused before any cost; collecting three ready orders with
+  room for two gave two troops and kept the third ready; out of reach the
+  client sent nothing.
 
-Not settled by this work:
+Still open:
 
-- **One after another, or all at once.** The design makes orders of a
-  container one after another. If the owner remembers Legion troops all
-  finishing 30 minutes after being ordered together, it is a one-line
-  change: every order's creation time is the moment it was ordered.
-- **The result codes of a refused order.** The client's own window blocks
-  the orders the server would refuse, so the codes are only seen by a
-  client that is out of step.
+- **The object is invisible** (the test object used a placeholder model)
+  and shows "Awaiting Orders"; whether 0x27DF must be sent to show its
+  state was not settled.
+- **The client fires `SHIPMENT_UPDATE` every frame** while an order window
+  is open and asks for the info about twice a second. It costs little;
+  the cause was not found.
+- **The client shows no message** for the add-follower refusal (81) when
+  collecting at the limit.
+- **One after another, or all at once.** Orders of a container are made
+  one after another. If Legion troops all finished 30 minutes after being
+  ordered together, it is a one-line change.
 
 ## What comes next
 
