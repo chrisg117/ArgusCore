@@ -91,6 +91,10 @@ An engine branch cannot run on its own, because the Docker files are only on
 - `engine/class-hall-followers`: class hall engine, third piece (owning
   champions and troops: gain, active and inactive, dismiss, troop kinds),
   stacked on the talents. Landed in `dev`.
+- `engine/class-hall-shipments`: class hall engine, fourth piece (troop
+  orders: the order window from a gossip option, ordering by the order
+  spell, collecting at the container object, the hall report), stacked on
+  the followers. Landed in `dev`.
 - `engine/quest-completed-bit`: one fix, cut from `main`: quest completed
   bits were written to the wrong block. The talents need it. Landed in
   `dev`.
