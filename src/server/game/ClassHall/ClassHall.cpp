@@ -24,17 +24,18 @@
 #include "Log.h"
 #include "Player.h"
 
-ClassHall::ClassHall(Player* owner) : _owner(owner), _siteLevel(nullptr), _talents(owner)
+ClassHall::ClassHall(Player* owner) : _owner(owner), _siteLevel(nullptr), _talents(owner), _followers(owner, this)
 {
 }
 
-bool ClassHall::LoadFromDB(PreparedQueryResult classHall, PreparedQueryResult talents)
+bool ClassHall::LoadFromDB(PreparedQueryResult classHall, PreparedQueryResult talents, PreparedQueryResult followers)
 {
     if (!classHall)
         return false;
 
-    // SELECT siteLevelId FROM character_class_hall WHERE guid = ?
-    uint32 siteLevelId = classHall->Fetch()[0].GetUInt32();
+    // SELECT siteLevelId, followerActivationsRemaining FROM character_class_hall WHERE guid = ?
+    Field* fields = classHall->Fetch();
+    uint32 siteLevelId = fields[0].GetUInt32();
     _siteLevel = sGarrSiteLevelStore.LookupEntry(siteLevelId);
     if (!_siteLevel)
     {
@@ -44,6 +45,8 @@ bool ClassHall::LoadFromDB(PreparedQueryResult classHall, PreparedQueryResult ta
     }
 
     _talents.LoadFromDB(std::move(talents));
+    _followers.LoadFromDB(std::move(followers));
+    _followers.SetActivationsRemaining(fields[1].GetUInt32());
     return true;
 }
 
@@ -52,9 +55,11 @@ void ClassHall::SaveToDB(CharacterDatabaseTransaction trans) const
     CharacterDatabasePreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_REP_CHARACTER_CLASS_HALL);
     stmt->setUInt64(0, _owner->GetGUID().GetCounter());
     stmt->setUInt32(1, _siteLevel->ID);
+    stmt->setUInt32(2, _followers.GetActivationsRemaining());
     trans->Append(stmt);
 
     _talents.SaveToDB(trans);
+    _followers.SaveToDB(trans);
 }
 
 void ClassHall::DeleteFromDB(ObjectGuid::LowType ownerGuid, CharacterDatabaseTransaction trans)
@@ -64,6 +69,7 @@ void ClassHall::DeleteFromDB(ObjectGuid::LowType ownerGuid, CharacterDatabaseTra
     trans->Append(stmt);
 
     ClassHallTalents::DeleteFromDB(ownerGuid, trans);
+    ClassHallFollowers::DeleteFromDB(ownerGuid, trans);
 }
 
 bool ClassHall::Create(uint32 garrSiteId)
@@ -87,6 +93,12 @@ void ClassHall::BuildInfo(WorldPackets::Garrison::GarrisonInfo& info) const
     info.GarrSiteLevelID = _siteLevel->ID;
 
     _talents.BuildInfo(info);
+    _followers.BuildInfo(info);
+}
+
+uint32 ClassHall::GetGarrSiteID() const
+{
+    return _siteLevel->GarrSiteID;
 }
 
 void ClassHall::Update()

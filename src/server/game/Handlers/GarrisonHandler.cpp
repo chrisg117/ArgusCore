@@ -21,6 +21,16 @@
 #include "GarrisonPackets.h"
 #include "Player.h"
 
+namespace
+{
+// the follower requests do not say which garrison the follower belongs to
+bool IsGarrisonFollower(Player const* player, uint64 followerDbId)
+{
+    Garrison const* garrison = player->GetGarrison();
+    return garrison && garrison->GetFollower(followerDbId);
+}
+}
+
 void WorldSession::HandleGetGarrisonInfo(WorldPackets::Garrison::GetGarrisonInfo& /*getGarrisonInfo*/)
 {
     // the client asks once and expects every garrison the character has in one reply
@@ -90,4 +100,31 @@ void WorldSession::HandleGarrisonResearchTalent(WorldPackets::Garrison::Garrison
     researchTalentResult.GarrTypeID = GARRISON_TYPE_CLASS_ORDER;
     researchTalentResult.Talent.GarrTalentID = garrisonResearchTalent.GarrTalentID;
     SendPacket(researchTalentResult.Write());
+}
+
+void WorldSession::HandleGarrisonSetFollowerInactive(WorldPackets::Garrison::GarrisonSetFollowerInactive& garrisonSetFollowerInactive)
+{
+    if (IsGarrisonFollower(_player, garrisonSetFollowerInactive.FollowerDBID))
+        return;
+
+    if (ClassHall* classHall = _player->GetClassHall())
+        classHall->GetFollowers().SetFollowerInactive(garrisonSetFollowerInactive.FollowerDBID, garrisonSetFollowerInactive.Inactive);
+}
+
+void WorldSession::HandleGarrisonRemoveFollower(WorldPackets::Garrison::GarrisonRemoveFollower& garrisonRemoveFollower)
+{
+    if (!_player->GetNPCIfCanInteractWith(garrisonRemoveFollower.NpcGUID, UNIT_NPC_FLAG_NONE, UNIT_NPC_FLAG_2_GARRISON_MISSION_NPC))
+        return;
+
+    if (IsGarrisonFollower(_player, garrisonRemoveFollower.FollowerDBID))
+        return;
+
+    if (ClassHall* classHall = _player->GetClassHall())
+        classHall->GetFollowers().RemoveFollower(garrisonRemoveFollower.FollowerDBID);
+}
+
+void WorldSession::HandleGarrisonRequestClassSpecCategoryInfo(WorldPackets::Garrison::GarrisonRequestClassSpecCategoryInfo& garrisonRequestClassSpecCategoryInfo)
+{
+    if (ClassHall const* classHall = _player->GetClassHall())
+        classHall->GetFollowers().SendClassSpecCategoryInfo(garrisonRequestClassSpecCategoryInfo.GarrFollowerTypeID);
 }
