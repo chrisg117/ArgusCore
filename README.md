@@ -6,6 +6,11 @@
 
 **ArgusCore** is a WoW Legion 7.3.5 server emulator, forked from TrinityCore and maintained as a modern, stable, maintainable framework.
 
+> **This is a fork** of [Trion-Control-Panel/ArgusCore](https://github.com/Trion-Control-Panel/ArgusCore).
+> It runs a Legion server with its own content and builds engine systems that
+> upstream does not have yet, on separate branches so they can be offered back.
+> See [What this fork adds](#what-this-fork-adds).
+
 ## Build Status
 
 | Platform | Status |
@@ -23,6 +28,60 @@ It is derived from the [TrinityCore](https://github.com/TrinityCore/TrinityCore)
 - Incremental modernization of the codebase
 - Maintainability and clean architecture
 - Fully playable gameplay at every step
+
+## What this fork adds
+
+The default branch, `dev`, is upstream's `main` plus everything marked
+"in `dev`" below. Content is built on `feature/*` branches and joins `dev` when
+it is called finished. How the branches relate is in
+[docs/BRANCHING.md](docs/BRANCHING.md); every engine piece has a design and a
+plan in [docs/superpowers](docs/superpowers).
+
+Sources: client DB2 data, Blizzard's UI source, TrinityCore, WowPacketParser,
+Wowhead and retail videos. No code or data is taken from leaked cores.
+
+### Legion class halls (engine)
+
+Upstream knows only the Warlords garrison; every class hall request was
+unhandled. The fork adds the class hall as its own `ClassHall` class
+(`src/server/game/ClassHall/`) with its own tables, one piece at a time, each
+tested in game.
+
+| Piece | Branch | What it covers | Status |
+|-------|--------|----------------|--------|
+| Foundation | `engine/class-hall-foundation` | The hall and its storage, created by its spell, reported to the client | In `dev` |
+| Talents | `engine/class-hall-talents` | Research with its timer, swapping, talent spells, the client's condition checks | In `dev` |
+| Followers | `engine/class-hall-followers` | Champions and troops: gaining, active and inactive, dismissing, troop kinds | In `dev` |
+| Shipments | `engine/class-hall-shipments` | Troop orders: the order window, ordering, collecting at the container, the hall report | In `dev` |
+| Missions | `engine/class-hall-missions` | The mission table, which missions are offered, starting, the success roll, rewards | Next |
+| Follower growth | `engine/class-hall-follower-growth` | Follower experience, levels, quality, item level and equipment | Planned |
+| Mission extras | `engine/class-hall-mission-extras` | Troop vitality, the bonus roll, the remaining mission features | Planned |
+
+### Other engine fixes
+
+| Fix | Where |
+|-----|-------|
+| Quest completed bits were all written to the first block | `engine/quest-completed-bit`, in `dev` |
+| Scenario criteria fed by game events could never complete | `feature/broken-shore-scenario` |
+| Conversations whose actors are not world objects failed to start | `feature/priest-artifact-weapon` |
+
+### Content (in progress)
+
+| Branch | What | Status |
+|--------|------|--------|
+| `feature/broken-shore-scenario` | The Legion intro scenario, Alliance side, every stage scripted against a retail recording | Playable start to end; polish parked |
+| `feature/priest-artifact-weapon` | The shadow priest artifact: opening quests, the "Blade in Twilight" scenario, the Dalaran turn-in, the way into Netherlight Temple | Playable; polish parked |
+| `feature/priest-class-hall` | Priest class hall content on top of the engine pieces | Not started |
+
+Local only: a Docker setup for running a server (`Dockerfile`,
+`docker-compose.yml`) and `.scenario` GM commands for stepping through
+scenarios.
+
+### Roadmap
+
+1. Class hall missions, in the three pieces above.
+2. Priest class hall content: recruiters, research, the mission table, troops.
+3. Broken Shore polish, after deciding between retail tuning and solo scaling.
 
 ## Requirements
 
