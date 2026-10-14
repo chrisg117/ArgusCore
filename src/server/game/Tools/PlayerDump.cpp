@@ -20,6 +20,7 @@
 #include "CharacterCache.h"
 #include "Common.h"
 #include "DatabaseEnv.h"
+#include "GarrisonMgr.h"
 #include "Log.h"
 #include "ObjectMgr.h"
 #include "Player.h"
@@ -40,6 +41,7 @@ enum GuidType : uint8
     GUID_TYPE_EQUIPMENT_SET,
     GUID_TYPE_ITEM,
     GUID_TYPE_PET,
+    GUID_TYPE_GARRISON_FOLLOWER,
 
     // special types
     GUID_TYPE_NULL // set to null
@@ -96,6 +98,7 @@ DumpTable const DumpTables[] =
     { "character_aura",                   DTT_CHAR_TABLE },
     { "character_aura_effect",            DTT_CHAR_TABLE },
     { "character_class_hall",             DTT_CHAR_TABLE },
+    { "character_class_hall_follower",    DTT_CLASS_HALL_FOLLOWER },
     { "character_class_hall_talent",      DTT_CHAR_TABLE },
     { "character_cuf_profiles",           DTT_CHAR_TABLE },
     { "character_currency",               DTT_CURRENCY   },
@@ -354,6 +357,12 @@ void PlayerDump::InitializeTables()
 
                 MarkDependentColumn(t, "guid", GUID_TYPE_CHAR);
                 MarkDependentColumn(t, "setguid", GUID_TYPE_EQUIPMENT_SET);
+                break;
+            case DTT_CLASS_HALL_FOLLOWER:
+                MarkWhereField(t, "guid");
+
+                MarkDependentColumn(t, "guid", GUID_TYPE_CHAR);
+                MarkDependentColumn(t, "dbId", GUID_TYPE_GARRISON_FOLLOWER);
                 break;
             case DTT_MAIL:
                 MarkWhereField(t, "receiver");
@@ -913,6 +922,9 @@ DumpReturn PlayerDumpReader::LoadDump(std::istream& input, uint32 account, std::
     std::map<uint64, uint64> equipmentSetIds;
     uint64 equipmentSetGuidOffset = sObjectMgr->_equipmentSetGuid;
 
+    std::map<uint64, uint64> followerDbIds;
+    uint64 followerDbIdOffset = sGarrisonMgr._followerDbIdGenerator;
+
     std::string line;
 
     uint8 gender = GENDER_NONE;
@@ -999,6 +1011,10 @@ DumpReturn PlayerDumpReader::LoadDump(std::istream& input, uint32 account, std::
                     if (!ChangeGuid(ts, line, field.FieldName, equipmentSetIds, equipmentSetGuidOffset))
                         return DUMP_FILE_BROKEN;
                     break;
+                case GUID_TYPE_GARRISON_FOLLOWER:
+                    if (!ChangeGuid(ts, line, field.FieldName, followerDbIds, followerDbIdOffset))
+                        return DUMP_FILE_BROKEN;
+                    break;
                 case GUID_TYPE_NULL:
                 {
                     static std::string const NullString("NULL");
@@ -1057,6 +1073,7 @@ DumpReturn PlayerDumpReader::LoadDump(std::istream& input, uint32 account, std::
     sObjectMgr->_mailId += mails.size();
     sObjectMgr->_hiPetNumber += petIds.size();
     sObjectMgr->_equipmentSetGuid += equipmentSetIds.size();
+    sGarrisonMgr._followerDbIdGenerator += followerDbIds.size();
 
     if (incHighest)
         sObjectMgr->GetGenerator<HighGuid::Player>().Generate();
