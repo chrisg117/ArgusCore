@@ -24,11 +24,12 @@
 #include "Log.h"
 #include "Player.h"
 
-ClassHall::ClassHall(Player* owner) : _owner(owner), _siteLevel(nullptr), _talents(owner), _followers(owner, this)
+ClassHall::ClassHall(Player* owner) : _owner(owner), _siteLevel(nullptr), _talents(owner), _followers(owner, this),
+    _shipments(owner, this)
 {
 }
 
-bool ClassHall::LoadFromDB(PreparedQueryResult classHall, PreparedQueryResult talents, PreparedQueryResult followers)
+bool ClassHall::LoadFromDB(PreparedQueryResult classHall, PreparedQueryResult talents, PreparedQueryResult followers, PreparedQueryResult shipments)
 {
     if (!classHall)
         return false;
@@ -47,6 +48,7 @@ bool ClassHall::LoadFromDB(PreparedQueryResult classHall, PreparedQueryResult ta
     _talents.LoadFromDB(std::move(talents));
     _followers.LoadFromDB(std::move(followers));
     _followers.SetActivationsRemaining(fields[1].GetUInt32());
+    _shipments.LoadFromDB(std::move(shipments));
     return true;
 }
 
@@ -60,6 +62,7 @@ void ClassHall::SaveToDB(CharacterDatabaseTransaction trans) const
 
     _talents.SaveToDB(trans);
     _followers.SaveToDB(trans);
+    _shipments.SaveToDB(trans);
 }
 
 void ClassHall::DeleteFromDB(ObjectGuid::LowType ownerGuid, CharacterDatabaseTransaction trans)
@@ -70,6 +73,7 @@ void ClassHall::DeleteFromDB(ObjectGuid::LowType ownerGuid, CharacterDatabaseTra
 
     ClassHallTalents::DeleteFromDB(ownerGuid, trans);
     ClassHallFollowers::DeleteFromDB(ownerGuid, trans);
+    ClassHallShipments::DeleteFromDB(ownerGuid, trans);
 }
 
 bool ClassHall::Create(uint32 garrSiteId)

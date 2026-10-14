@@ -13649,6 +13649,13 @@ void Player::OnGossipSelect(WorldObject* source, uint32 gossipListId, uint32 men
             SendGarrisonOpenTalentNpc(guid, itemAddon ? itemAddon->GarrTalentTreeID.value_or(0) : 0, addon ? addon->FriendshipFactionID : 0);
             break;
         }
+        case GossipOptionNpc::ShipmentCrafter:
+        {
+            GossipMenuItemAddon const* itemAddon = sObjectMgr->GetGossipMenuItemAddon(menuId, gossipListId);
+            if (_classHall && itemAddon && itemAddon->CharShipmentID)
+                _classHall->GetShipments().OpenNpc(guid, *itemAddon->CharShipmentID);
+            break;
+        }
         case GossipOptionNpc::Transmogrify:
             GetSession()->SendOpenTransmogrifier(guid);
             break;
@@ -17963,7 +17970,8 @@ bool Player::LoadFromDB(ObjectGuid guid, CharacterDatabaseQueryHolder const& hol
     std::unique_ptr<ClassHall> classHall = std::make_unique<ClassHall>(this);
     if (classHall->LoadFromDB(holder.GetPreparedResult(PLAYER_LOGIN_QUERY_LOAD_CLASS_HALL),
         holder.GetPreparedResult(PLAYER_LOGIN_QUERY_LOAD_CLASS_HALL_TALENTS),
-        holder.GetPreparedResult(PLAYER_LOGIN_QUERY_LOAD_CLASS_HALL_FOLLOWERS)))
+        holder.GetPreparedResult(PLAYER_LOGIN_QUERY_LOAD_CLASS_HALL_FOLLOWERS),
+        holder.GetPreparedResult(PLAYER_LOGIN_QUERY_LOAD_CLASS_HALL_SHIPMENTS)))
         _classHall = std::move(classHall);
 
     _InitHonorLevelOnLoadFromDB(fields.honor, fields.honorLevel, fields.prestigeLevel);

@@ -527,6 +527,104 @@ namespace WorldPackets
             int32 GarrTypeID = 0;
             int32 GarrTalentID = 0;
         };
+
+        struct GarrisonShipment
+        {
+            int32 ShipmentRecID = 0;
+            uint64 ShipmentID = 0;
+            uint64 AssignedFollowerDBID = 0;
+            Timestamp<> CreationTime;
+            int32 ShipmentDuration = 0;
+            int32 BuildingTypeID = 0;
+        };
+
+        class OpenShipmentNpcFromGossip final : public ServerPacket
+        {
+        public:
+            explicit OpenShipmentNpcFromGossip() : ServerPacket(SMSG_OPEN_SHIPMENT_NPC_FROM_GOSSIP, 16 + 4) { }
+
+            WorldPacket const* Write() override;
+
+            ObjectGuid NpcGUID;
+            int32 CharShipmentContainerID = 0;
+        };
+
+        class GarrisonRequestShipmentInfo final : public ClientPacket
+        {
+        public:
+            explicit GarrisonRequestShipmentInfo(WorldPacket&& packet) : ClientPacket(CMSG_GARRISON_REQUEST_SHIPMENT_INFO, std::move(packet)) { }
+
+            void Read() override;
+
+            ObjectGuid NpcGUID;
+        };
+
+        class GetShipmentInfoResponse final : public ServerPacket
+        {
+        public:
+            explicit GetShipmentInfoResponse() : ServerPacket(SMSG_GET_SHIPMENT_INFO_RESPONSE, 1 + 4 + 4 + 4 + 4) { }
+
+            WorldPacket const* Write() override;
+
+            bool Success = false;
+            int32 ShipmentRecID = 0;
+            int32 MaxShipments = 0;
+            std::vector<GarrisonShipment> Shipments;
+            int32 PlotInstanceID = 0;
+        };
+
+        class CreateShipment final : public ClientPacket
+        {
+        public:
+            explicit CreateShipment(WorldPacket&& packet) : ClientPacket(CMSG_CREATE_SHIPMENT, std::move(packet)) { }
+
+            void Read() override;
+
+            ObjectGuid NpcGUID;
+            uint32 Count = 0;
+        };
+
+        class CreateShipmentResponse final : public ServerPacket
+        {
+        public:
+            explicit CreateShipmentResponse() : ServerPacket(SMSG_CREATE_SHIPMENT_RESPONSE, 8 + 4 + 4) { }
+
+            WorldPacket const* Write() override;
+
+            uint64 ShipmentID = 0;
+            uint32 ShipmentRecID = 0;
+            uint32 Result = 0;
+        };
+
+        class CompleteShipmentResponse final : public ServerPacket
+        {
+        public:
+            explicit CompleteShipmentResponse() : ServerPacket(SMSG_COMPLETE_SHIPMENT_RESPONSE, 8 + 4) { }
+
+            WorldPacket const* Write() override;
+
+            uint64 ShipmentID = 0;
+            uint32 Result = 0;
+        };
+
+        class GarrisonRequestLandingPageShipmentInfo final : public ClientPacket
+        {
+        public:
+            explicit GarrisonRequestLandingPageShipmentInfo(WorldPacket&& packet) : ClientPacket(CMSG_GARRISON_REQUEST_LANDING_PAGE_SHIPMENT_INFO, std::move(packet)) { }
+
+            void Read() override { }
+        };
+
+        class GarrisonLandingPageShipmentInfo final : public ServerPacket
+        {
+        public:
+            explicit GarrisonLandingPageShipmentInfo() : ServerPacket(SMSG_GARRISON_LANDING_PAGE_SHIPMENT_INFO, 4 + 4) { }
+
+            WorldPacket const* Write() override;
+
+            uint32 CurrentArtifactKnowledge = 0;
+            std::vector<GarrisonShipment> Shipments;
+        };
     }
 }
 
