@@ -23,6 +23,7 @@
 #include "BattlePetMgr.h"
 #include "CellImpl.h"
 #include "CharmInfo.h"
+#include "ClassHall.h"
 #include "CombatLogPackets.h"
 #include "CombatPackets.h"
 #include "Common.h"
@@ -5451,7 +5452,24 @@ void Spell::EffectAddGarrisonFollower()
     if (!unitTarget || unitTarget->GetTypeId() != TYPEID_PLAYER)
         return;
 
-    if (Garrison* garrison = unitTarget->ToPlayer()->GetGarrison())
+    Player* player = unitTarget->ToPlayer();
+    GarrFollowerEntry const* follower = sGarrFollowerStore.LookupEntry(effectInfo->MiscValue);
+    if (follower && follower->GarrTypeID == GARRISON_TYPE_CLASS_ORDER)
+    {
+        if (ClassHall* classHall = player->GetClassHall())
+            classHall->GetFollowers().AddFollower(follower->ID);
+        else
+        {
+            WorldPackets::Garrison::GarrisonAddFollowerResult addFollowerResult;
+            addFollowerResult.GarrTypeID = GARRISON_TYPE_CLASS_ORDER;
+            addFollowerResult.Result = GARRISON_ERROR_NO_GARRISON;
+            player->SendDirectMessage(addFollowerResult.Write());
+        }
+
+        return;
+    }
+
+    if (Garrison* garrison = player->GetGarrison())
         garrison->AddFollower(effectInfo->MiscValue);
 }
 
