@@ -479,9 +479,13 @@ Still open:
   the cause was not found.
 - **The client shows no message** for the add-follower refusal (81) when
   collecting at the limit.
-- **One after another, or all at once.** Orders of a container are made
-  one after another. If Legion troops all finished 30 minutes after being
-  ordered together, it is a one-line change.
+
+Note on timing: the orders of a container run one after another, as
+Warlords work orders did. No source found says how Legion troop orders
+ran, and the owner does not remember; this is a deliberate choice, not a
+bug. If it turns out they all finished together, it is a one-line change
+in `ClassHallShipments::CreateShipment` (the creation time becomes the
+moment of ordering).
 
 ## What comes next
 
