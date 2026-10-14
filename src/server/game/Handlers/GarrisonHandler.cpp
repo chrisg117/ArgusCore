@@ -128,3 +128,28 @@ void WorldSession::HandleGarrisonRequestClassSpecCategoryInfo(WorldPackets::Garr
     if (ClassHall const* classHall = _player->GetClassHall())
         classHall->GetFollowers().SendClassSpecCategoryInfo(garrisonRequestClassSpecCategoryInfo.GarrFollowerTypeID);
 }
+
+void WorldSession::HandleGarrisonRequestShipmentInfo(WorldPackets::Garrison::GarrisonRequestShipmentInfo& garrisonRequestShipmentInfo)
+{
+    // the recruiter offers its orders through gossip: the client opens no gossip for a shipment crafter
+    if (!_player->GetNPCIfCanInteractWith(garrisonRequestShipmentInfo.NpcGUID, UNIT_NPC_FLAG_GOSSIP, UNIT_NPC_FLAG_2_NONE))
+        return;
+
+    if (ClassHall const* classHall = _player->GetClassHall())
+        classHall->GetShipments().SendShipmentInfo(garrisonRequestShipmentInfo.NpcGUID);
+}
+
+void WorldSession::HandleCreateShipment(WorldPackets::Garrison::CreateShipment& createShipment)
+{
+    if (!_player->GetNPCIfCanInteractWith(createShipment.NpcGUID, UNIT_NPC_FLAG_GOSSIP, UNIT_NPC_FLAG_2_NONE))
+        return;
+
+    if (ClassHall* classHall = _player->GetClassHall())
+        classHall->GetShipments().RequestShipments(createShipment.NpcGUID, createShipment.Count);
+}
+
+void WorldSession::HandleGarrisonRequestLandingPageShipmentInfo(WorldPackets::Garrison::GarrisonRequestLandingPageShipmentInfo& /*garrisonRequestLandingPageShipmentInfo*/)
+{
+    if (ClassHall const* classHall = _player->GetClassHall())
+        classHall->GetShipments().SendLandingPageShipmentInfo();
+}

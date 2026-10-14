@@ -397,6 +397,7 @@ class TC_GAME_API Spell
         void EffectLearnGarrisonBuilding();
         void EffectRemoveAuraBySpellLabel();
         void EffectCreateGarrison();
+        void EffectCreateShipment();
         void EffectCreateConversation();
         void EffectCancelConversation();
         void EffectAddGarrisonFollower();

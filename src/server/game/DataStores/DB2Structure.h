@@ -495,6 +495,41 @@ struct CharSectionsEntry
 
 #define MAX_OUTFIT_ITEMS 24
 
+struct CharShipmentEntry
+{
+    uint32 ID;
+    uint32 TreasureID;
+    uint32 Duration;
+    int32 SpellID;
+    int32 DummyItemID;
+    int32 OnCompleteSpellID;
+    uint16 ContainerID;
+    uint16 GarrFollowerID;
+    uint8 MaxShipments;
+    uint8 Flags;
+};
+
+struct CharShipmentContainerEntry
+{
+    uint32 ID;
+    LocalizedString PendingText;
+    LocalizedString Description;
+    uint32 WorkingSpellVisualID;
+    uint16 UiTextureKitID;
+    uint16 WorkingDisplayInfoID;
+    uint16 SmallDisplayInfoID;
+    uint16 MediumDisplayInfoID;
+    uint16 LargeDisplayInfoID;
+    uint16 CrossFactionID;
+    uint8 BaseCapacity;
+    uint8 GarrBuildingType;
+    uint8 GarrTypeID;
+    uint8 MediumThreshold;
+    uint8 LargeThreshold;
+    int8 Faction;
+    uint32 CompleteSpellVisualID;
+};
+
 struct CharStartOutfitEntry
 {
     uint32 ID;

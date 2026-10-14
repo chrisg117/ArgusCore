@@ -705,6 +705,9 @@ void CharacterDatabaseConnection::DoPrepareStatements()
     PrepareStatement(CHAR_SEL_CHARACTER_CLASS_HALL_FOLLOWERS, "SELECT dbId, followerId, quality, level, itemLevelWeapon, itemLevelArmor, xp, durability, status FROM character_class_hall_follower WHERE guid = ?", CONNECTION_ASYNC);
     PrepareStatement(CHAR_INS_CHARACTER_CLASS_HALL_FOLLOWER, "INSERT INTO character_class_hall_follower (dbId, guid, followerId, quality, level, itemLevelWeapon, itemLevelArmor, xp, durability, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", CONNECTION_ASYNC);
     PrepareStatement(CHAR_DEL_CHARACTER_CLASS_HALL_FOLLOWERS, "DELETE FROM character_class_hall_follower WHERE guid = ?", CONNECTION_ASYNC);
+    PrepareStatement(CHAR_SEL_CHARACTER_CLASS_HALL_SHIPMENTS, "SELECT shipmentId, charShipmentId, creationTime, duration FROM character_class_hall_shipment WHERE guid = ?", CONNECTION_ASYNC);
+    PrepareStatement(CHAR_INS_CHARACTER_CLASS_HALL_SHIPMENT, "INSERT INTO character_class_hall_shipment (guid, shipmentId, charShipmentId, creationTime, duration) VALUES (?, ?, ?, ?, ?)", CONNECTION_ASYNC);
+    PrepareStatement(CHAR_DEL_CHARACTER_CLASS_HALL_SHIPMENTS, "DELETE FROM character_class_hall_shipment WHERE guid = ?", CONNECTION_ASYNC);
 
     // Black Market
     PrepareStatement(CHAR_SEL_BLACKMARKET_AUCTIONS, "SELECT marketId, currentBid, time, numBids, bidder FROM blackmarket_auctions", CONNECTION_SYNCH);

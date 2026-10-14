@@ -20,6 +20,7 @@
 
 #include "Define.h"
 #include "ClassHallFollowers.h"
+#include "ClassHallShipments.h"
 #include "ClassHallTalents.h"
 #include "DatabaseEnvFwd.h"
 #include "ObjectGuid.h"
@@ -42,7 +43,7 @@ class TC_GAME_API ClassHall
 public:
     explicit ClassHall(Player* owner);
 
-    bool LoadFromDB(PreparedQueryResult classHall, PreparedQueryResult talents, PreparedQueryResult followers);
+    bool LoadFromDB(PreparedQueryResult classHall, PreparedQueryResult talents, PreparedQueryResult followers, PreparedQueryResult shipments);
     void SaveToDB(CharacterDatabaseTransaction trans) const;
     static void DeleteFromDB(ObjectGuid::LowType ownerGuid, CharacterDatabaseTransaction trans);
 
@@ -60,11 +61,15 @@ public:
     ClassHallFollowers& GetFollowers() { return _followers; }
     ClassHallFollowers const& GetFollowers() const { return _followers; }
 
+    ClassHallShipments& GetShipments() { return _shipments; }
+    ClassHallShipments const& GetShipments() const { return _shipments; }
+
 private:
     Player* _owner;
     GarrSiteLevelEntry const* _siteLevel;
     ClassHallTalents _talents;
     ClassHallFollowers _followers;
+    ClassHallShipments _shipments;
 };
 
 #endif // ClassHall_h__

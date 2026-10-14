@@ -18,6 +18,7 @@
 #include "WorldSession.h"
 #include "AreaTrigger.h"
 #include "AreaTriggerPackets.h"
+#include "ClassHall.h"
 #include "CollectionMgr.h"
 #include "Common.h"
 #include "DatabaseEnv.h"
@@ -222,6 +223,11 @@ void WorldSession::HandleGameobjectReportUse(WorldPackets::GameObject::GameObjRe
     {
         if (go->AI()->OnReportUse(_player))
             return;
+
+        // the object of an order container hands over the finished orders
+        if (go->GetGoType() == GAMEOBJECT_TYPE_GARRISON_SHIPMENT)
+            if (ClassHall* classHall = _player->GetClassHall())
+                classHall->GetShipments().CompleteShipments(go->GetGOInfo()->garrisonShipment.ShipmentContainer);
 
         _player->UpdateCriteria(CriteriaType::UseGameobject, go->GetEntry());
     }

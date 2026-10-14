@@ -9769,8 +9769,8 @@ void ObjectMgr::LoadGossipMenuItemAddon()
 
     _gossipMenuItemAddonStore.clear();
 
-    //                                               0       1         2
-    QueryResult result = WorldDatabase.Query("SELECT MenuID, OptionId, GarrTalentTreeID FROM gossip_menu_option_addon");
+    //                                               0       1         2                 3
+    QueryResult result = WorldDatabase.Query("SELECT MenuID, OptionId, GarrTalentTreeID, CharShipmentID FROM gossip_menu_option_addon");
 
     if (!result)
     {
@@ -9794,6 +9794,18 @@ void ObjectMgr::LoadGossipMenuItemAddon()
                 TC_LOG_ERROR("sql.sql", "Table gossip_menu_option_addon: MenuID {} OptionID {} is using non-existing GarrTalentTree {}",
                     menuId, optionId, *addon.GarrTalentTreeID);
                 addon.GarrTalentTreeID.reset();
+            }
+        }
+
+        if (Optional<int32> charShipmentId = fields[3].GetInt32OrNull())
+        {
+            addon.CharShipmentID = *charShipmentId;
+
+            if (!sCharShipmentStore.LookupEntry(*addon.CharShipmentID))
+            {
+                TC_LOG_ERROR("sql.sql", "Table gossip_menu_option_addon: MenuID {} OptionID {} is using non-existing CharShipment {}",
+                    menuId, optionId, *addon.CharShipmentID);
+                addon.CharShipmentID.reset();
             }
         }
     } while (result->NextRow());
