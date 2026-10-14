@@ -276,6 +276,25 @@ void ClassHallShipments::CompleteShipments(uint32 charShipmentContainerId)
     }
 }
 
+void ClassHallShipments::SendLandingPageShipmentInfo() const
+{
+    std::vector<Shipment const*> shipments;
+    for (auto const& [shipmentId, shipment] : _shipments)
+        shipments.push_back(&shipment);
+
+    std::sort(shipments.begin(), shipments.end(), [](Shipment const* left, Shipment const* right)
+    {
+        return std::tie(left->Entry->ContainerID, left->CreationTime, left->Id) < std::tie(right->Entry->ContainerID, right->CreationTime, right->Id);
+    });
+
+    // the artifact knowledge field belongs to the artifact research orders, which are not troop orders
+    WorldPackets::Garrison::GarrisonLandingPageShipmentInfo landingPageShipmentInfo;
+    for (Shipment const* shipment : shipments)
+        shipment->BuildPacketInfo(landingPageShipmentInfo.Shipments.emplace_back());
+
+    _owner->SendDirectMessage(landingPageShipmentInfo.Write());
+}
+
 // the check of an order spell, before its cost is taken
 SpellCastResult ClassHallShipments::CheckCreateShipmentCast(Player const* caster, uint32 charShipmentId)
 {

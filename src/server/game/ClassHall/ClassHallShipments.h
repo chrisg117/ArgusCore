@@ -59,6 +59,8 @@ public:
 
     void CompleteShipments(uint32 charShipmentContainerId);
 
+    void SendLandingPageShipmentInfo() const;
+
 private:
     struct Shipment
     {

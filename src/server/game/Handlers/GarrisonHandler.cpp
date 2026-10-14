@@ -147,3 +147,9 @@ void WorldSession::HandleCreateShipment(WorldPackets::Garrison::CreateShipment& 
     if (ClassHall* classHall = _player->GetClassHall())
         classHall->GetShipments().RequestShipments(createShipment.NpcGUID, createShipment.Count);
 }
+
+void WorldSession::HandleGarrisonRequestLandingPageShipmentInfo(WorldPackets::Garrison::GarrisonRequestLandingPageShipmentInfo& /*garrisonRequestLandingPageShipmentInfo*/)
+{
+    if (ClassHall const* classHall = _player->GetClassHall())
+        classHall->GetShipments().SendLandingPageShipmentInfo();
+}
