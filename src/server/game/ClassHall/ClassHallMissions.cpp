@@ -25,6 +25,8 @@
 #include "GameTime.h"
 #include "Garrison.h"
 #include "GarrisonMgr.h"
+#include "Item.h"
+#include "ItemEnchantmentMgr.h"
 #include "Log.h"
 #include "Player.h"
 #include "Random.h"
@@ -540,6 +542,61 @@ void ClassHallMissions::CompleteMission(ObjectGuid npcGuid, uint32 garrMissionId
         _missions.erase(itr);
 
     _owner->SendDirectMessage(completeMissionResult.Write());
+}
+
+void ClassHallMissions::BonusRoll(ObjectGuid npcGuid, uint32 garrMissionId)
+{
+    if (!IsOpenNpc(npcGuid))
+        return;
+
+    auto itr = _missions.find(garrMissionId);
+    if (itr == _missions.end())
+        return;
+
+    WorldPackets::Garrison::GarrisonMissionBonusRollResult bonusRollResult;
+    bonusRollResult.Mission = itr->second.PacketInfo;
+    bonusRollResult.GarrMissionID = garrMissionId;
+
+    // the chest of a successful mission is opened once
+    if (itr->second.PacketInfo.MissionState != CLASS_HALL_MISSION_STATE_COMPLETED)
+    {
+        bonusRollResult.Result = GARRISON_ERROR_INVALID_MISSION;
+        _owner->SendDirectMessage(bonusRollResult.Write());
+        return;
+    }
+
+    GiveRewards(garrMissionId);
+    _missions.erase(itr);
+    _owner->SendDirectMessage(bonusRollResult.Write());
+}
+
+void ClassHallMissions::GiveRewards(uint32 garrMissionId)
+{
+    std::vector<WorldPackets::Garrison::GarrisonMissionReward> const* rewards = sGarrisonMgr.GetClassHallMissionRewards(garrMissionId);
+    if (!rewards)
+        return;
+
+    for (WorldPackets::Garrison::GarrisonMissionReward const& reward : *rewards)
+    {
+        // an item that does not fit in the bags is mailed
+        if (reward.ItemID && reward.ItemQuantity)
+        {
+            ItemPosCountVec dest;
+            if (_owner->CanStoreNewItem(NULL_BAG, NULL_SLOT, dest, reward.ItemID, reward.ItemQuantity) == EQUIP_ERR_OK)
+            {
+                if (Item* item = _owner->StoreNewItem(dest, reward.ItemID, true, GenerateItemRandomPropertyId(reward.ItemID)))
+                    _owner->SendNewItem(item, reward.ItemQuantity, true, false);
+            }
+            else
+                _owner->SendItemRetrievalMail(reward.ItemID, reward.ItemQuantity, ItemContext::NONE);
+        }
+
+        // currency 0 is money
+        if (reward.CurrencyID)
+            _owner->AddCurrency(reward.CurrencyID, reward.CurrencyQuantity, CurrencyGainSource::GarrisonMissionReward);
+        else if (reward.CurrencyQuantity)
+            _owner->ModifyMoney(reward.CurrencyQuantity);
+    }
 }
 
 void ClassHallMissions::AddMission(GarrMissionEntry const* entry, time_t offerTime, bool notify)

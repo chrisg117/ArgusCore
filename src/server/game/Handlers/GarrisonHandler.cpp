@@ -175,3 +175,9 @@ void WorldSession::HandleGarrisonCompleteMission(WorldPackets::Garrison::Garriso
     if (ClassHall* classHall = _player->GetClassHall())
         classHall->GetMissions().CompleteMission(garrisonCompleteMission.NpcGUID, garrisonCompleteMission.GarrMissionID);
 }
+
+void WorldSession::HandleGarrisonMissionBonusRoll(WorldPackets::Garrison::GarrisonMissionBonusRoll& garrisonMissionBonusRoll)
+{
+    if (ClassHall* classHall = _player->GetClassHall())
+        classHall->GetMissions().BonusRoll(garrisonMissionBonusRoll.NpcGUID, garrisonMissionBonusRoll.GarrMissionID);
+}

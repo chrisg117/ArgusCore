@@ -64,6 +64,7 @@ public:
 
     void StartMission(ObjectGuid npcGuid, uint32 garrMissionId, std::vector<uint64> const& followerDbIds);
     void CompleteMission(ObjectGuid npcGuid, uint32 garrMissionId);
+    void BonusRoll(ObjectGuid npcGuid, uint32 garrMissionId);
 
 private:
     struct Mission
@@ -79,6 +80,7 @@ private:
     static bool IsOfferExpired(Mission const& mission, time_t now);
     bool IsOpenNpc(ObjectGuid npcGuid) const;
     GarrisonError CanStartMission(Mission const* mission, std::vector<ClassHallFollowers::Follower const*> const& team) const;
+    void GiveRewards(uint32 garrMissionId);
 
     static std::vector<GarrMechanicEntry const*> GetMechanics(GarrMissionEntry const* mission, uint64 dbId);
     static double GetBias(GarrMissionEntry const* mission, ClassHallFollowers::Follower const& follower);

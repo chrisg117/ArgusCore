@@ -408,7 +408,7 @@ void OpcodeTable::InitializeClientOpcodes()
     DEFINE_HANDLER(CMSG_GARRISON_GENERATE_RECRUITS,                         STATUS_UNHANDLED, PROCESS_INPLACE,      &WorldSession::Handle_NULL);
     DEFINE_HANDLER(CMSG_GARRISON_GET_MAP_DATA,                              STATUS_LOGGEDIN,  PROCESS_THREADUNSAFE, &WorldSession::HandleGarrisonGetMapData);
     DEFINE_HANDLER(CMSG_GARRISON_GET_MISSION_REWARD,                        STATUS_UNHANDLED, PROCESS_THREADUNSAFE, &WorldSession::Handle_NULL);
-    DEFINE_HANDLER(CMSG_GARRISON_MISSION_BONUS_ROLL,                        STATUS_UNHANDLED, PROCESS_INPLACE,      &WorldSession::Handle_NULL);
+    DEFINE_HANDLER(CMSG_GARRISON_MISSION_BONUS_ROLL,                        STATUS_LOGGEDIN,  PROCESS_THREADUNSAFE, &WorldSession::HandleGarrisonMissionBonusRoll);
     DEFINE_HANDLER(CMSG_GARRISON_REQUEST_SCOUTING_MAP,                      STATUS_LOGGEDIN,  PROCESS_THREADUNSAFE, &WorldSession::HandleGarrisonRequestScoutingMap);
     DEFINE_HANDLER(CMSG_GARRISON_PURCHASE_BUILDING,                         STATUS_LOGGEDIN,  PROCESS_THREADUNSAFE, &WorldSession::HandleGarrisonPurchaseBuilding);
     DEFINE_HANDLER(CMSG_GARRISON_RECRUIT_FOLLOWER,                          STATUS_UNHANDLED, PROCESS_INPLACE,      &WorldSession::Handle_NULL);
