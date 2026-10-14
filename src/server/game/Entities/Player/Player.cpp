@@ -13649,6 +13649,13 @@ void Player::OnGossipSelect(WorldObject* source, uint32 gossipListId, uint32 men
             SendGarrisonOpenTalentNpc(guid, itemAddon ? itemAddon->GarrTalentTreeID.value_or(0) : 0, addon ? addon->FriendshipFactionID : 0);
             break;
         }
+        case GossipOptionNpc::ShipmentCrafter:
+        {
+            GossipMenuItemAddon const* itemAddon = sObjectMgr->GetGossipMenuItemAddon(menuId, gossipListId);
+            if (_classHall && itemAddon && itemAddon->CharShipmentID)
+                _classHall->GetShipments().OpenNpc(guid, *itemAddon->CharShipmentID);
+            break;
+        }
         case GossipOptionNpc::Transmogrify:
             GetSession()->SendOpenTransmogrifier(guid);
             break;

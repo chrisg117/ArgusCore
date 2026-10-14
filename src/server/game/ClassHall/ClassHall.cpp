@@ -25,7 +25,7 @@
 #include "Player.h"
 
 ClassHall::ClassHall(Player* owner) : _owner(owner), _siteLevel(nullptr), _talents(owner), _followers(owner, this),
-    _shipments(owner)
+    _shipments(owner, this)
 {
 }
 

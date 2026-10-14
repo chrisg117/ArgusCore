@@ -56,6 +56,10 @@ public:
 
     void SendClassSpecCategoryInfo(uint32 garrFollowerTypeId) const;
 
+    GarrisonError CanAddFollower(GarrFollowerEntry const* follower) const;
+    uint32 GetClassSpec(GarrFollowerEntry const* follower) const;
+    uint32 CountTroops(uint32 garrClassSpecId) const;
+
 private:
     struct Follower
     {
@@ -65,13 +69,10 @@ private:
         bool IsActive() const { return (PacketInfo.FollowerStatus & FOLLOWER_STATUS_INACTIVE) == 0; }
     };
 
-    GarrisonError CanAddFollower(GarrFollowerEntry const* follower) const;
     GarrisonError CanSetFollowerInactive(Follower const* follower, bool inactive) const;
     void SendActivationsRemaining() const;
     std::list<GarrAbilityEntry const*> GetAbilities(GarrFollowerEntry const* follower, uint32 quality) const;
-    uint32 GetClassSpec(GarrFollowerEntry const* follower) const;
     uint32 CountActiveChampions() const;
-    uint32 CountTroops(uint32 garrClassSpecId) const;
 
     Player* _owner;
     ClassHall const* _classHall;

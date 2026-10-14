@@ -748,6 +748,7 @@ struct GossipMenuItems
 struct GossipMenuItemAddon
 {
     Optional<int32> GarrTalentTreeID;
+    Optional<int32> CharShipmentID;
 };
 
 struct GossipMenus

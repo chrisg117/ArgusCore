@@ -21,22 +21,36 @@
 
 #include "Define.h"
 #include "DatabaseEnvFwd.h"
+#include "Garrison.h"
 #include "ObjectGuid.h"
 #include <map>
+#include <vector>
 
+class ClassHall;
 class Player;
 struct CharShipmentEntry;
+
+namespace WorldPackets
+{
+    namespace Garrison
+    {
+        struct GarrisonShipment;
+    }
+}
 
 // The orders (shipments) a character has placed in its class hall and not collected yet:
 // troops that are being trained.
 class TC_GAME_API ClassHallShipments
 {
 public:
-    explicit ClassHallShipments(Player* owner);
+    ClassHallShipments(Player* owner, ClassHall* classHall);
 
     void LoadFromDB(PreparedQueryResult shipments);
     void SaveToDB(CharacterDatabaseTransaction trans) const;
     static void DeleteFromDB(ObjectGuid::LowType ownerGuid, CharacterDatabaseTransaction trans);
+
+    void OpenNpc(ObjectGuid npcGuid, uint32 charShipmentId);
+    void SendShipmentInfo(ObjectGuid npcGuid) const;
 
 private:
     struct Shipment
@@ -47,13 +61,21 @@ private:
         uint32 Duration = 0;
 
         bool IsReady() const;
+        void BuildPacketInfo(WorldPackets::Garrison::GarrisonShipment& shipment) const;
     };
 
     static bool IsTroopShipment(CharShipmentEntry const* shipment);
+    GarrisonError CanOfferShipment(CharShipmentEntry const* shipment) const;
+    std::vector<Shipment const*> GetPendingShipments(uint32 charShipmentContainerId) const;
 
     Player* _owner;
+    ClassHall* _classHall;
     std::map<uint64 /*shipmentId*/, Shipment> _shipments;
     uint64 _nextShipmentId;
+
+    // the order window the owner has open, and the order it offers
+    ObjectGuid _openNpc;
+    CharShipmentEntry const* _openShipment;
 };
 
 #endif // ClassHallShipments_h__
