@@ -61,6 +61,8 @@ TC_GAME_API extern DB2Storage<BattlemasterListEntry>                sBattlemaste
 TC_GAME_API extern DB2Storage<BroadcastTextEntry>                   sBroadcastTextStore;
 TC_GAME_API extern DB2Storage<Cfg_CategoriesEntry>                  sCfgCategoriesStore;
 TC_GAME_API extern DB2Storage<Cfg_RegionsEntry>                     sCfgRegionsStore;
+TC_GAME_API extern DB2Storage<CharShipmentEntry>                    sCharShipmentStore;
+TC_GAME_API extern DB2Storage<CharShipmentContainerEntry>           sCharShipmentContainerStore;
 TC_GAME_API extern DB2Storage<CharStartOutfitEntry>                 sCharStartOutfitStore;
 TC_GAME_API extern DB2Storage<CharTitlesEntry>                      sCharTitlesStore;
 TC_GAME_API extern DB2Storage<CharacterLoadoutEntry>                sCharacterLoadoutStore;
