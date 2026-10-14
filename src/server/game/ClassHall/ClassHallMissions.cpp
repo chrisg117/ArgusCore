@@ -17,14 +17,28 @@
 
 #include "ClassHallMissions.h"
 #include "ClassHall.h"
+#include "ConditionMgr.h"
+#include "Containers.h"
 #include "DatabaseEnv.h"
 #include "DB2Stores.h"
+#include "GameTime.h"
 #include "Garrison.h"
+#include "GarrisonMgr.h"
 #include "Log.h"
 #include "Player.h"
 #include <algorithm>
 
-ClassHallMissions::ClassHallMissions(Player* owner, ClassHall* classHall) : _owner(owner), _classHall(classHall), _nextMissionDbId(1)
+namespace
+{
+// how often the offers are looked at
+constexpr time_t MISSION_OFFER_INTERVAL = MINUTE;
+
+// recruitment, zone support and invasion missions are other mechanisms, never on the table
+constexpr uint8 NonTableMissionTypes[] = { 11, 51, 52, 57 };
+}
+
+ClassHallMissions::ClassHallMissions(Player* owner, ClassHall* classHall) : _owner(owner), _classHall(classHall), _nextMissionDbId(1),
+    _nextOfferTime(0)
 {
 }
 
@@ -32,6 +46,37 @@ ClassHallMissions::ClassHallMissions(Player* owner, ClassHall* classHall) : _own
 bool ClassHallMissions::IsClassHallMission(GarrMissionEntry const* mission)
 {
     return mission && mission->GarrTypeID == GARRISON_TYPE_CLASS_ORDER && mission->GarrFollowerTypeID == FOLLOWER_TYPE_CLASS_ORDER;
+}
+
+bool ClassHallMissions::IsOfferable(GarrMissionEntry const* mission)
+{
+    if (!IsClassHallMission(mission) || advstd::ranges::contains(NonTableMissionTypes, mission->GarrMissionTypeID))
+        return false;
+
+    // a mission without an offer time is on the table only through its condition: the client
+    // data has such missions without one only as placeholders and special missions
+    return mission->OfferDuration || mission->PlayerConditionID;
+}
+
+void ClassHallMissions::InitMission(Mission& mission, GarrMissionEntry const* entry, uint64 dbId, time_t offerTime)
+{
+    mission.Entry = entry;
+    mission.PacketInfo.DbID = dbId;
+    mission.PacketInfo.MissionRecID = entry->ID;
+    mission.PacketInfo.OfferTime = offerTime;
+    mission.PacketInfo.OfferDuration = Seconds(entry->OfferDuration);
+    mission.PacketInfo.TravelDuration = Seconds(entry->TravelDuration);
+    mission.PacketInfo.MissionDuration = Seconds(entry->MissionDuration);
+    mission.PacketInfo.Flags = entry->Flags;
+}
+
+// a condition the client data does not have counts as not met: content has to define it first
+bool ClassHallMissions::IsConditionMet(GarrMissionEntry const* mission) const
+{
+    if (!mission->PlayerConditionID)
+        return true;
+
+    return sPlayerConditionStore.LookupEntry(mission->PlayerConditionID) && ConditionMgr::IsPlayerMeetingCondition(_owner, mission->PlayerConditionID);
 }
 
 void ClassHallMissions::LoadFromDB(PreparedQueryResult missions)
@@ -56,19 +101,12 @@ void ClassHallMissions::LoadFromDB(PreparedQueryResult missions)
             }
 
             Mission& mission = _missions[missionId];
-            mission.Entry = entry;
-            mission.PacketInfo.DbID = dbId;
-            mission.PacketInfo.MissionRecID = missionId;
-            mission.PacketInfo.OfferTime = fields[2].GetInt64();
-            mission.PacketInfo.OfferDuration = Seconds(entry->OfferDuration);
+            InitMission(mission, entry, dbId, fields[2].GetInt64());
             // a mission that is only offered keeps the start time the client is sent for one never started
             if (time_t startTime = fields[3].GetInt64())
                 mission.PacketInfo.StartTime = startTime;
-            mission.PacketInfo.TravelDuration = Seconds(entry->TravelDuration);
-            mission.PacketInfo.MissionDuration = Seconds(entry->MissionDuration);
-            mission.PacketInfo.MissionState = fields[5].GetUInt8();
             mission.PacketInfo.SuccessChance = uint32(fields[4].GetInt32());
-            mission.PacketInfo.Flags = entry->Flags;
+            mission.PacketInfo.MissionState = fields[5].GetUInt8();
         } while (missions->NextRow());
     }
 
@@ -123,8 +161,80 @@ void ClassHallMissions::BuildInfo(WorldPackets::Garrison::GarrisonInfo& info) co
     for (auto const& [missionId, mission] : _missions)
     {
         info.Missions.push_back(&mission.PacketInfo);
-        info.MissionRewards.emplace_back();
+        std::vector<WorldPackets::Garrison::GarrisonMissionReward>& rewards = info.MissionRewards.emplace_back();
+        if (std::vector<WorldPackets::Garrison::GarrisonMissionReward> const* missionRewards = sGarrisonMgr.GetClassHallMissionRewards(missionId))
+            rewards = *missionRewards;
+
         info.MissionOvermaxRewards.emplace_back();
         info.CanStartMission.push_back(true);
     }
+}
+
+void ClassHallMissions::Update()
+{
+    if (_nextOfferTime > GameTime::GetGameTime())
+        return;
+
+    OfferMissions(true);
+}
+
+void ClassHallMissions::OfferMissions(bool notify)
+{
+    time_t now = GameTime::GetGameTime();
+    _nextOfferTime = now + MISSION_OFFER_INTERVAL;
+
+    // an offer leaves the table at its end time; the client drops it by itself, so nothing is sent
+    for (auto itr = _missions.begin(); itr != _missions.end();)
+    {
+        Mission const& mission = itr->second;
+        if (mission.PacketInfo.MissionState == CLASS_HALL_MISSION_STATE_OFFERED && mission.Entry->OfferDuration
+            && time_t(mission.PacketInfo.OfferTime) + time_t(mission.Entry->OfferDuration) <= now)
+            itr = _missions.erase(itr);
+        else
+            ++itr;
+    }
+
+    std::vector<GarrMissionEntry const*> rotating;
+    for (GarrMissionEntry const* mission : sGarrMissionStore)
+    {
+        if (!IsOfferable(mission) || _missions.contains(mission->ID) || !IsConditionMet(mission))
+            continue;
+
+        // a mission without an offer time is on the table whenever its condition is met
+        if (!mission->OfferDuration)
+            AddMission(mission, now, notify);
+        else
+            rotating.push_back(mission);
+    }
+
+    uint32 rotatingOnOffer = uint32(std::count_if(_missions.begin(), _missions.end(), [](auto const& mission)
+    {
+        return mission.second.PacketInfo.MissionState == CLASS_HALL_MISSION_STATE_OFFERED && mission.second.Entry->OfferDuration;
+    }));
+
+    if (rotatingOnOffer >= ROTATING_MISSIONS_ON_OFFER)
+        return;
+
+    Trinity::Containers::RandomResize(rotating, ROTATING_MISSIONS_ON_OFFER - rotatingOnOffer);
+    for (GarrMissionEntry const* mission : rotating)
+        AddMission(mission, now, notify);
+}
+
+void ClassHallMissions::AddMission(GarrMissionEntry const* entry, time_t offerTime, bool notify)
+{
+    Mission& mission = _missions[entry->ID];
+    InitMission(mission, entry, _nextMissionDbId++, offerTime);
+
+    if (!notify)
+        return;
+
+    WorldPackets::Garrison::GarrisonAddMissionResult addMissionResult;
+    addMissionResult.GarrTypeID = GARRISON_TYPE_CLASS_ORDER;
+    addMissionResult.State = CLASS_HALL_MISSION_STATE_OFFERED;
+    addMissionResult.Mission = mission.PacketInfo;
+    if (std::vector<WorldPackets::Garrison::GarrisonMissionReward> const* rewards = sGarrisonMgr.GetClassHallMissionRewards(entry->ID))
+        addMissionResult.Rewards = *rewards;
+
+    addMissionResult.CanStart = true;
+    _owner->SendDirectMessage(addMissionResult.Write());
 }

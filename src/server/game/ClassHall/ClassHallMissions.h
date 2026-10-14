@@ -41,6 +41,10 @@ enum ClassHallMissionState : uint32
 class TC_GAME_API ClassHallMissions
 {
 public:
+    // how many missions with an offer time the table holds at once; the retail number is not
+    // known, so this is a chosen value
+    static constexpr uint32 ROTATING_MISSIONS_ON_OFFER = 10;
+
     ClassHallMissions(Player* owner, ClassHall* classHall);
 
     void LoadFromDB(PreparedQueryResult missions);
@@ -48,6 +52,10 @@ public:
     static void DeleteFromDB(ObjectGuid::LowType ownerGuid, CharacterDatabaseTransaction trans);
 
     void BuildInfo(WorldPackets::Garrison::GarrisonInfo& info) const;
+
+    void Update();
+    void OfferMissions(bool notify);
+    static bool IsOfferable(GarrMissionEntry const* mission);
 
 private:
     struct Mission
@@ -57,11 +65,15 @@ private:
     };
 
     static bool IsClassHallMission(GarrMissionEntry const* mission);
+    static void InitMission(Mission& mission, GarrMissionEntry const* entry, uint64 dbId, time_t offerTime);
+    bool IsConditionMet(GarrMissionEntry const* mission) const;
+    void AddMission(GarrMissionEntry const* entry, time_t offerTime, bool notify);
 
     Player* _owner;
     ClassHall* _classHall;
     std::map<uint32 /*garrMissionId*/, Mission> _missions;
     uint64 _nextMissionDbId;
+    time_t _nextOfferTime;
 };
 
 #endif // ClassHallMissions_h__

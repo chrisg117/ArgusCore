@@ -51,6 +51,7 @@ bool ClassHall::LoadFromDB(PreparedQueryResult classHall, PreparedQueryResult ta
     _followers.SetActivationsRemaining(fields[1].GetUInt32());
     _shipments.LoadFromDB(std::move(shipments));
     _missions.LoadFromDB(std::move(missions));
+    _missions.OfferMissions(false);
     return true;
 }
 
@@ -113,4 +114,5 @@ uint32 ClassHall::GetGarrSiteID() const
 void ClassHall::Update()
 {
     _talents.Update();
+    _missions.Update();
 }
