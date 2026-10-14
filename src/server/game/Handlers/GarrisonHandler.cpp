@@ -17,6 +17,7 @@
 
 #include "WorldSession.h"
 #include "ClassHall.h"
+#include "DB2Stores.h"
 #include "Garrison.h"
 #include "GarrisonPackets.h"
 #include "Player.h"
@@ -41,7 +42,13 @@ void WorldSession::HandleGetGarrisonInfo(WorldPackets::Garrison::GetGarrisonInfo
         garrison->BuildInfo(garrisonInfo.Garrisons.emplace_back());
 
     if (ClassHall const* classHall = _player->GetClassHall())
+    {
         classHall->BuildInfo(garrisonInfo.Garrisons.emplace_back());
+
+        // without it the client counts the champions against a limit of 0 and starts no mission
+        if (GarrFollowerTypeEntry const* followerType = sGarrFollowerTypeStore.LookupEntry(FOLLOWER_TYPE_CLASS_ORDER))
+            garrisonInfo.FollowerSoftCaps.push_back({ .GarrFollowerTypeID = FOLLOWER_TYPE_CLASS_ORDER, .Count = followerType->MaxFollowers });
+    }
 
     if (garrisonInfo.Garrisons.empty())
         return;
