@@ -92,6 +92,8 @@ private:
     std::set<GarrAbilityEntry const*> _garrisonFollowerRandomTraits;
 
     uint64 _followerDbIdGenerator = UI64LIT(1);
+
+    friend class PlayerDumpReader;
 };
 
 #define sGarrisonMgr GarrisonMgr::Instance()
