@@ -30,6 +30,7 @@ class ClassHall;
 class Player;
 struct GarrAbilityEntry;
 struct GarrFollowerEntry;
+struct GarrFollowerQualityEntry;
 
 // The followers (champions and troops) of a character's class hall.
 class TC_GAME_API ClassHallFollowers
@@ -61,6 +62,7 @@ public:
     Follower const* GetFollower(uint64 dbId) const;
     std::map<uint64 /*dbId*/, Follower> const& GetAllFollowers() const { return _followers; }
     void SetFollowerMission(uint64 dbId, uint32 garrMissionId);
+    void AddExperience(uint64 dbId, uint32 amount, uint32 source);
 
     uint32 GetActivationsRemaining() const { return _activationsRemaining; }
     void SetActivationsRemaining(uint32 activations) { _activationsRemaining = activations; }
@@ -71,6 +73,9 @@ public:
     GarrisonError CanAddFollower(GarrFollowerEntry const* follower) const;
     uint32 GetClassSpec(GarrFollowerEntry const* follower) const;
     uint32 CountTroops(uint32 garrClassSpecId) const;
+
+    static uint32 GetLevelCap(uint32 garrFollowerTypeId);
+    static GarrFollowerQualityEntry const* GetQuality(uint32 garrFollowerTypeId, uint32 quality);
 
 private:
     GarrisonError CanSetFollowerInactive(Follower const* follower, bool inactive) const;

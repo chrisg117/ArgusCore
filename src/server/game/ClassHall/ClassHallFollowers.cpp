@@ -36,6 +36,15 @@ bool IsTroop(GarrFollowerEntry const* follower)
 {
     return follower->Vitality > 0;
 }
+
+GarrFollowerLevelXPEntry const* GetLevelXP(uint32 garrFollowerTypeId, uint32 level)
+{
+    for (GarrFollowerLevelXPEntry const* entry : sGarrFollowerLevelXPStore)
+        if (entry->GarrFollowerTypeID == garrFollowerTypeId && entry->FollowerLevel == level)
+            return entry;
+
+    return nullptr;
+}
 }
 
 ClassHallFollowers::ClassHallFollowers(Player* owner, ClassHall const* classHall) : _owner(owner), _classHall(classHall),
@@ -228,6 +237,72 @@ void ClassHallFollowers::SetFollowerMission(uint64 dbId, uint32 garrMissionId)
         itr->second.PacketInfo.CurrentMissionID = garrMissionId;
 }
 
+// Experience raises a champion's level up to the cap, then its quality; each step keeps what is
+// left over, so one gain can give several. At a quality with no next step the experience stops.
+// Troops do not grow.
+void ClassHallFollowers::AddExperience(uint64 dbId, uint32 amount, uint32 source)
+{
+    auto itr = _followers.find(dbId);
+    if (itr == _followers.end() || IsTroop(itr->second.Entry))
+        return;
+
+    Follower& follower = itr->second;
+    WorldPackets::Garrison::GarrisonFollowerChangedXp changedXp;
+    changedXp.XPEarned = int32(amount);
+    changedXp.XPSource = int32(source);
+    changedXp.Before = follower.PacketInfo;
+
+    uint32 followerType = follower.Entry->GarrFollowerTypeID;
+    uint32 levelCap = GetLevelCap(followerType);
+    uint32 quality = follower.PacketInfo.Quality;
+    uint32 level = follower.PacketInfo.FollowerLevel;
+    uint32 xp = follower.PacketInfo.Xp + amount;
+    while (true)
+    {
+        if (level < levelCap)
+        {
+            GarrFollowerLevelXPEntry const* levelXp = GetLevelXP(followerType, level);
+            if (!levelXp || !levelXp->XpToNextLevel || xp < levelXp->XpToNextLevel)
+                break;
+
+            xp -= levelXp->XpToNextLevel;
+            ++level;
+            continue;
+        }
+
+        GarrFollowerQualityEntry const* followerQuality = GetQuality(followerType, quality);
+        if (!followerQuality || !followerQuality->XpToNextQuality)
+        {
+            xp = 0;
+            break;
+        }
+
+        if (xp < followerQuality->XpToNextQuality)
+            break;
+
+        xp -= followerQuality->XpToNextQuality;
+        ++quality;
+    }
+
+    bool qualityChanged = quality != follower.PacketInfo.Quality;
+    follower.PacketInfo.Quality = quality;
+    follower.PacketInfo.FollowerLevel = level;
+    follower.PacketInfo.Xp = xp;
+    // a higher quality can bring an ability or an equipment slot
+    if (qualityChanged)
+        follower.PacketInfo.AbilityID = GetAbilities(follower.Entry, quality);
+
+    changedXp.After = follower.PacketInfo;
+    _owner->SendDirectMessage(changedXp.Write());
+
+    if (qualityChanged)
+    {
+        WorldPackets::Garrison::GarrisonFollowerChangedQuality changedQuality;
+        changedQuality.Follower = follower.PacketInfo;
+        _owner->SendDirectMessage(changedQuality.Write());
+    }
+}
+
 void ClassHallFollowers::ResetActivations()
 {
     _activationsRemaining = DAILY_FOLLOWER_ACTIVATIONS;
@@ -338,21 +413,32 @@ GarrisonError ClassHallFollowers::CanSetFollowerInactive(Follower const* followe
     return GARRISON_SUCCESS;
 }
 
+// the level a follower of this type stops at: the one that needs no experience to a next level
+uint32 ClassHallFollowers::GetLevelCap(uint32 garrFollowerTypeId)
+{
+    uint32 levelCap = 0;
+    for (GarrFollowerLevelXPEntry const* entry : sGarrFollowerLevelXPStore)
+        if (entry->GarrFollowerTypeID == garrFollowerTypeId && !entry->XpToNextLevel)
+            levelCap = std::max<uint32>(levelCap, entry->FollowerLevel);
+
+    return levelCap;
+}
+
+GarrFollowerQualityEntry const* ClassHallFollowers::GetQuality(uint32 garrFollowerTypeId, uint32 quality)
+{
+    for (GarrFollowerQualityEntry const* entry : sGarrFollowerQualityStore)
+        if (entry->GarrFollowerTypeID == garrFollowerTypeId && entry->Quality == quality)
+            return entry;
+
+    return nullptr;
+}
+
 std::list<GarrAbilityEntry const*> ClassHallFollowers::GetAbilities(GarrFollowerEntry const* follower, uint32 quality) const
 {
     std::list<GarrAbilityEntry const*> abilities;
 
     // how many abilities and traits a follower of this type has at this quality
-    GarrFollowerQualityEntry const* followerQuality = nullptr;
-    for (GarrFollowerQualityEntry const* entry : sGarrFollowerQualityStore)
-    {
-        if (entry->GarrFollowerTypeID == follower->GarrFollowerTypeID && entry->Quality == quality)
-        {
-            followerQuality = entry;
-            break;
-        }
-    }
-
+    GarrFollowerQualityEntry const* followerQuality = GetQuality(follower->GarrFollowerTypeID, quality);
     if (!followerQuality)
         return abilities;
 
