@@ -534,13 +534,19 @@ void ClassHallMissions::CompleteMission(ObjectGuid npcGuid, uint32 garrMissionId
     for (WorldPackets::Garrison::GarrisonMissionFollowerInfo const& follower : completeMissionResult.Followers)
         followers.SetFollowerMission(follower.FollowerDBID, 0);
 
-    mission.PacketInfo.MissionState = CLASS_HALL_MISSION_STATE_COMPLETED;
+    // a successful mission waits for its chest to be opened; the client takes every completed mission
+    // for a successful one, so a failed mission goes back on offer, as one never started
+    if (completeMissionResult.Succeeded)
+        mission.PacketInfo.MissionState = CLASS_HALL_MISSION_STATE_COMPLETED;
+    else
+    {
+        uint64 dbId = mission.PacketInfo.DbID;
+        time_t offerTime = time_t(mission.PacketInfo.OfferTime);
+        mission.PacketInfo = {};
+        InitMission(mission, mission.Entry, dbId, offerTime);
+    }
+
     completeMissionResult.Mission = mission.PacketInfo;
-
-    // a failed mission is over; a successful one waits for its chest to be opened
-    if (!completeMissionResult.Succeeded)
-        _missions.erase(itr);
-
     _owner->SendDirectMessage(completeMissionResult.Write());
 }
 
