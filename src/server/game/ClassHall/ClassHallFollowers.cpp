@@ -303,6 +303,17 @@ void ClassHallFollowers::AddExperience(uint64 dbId, uint32 amount, uint32 source
     }
 }
 
+void ClassHallFollowers::SendUpdateFollower(uint64 dbId) const
+{
+    auto itr = _followers.find(dbId);
+    if (itr == _followers.end())
+        return;
+
+    WorldPackets::Garrison::GarrisonUpdateFollower updateFollower;
+    updateFollower.Follower = itr->second.PacketInfo;
+    _owner->SendDirectMessage(updateFollower.Write());
+}
+
 void ClassHallFollowers::ResetActivations()
 {
     _activationsRemaining = DAILY_FOLLOWER_ACTIVATIONS;

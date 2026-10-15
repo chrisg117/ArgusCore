@@ -70,6 +70,7 @@ public:
     std::map<uint64 /*dbId*/, Follower> const& GetAllFollowers() const { return _followers; }
     void SetFollowerMission(uint64 dbId, uint32 garrMissionId);
     void AddExperience(uint64 dbId, uint32 amount, uint32 source);
+    void SendUpdateFollower(uint64 dbId) const;
 
     uint32 GetActivationsRemaining() const { return _activationsRemaining; }
     void SetActivationsRemaining(uint32 activations) { _activationsRemaining = activations; }
