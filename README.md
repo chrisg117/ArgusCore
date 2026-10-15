@@ -53,8 +53,8 @@ tested in game.
 | Talents | `engine/class-hall-talents` | Research with its timer, swapping, talent spells, the client's condition checks | In `dev` |
 | Followers | `engine/class-hall-followers` | Champions and troops: gaining, active and inactive, dismissing, troop kinds | In `dev` |
 | Shipments | `engine/class-hall-shipments` | Troop orders: the order window, ordering, collecting at the container, the hall report | In `dev` |
-| Missions | `engine/class-hall-missions` | The mission table, which missions are offered, starting, the success roll, rewards | Next |
-| Follower growth | `engine/class-hall-follower-growth` | Follower experience, levels, quality, item level and equipment | Planned |
+| Missions | `engine/class-hall-missions` | The mission table, which missions are offered, starting, the success roll, rewards | In `dev` |
+| Follower growth | `engine/class-hall-follower-growth` | Follower experience, levels, quality, item level and equipment | Next |
 | Mission extras | `engine/class-hall-mission-extras` | Troop vitality, the bonus roll, the remaining mission features | Planned |
 
 ### Other engine fixes

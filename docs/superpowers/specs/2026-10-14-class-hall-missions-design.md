@@ -2,7 +2,7 @@
 
 Date: 2026-10-14
 Branch: `engine/class-hall-missions`, stacked on `engine/class-hall-shipments`
-Status: draft, awaiting review
+Status: built and tested in game on 2026-10-14; landed in `dev`
 Builds on: `2026-10-12-class-hall-foundation-design.md`,
 `2026-10-13-class-hall-talents-design.md`,
 `2026-10-13-class-hall-followers-design.md`,
@@ -425,21 +425,86 @@ Checks, in a few short logins with a handful of steps each:
 5. An expired offer leaves the table.
 6. A character with no hall logs in and plays as before.
 
-## Open points
+## What the tests showed
 
-- **The rotation's size**: how many rotating missions the table holds at
-  once. No source I may use states it and the owner does not remember, so
-  it is set to 10 as a deliberate choice, in one named constant
-  (`ROTATING_MISSIONS_ON_OFFER`). The owner may check videos later; the
-  change is one line.
-- **Random encounters and threats**: whether the client picks them itself
-  or the server must, and if so how it tells the client (settled by the
-  probe).
-- **The success rule**: found by the probe; the check step decides whether
-  it is right.
-- **Whether a mission needs every slot filled.**
-- **The archived-mission list**: what keeps finished one-time missions from
-  coming back (with the first campaign mission's content).
+Tested in game on 2026-10-14 with a priest, hand-planted champions and
+troops, a test add-on that read the client's own numbers, and the packet
+log.
+
+- **The table is the adventure map.** The client asks with
+  `CMSG_OPEN_MISSION_NPC` (it sends follower type 1). The 7.3.5 interface
+  ignores `GARRISON_MISSION_NPC_OPENED` for class hall followers; the
+  table opens on `SMSG_ADVENTURE_MAP_OPEN_NPC` (0x2835, the NPC guid
+  only). Its Missions and Followers tabs show only once the character
+  has a class hall follower.
+- **The info reply carries each mission's reward count right before its
+  rewards**, not all counts first; with the old layout the client read
+  garbage after the reward lists and showed no followers.
+- **The champion limit must be sent.** Without a `FollowerSoftCaps`
+  entry for follower type 4 the client shows "Champions: N/0" and starts
+  no mission. It is `GarrFollowerType.MaxFollowers` (5).
+- **Random encounters and threats: the client draws them itself**, and
+  the server makes the same draw. The client uses `std::minstd_rand`
+  (48271, 2^31 - 1) seeded with the mission's db id, one value per set,
+  index = value modulo the set's size, in this order: the mission's
+  encounter rows by `OrderIndex`, an encounter set if the row names one,
+  then the chosen encounter's threat rows by id, a threat set where a row
+  names one. Set members are taken in id order. 67 of 67 draws matched.
+- **The success rule**, measured from the client's own numbers (2160
+  teams on 10 missions, two logins; fitted on half, checked on the other
+  half, all matched):
+  - A champion's bias: (level - mission level) / 5, plus (item level -
+    mission item level) / 30 when it is not above the mission level,
+    kept within -1 and 1 (`GarrFollowerType` level and item level
+    range). Troops have none. A champion at -1 adds nothing, not even
+    its traits.
+  - Power: 100 (1 + bias) below 0, 100 + 50 bias above.
+  - Counters (ability effect action 0, target 0): weight base (1 + bias)
+    below 0, base + (max - base) bias above; per threat type the counter
+    weight counts up to the sum of that type's threat factors.
+  - Chance = 100 (power + countered) / (sum of factors + 100), plus flat
+    bonuses: action 2 always, action 23 when the mission has a threat of
+    the type, action 22 when a follower of the class spec is on the team.
+  - An uncountered threat with the no-bonus-loot effect (action 29) keeps
+    the chance at 100. The result is rounded half to even.
+  - Item level is taken as (weapon + armor) / 2; every follower probed
+    had both equal, so piece 2 should re-check it with unequal values.
+- **Whether every slot must be filled: no.** The client starts a mission
+  with any team that holds at least one champion.
+- **Starting, refusals and rewards behaved as designed**: the shown
+  chance equalled the server's on every start; Order Resources were
+  taken once; a busy follower, an early complete request and the
+  dismissal of a troop on a mission were refused; an expired offer left
+  the table at the next login; items, Order Resources and money were
+  given by the chest. A second chest and a start without the cost were
+  refused by the client itself, before any request.
+- **A failed mission goes back on offer.** The client takes every
+  completed mission for a successful one (it shows the success screen
+  and a chest for it), so a failed mission is not left completed.
+- **A successful mission keeps its followers until its chest is
+  opened.** The client's report on a completed mission shows them; with
+  none it stops with a Lua error.
+
+Still open:
+
+- **The client drops every complete reply.** No
+  `SMSG_GARRISON_COMPLETE_MISSION_RESULT` the server sends is taken: no
+  `GARRISON_MISSION_COMPLETE_RESPONSE` event, no mission list update.
+  Tried: WowPacketParser's 7.x layout, five other layouts, both
+  connections, the neighbouring unnamed opcodes, follower experience
+  messages and `SMSG_GARRISON_OPEN_MISSION_NPC` alongside. The client
+  binary is encrypted, so its check cannot be read. In play, the first
+  view of a finished mission shows no fight and its chest stays locked;
+  closing and reopening the table shows the mission completed with its
+  chest. A retail 7.x capture of any class hall mission being completed
+  would settle the layout. Fallbacks if none turns up: complete missions
+  on the server when they come due and send the info again, or an
+  add-on.
+- **The rotation's size** stays 10 (`ROTATING_MISSIONS_ON_OFFER`), a
+  deliberate choice.
+- **The archived-mission list**: what keeps finished one-time missions
+  from coming back, with the first campaign mission's content.
+- **Threats that double cost or duration, and troop deaths**: piece 3.
 
 ## What comes next
 
