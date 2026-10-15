@@ -33,6 +33,13 @@ struct GarrFollowerEntry;
 struct GarrFollowerQualityEntry;
 
 // The followers (champions and troops) of a character's class hall.
+// where a follower's experience came from, as the experience message tells the client
+enum ClassHallFollowerExperienceSource : uint32
+{
+    FOLLOWER_EXPERIENCE_SOURCE_MISSION  = 0,
+    FOLLOWER_EXPERIENCE_SOURCE_ITEM     = 1
+};
+
 class TC_GAME_API ClassHallFollowers
 {
 public:

@@ -409,6 +409,16 @@ uint32 ClassHallMissions::GetSuccessChance(Mission const& mission, std::vector<C
     return uint32(std::max(0.0, std::nearbyint(chance)));
 }
 
+// The client shows the experience bonus of a team as the share of the mission's experience by which
+// the team's chance goes over 100 (measured from the client's own numbers).
+uint32 ClassHallMissions::GetExperienceBonus(Mission const& mission)
+{
+    if (mission.PacketInfo.SuccessChance <= 100)
+        return 0;
+
+    return mission.Entry->BaseFollowerXP * (mission.PacketInfo.SuccessChance - 100) / 100;
+}
+
 void ClassHallMissions::OpenNpc(ObjectGuid npcGuid)
 {
     _openNpc = npcGuid;
@@ -535,7 +545,14 @@ void ClassHallMissions::CompleteMission(ObjectGuid npcGuid, uint32 garrMissionId
     // report on it shows them. The client takes every completed mission for a successful one, so a
     // failed mission goes back on offer, as one never started, and its followers come back at once.
     if (completeMissionResult.Succeeded)
+    {
         mission.PacketInfo.MissionState = CLASS_HALL_MISSION_STATE_COMPLETED;
+
+        // only a success gives experience
+        uint32 experience = mission.Entry->BaseFollowerXP + GetExperienceBonus(mission);
+        for (WorldPackets::Garrison::GarrisonMissionFollowerInfo const& follower : completeMissionResult.Followers)
+            followers.AddExperience(follower.FollowerDBID, experience, FOLLOWER_EXPERIENCE_SOURCE_MISSION);
+    }
     else
     {
         for (WorldPackets::Garrison::GarrisonMissionFollowerInfo const& follower : completeMissionResult.Followers)
