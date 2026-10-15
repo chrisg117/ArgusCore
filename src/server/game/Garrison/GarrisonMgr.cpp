@@ -20,6 +20,7 @@
 #include "DatabaseEnv.h"
 #include "DB2Stores.h"
 #include "Garrison.h"
+#include "GarrisonPackets.h"
 #include "Log.h"
 #include "ObjectMgr.h"
 #include "Random.h"
@@ -76,6 +77,7 @@ void GarrisonMgr::Initialize()
     InitializeDbIdSequences();
     LoadPlotFinalizeGOInfo();
     LoadFollowerClassSpecAbilities();
+    LoadClassHallMissionRewards();
 }
 
 GarrSiteLevelEntry const* GarrisonMgr::GetGarrSiteLevelEntry(uint32 garrSiteId, uint32 level) const
@@ -444,6 +446,12 @@ void GarrisonMgr::LoadPlotFinalizeGOInfo()
     TC_LOG_INFO("server.loading", ">> Loaded {} garrison plot finalize entries in {}.", uint32(_finalizePlotGOInfo.size()), GetMSTimeDiffToNow(msTime));
 }
 
+std::vector<WorldPackets::Garrison::GarrisonMissionReward> const* GarrisonMgr::GetClassHallMissionRewards(uint32 garrMissionId) const
+{
+    auto itr = _classHallMissionRewards.find(garrMissionId);
+    return itr != _classHallMissionRewards.end() ? &itr->second : nullptr;
+}
+
 void GarrisonMgr::LoadFollowerClassSpecAbilities()
 {
     QueryResult result = WorldDatabase.Query("SELECT classSpecId, abilityId FROM garrison_follower_class_spec_abilities");
@@ -483,4 +491,54 @@ void GarrisonMgr::LoadFollowerClassSpecAbilities()
         pair.second.sort();
 
     TC_LOG_INFO("server.loading", ">> Loaded {} garrison follower class spec abilities in {}.", count, GetMSTimeDiffToNow(msTime));
+}
+
+void GarrisonMgr::LoadClassHallMissionRewards()
+{
+    //                                                0       1             2           3                 4
+    QueryResult result = WorldDatabase.Query("SELECT MissionID, ItemID, ItemQuantity, CurrencyID, CurrencyQuantity FROM class_hall_mission_reward ORDER BY MissionID, Idx");
+    if (!result)
+    {
+        TC_LOG_INFO("server.loading", ">> Loaded 0 class hall mission rewards. DB table `class_hall_mission_reward` is empty.");
+        return;
+    }
+
+    uint32 msTime = getMSTime();
+    uint32 count = 0;
+    do
+    {
+        Field* fields = result->Fetch();
+        uint32 missionId = fields[0].GetUInt32();
+        uint32 itemId = fields[1].GetUInt32();
+        uint32 currencyId = fields[3].GetUInt32();
+
+        GarrMissionEntry const* mission = sGarrMissionStore.LookupEntry(missionId);
+        if (!mission || mission->GarrTypeID != GARRISON_TYPE_CLASS_ORDER)
+        {
+            TC_LOG_ERROR("sql.sql", "Table `class_hall_mission_reward` has a reward for GarrMission {} which is not a class hall mission, skipped.", missionId);
+            continue;
+        }
+
+        if (itemId && !sObjectMgr->GetItemTemplate(itemId))
+        {
+            TC_LOG_ERROR("sql.sql", "Table `class_hall_mission_reward` has a reward of non-existing item {} for GarrMission {}, skipped.", itemId, missionId);
+            continue;
+        }
+
+        // currency 0 is money
+        if (currencyId && !sCurrencyTypesStore.LookupEntry(currencyId))
+        {
+            TC_LOG_ERROR("sql.sql", "Table `class_hall_mission_reward` has a reward of non-existing currency {} for GarrMission {}, skipped.", currencyId, missionId);
+            continue;
+        }
+
+        WorldPackets::Garrison::GarrisonMissionReward& reward = _classHallMissionRewards[missionId].emplace_back();
+        reward.ItemID = itemId;
+        reward.ItemQuantity = fields[2].GetUInt32();
+        reward.CurrencyID = currencyId;
+        reward.CurrencyQuantity = fields[4].GetUInt32();
+        ++count;
+    } while (result->NextRow());
+
+    TC_LOG_INFO("server.loading", ">> Loaded {} class hall mission rewards in {} ms.", count, GetMSTimeDiffToNow(msTime));
 }
