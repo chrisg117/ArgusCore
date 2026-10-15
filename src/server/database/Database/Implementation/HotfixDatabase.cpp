@@ -475,6 +475,12 @@ void HotfixDatabaseConnection::DoPrepareStatements()
     PREPARE_MAX_ID_STMT(HOTFIX_SEL_GARR_ABILITY, "SELECT MAX(ID) + 1 FROM garr_ability", CONNECTION_SYNCH);
     PREPARE_LOCALE_STMT(HOTFIX_SEL_GARR_ABILITY, "SELECT ID, Name_lang, Description_lang FROM garr_ability_locale WHERE (`VerifiedBuild` > 0) = ? AND locale = ?", CONNECTION_SYNCH);
 
+    // GarrAbilityEffect.db2
+    PrepareStatement(HOTFIX_SEL_GARR_ABILITY_EFFECT, "SELECT CombatWeightBase, CombatWeightMax, ActionValueFlat, ActionRecordID, GarrAbilityID, "
+        "AbilityAction, AbilityTargetType, GarrMechanicTypeID, Flags, ActionRace, ActionHours, ID FROM garr_ability_effect"
+        " WHERE (`VerifiedBuild` > 0) = ?", CONNECTION_SYNCH);
+    PREPARE_MAX_ID_STMT(HOTFIX_SEL_GARR_ABILITY_EFFECT, "SELECT MAX(ID) + 1 FROM garr_ability_effect", CONNECTION_SYNCH);
+
     // GarrBuilding.db2
     PrepareStatement(HOTFIX_SEL_GARR_BUILDING, "SELECT ID, AllianceName, HordeName, Description, Tooltip, HordeGameObjectID, AllianceGameObjectID, "
         "IconFileDataID, CurrencyTypeID, HordeUiTextureKitID, AllianceUiTextureKitID, AllianceSceneScriptPackageID, HordeSceneScriptPackageID, "
@@ -503,6 +509,23 @@ void HotfixDatabaseConnection::DoPrepareStatements()
     PREPARE_LOCALE_STMT(HOTFIX_SEL_GARR_CLASS_SPEC_PLAYER_COND, "SELECT ID, Name_lang FROM garr_class_spec_player_cond_locale WHERE (`VerifiedBuild` > 0) = ?"
         " AND locale = ?", CONNECTION_SYNCH);
 
+    // GarrEncounter.db2
+    PrepareStatement(HOTFIX_SEL_GARR_ENCOUNTER, "SELECT Name, CreatureID, UiAnimScale, UiAnimHeight, PortraitFileDataID, ID, "
+        "UiTextureKitID FROM garr_encounter WHERE (`VerifiedBuild` > 0) = ?", CONNECTION_SYNCH);
+    PREPARE_MAX_ID_STMT(HOTFIX_SEL_GARR_ENCOUNTER, "SELECT MAX(ID) + 1 FROM garr_encounter", CONNECTION_SYNCH);
+    PREPARE_LOCALE_STMT(HOTFIX_SEL_GARR_ENCOUNTER, "SELECT ID, Name_lang FROM garr_encounter_locale"
+        " WHERE (`VerifiedBuild` > 0) = ? AND locale = ?", CONNECTION_SYNCH);
+
+    // GarrEncounterSetXEncounter.db2
+    PrepareStatement(HOTFIX_SEL_GARR_ENCOUNTER_SET_X_ENCOUNTER, "SELECT ID, GarrEncounterID, GarrEncounterSetID FROM garr_encounter_set_x_encounter"
+        " WHERE (`VerifiedBuild` > 0) = ?", CONNECTION_SYNCH);
+    PREPARE_MAX_ID_STMT(HOTFIX_SEL_GARR_ENCOUNTER_SET_X_ENCOUNTER, "SELECT MAX(ID) + 1 FROM garr_encounter_set_x_encounter", CONNECTION_SYNCH);
+
+    // GarrEncounterXMechanic.db2
+    PrepareStatement(HOTFIX_SEL_GARR_ENCOUNTER_X_MECHANIC, "SELECT ID, GarrMechanicID, GarrMechanicSetID, "
+        "GarrEncounterID FROM garr_encounter_x_mechanic WHERE (`VerifiedBuild` > 0) = ?", CONNECTION_SYNCH);
+    PREPARE_MAX_ID_STMT(HOTFIX_SEL_GARR_ENCOUNTER_X_MECHANIC, "SELECT MAX(ID) + 1 FROM garr_encounter_x_mechanic", CONNECTION_SYNCH);
+
     // GarrFollower.db2
     PrepareStatement(HOTFIX_SEL_GARR_FOLLOWER, "SELECT HordeSourceText, AllianceSourceText, TitleName, HordeCreatureID, AllianceCreatureID, "
         "HordeIconFileDataID, AllianceIconFileDataID, HordeSlottingBroadcastTextID, AllySlottingBroadcastTextID, HordeGarrFollItemSetID, "
@@ -528,6 +551,23 @@ void HotfixDatabaseConnection::DoPrepareStatements()
     PrepareStatement(HOTFIX_SEL_GARR_FOLLOWER_X_ABILITY, "SELECT ID, GarrAbilityID, FactionIndex, GarrFollowerID FROM garr_follower_x_ability WHERE (`VerifiedBuild` > 0) = ?", CONNECTION_SYNCH);
     PREPARE_MAX_ID_STMT(HOTFIX_SEL_GARR_FOLLOWER_X_ABILITY, "SELECT MAX(ID) + 1 FROM garr_follower_x_ability", CONNECTION_SYNCH);
 
+    // GarrMechanic.db2
+    PrepareStatement(HOTFIX_SEL_GARR_MECHANIC, "SELECT ID, Factor, GarrMechanicTypeID, GarrAbilityID FROM garr_mechanic"
+        " WHERE (`VerifiedBuild` > 0) = ?", CONNECTION_SYNCH);
+    PREPARE_MAX_ID_STMT(HOTFIX_SEL_GARR_MECHANIC, "SELECT MAX(ID) + 1 FROM garr_mechanic", CONNECTION_SYNCH);
+
+    // GarrMechanicSetXMechanic.db2
+    PrepareStatement(HOTFIX_SEL_GARR_MECHANIC_SET_X_MECHANIC, "SELECT GarrMechanicID, ID, GarrMechanicSetID FROM garr_mechanic_set_x_mechanic"
+        " WHERE (`VerifiedBuild` > 0) = ?", CONNECTION_SYNCH);
+    PREPARE_MAX_ID_STMT(HOTFIX_SEL_GARR_MECHANIC_SET_X_MECHANIC, "SELECT MAX(ID) + 1 FROM garr_mechanic_set_x_mechanic", CONNECTION_SYNCH);
+
+    // GarrMechanicType.db2
+    PrepareStatement(HOTFIX_SEL_GARR_MECHANIC_TYPE, "SELECT Name, Description, IconFileDataID, Category, ID FROM garr_mechanic_type"
+        " WHERE (`VerifiedBuild` > 0) = ?", CONNECTION_SYNCH);
+    PREPARE_MAX_ID_STMT(HOTFIX_SEL_GARR_MECHANIC_TYPE, "SELECT MAX(ID) + 1 FROM garr_mechanic_type", CONNECTION_SYNCH);
+    PREPARE_LOCALE_STMT(HOTFIX_SEL_GARR_MECHANIC_TYPE, "SELECT ID, Name_lang, Description_lang FROM garr_mechanic_type_locale"
+        " WHERE (`VerifiedBuild` > 0) = ? AND locale = ?", CONNECTION_SYNCH);
+
     // GarrMission.db2
     PrepareStatement(HOTFIX_SEL_GARR_MISSION, "SELECT Name, Description, Location, MissionDuration, OfferDuration, MapPosX, MapPosY, WorldPosX, WorldPosY, "
         "TargetItemLevel, UiTextureKitID, MissionCostCurrencyTypesID, TargetLevel, EnvGarrMechanicTypeID, MaxFollowers, OfferedGarrMissionTextureID, GarrMissionTypeID, "
@@ -536,6 +576,11 @@ void HotfixDatabaseConnection::DoPrepareStatements()
     PREPARE_MAX_ID_STMT(HOTFIX_SEL_GARR_MISSION, "SELECT MAX(ID) + 1 FROM garr_mission", CONNECTION_SYNCH);
     PREPARE_LOCALE_STMT(HOTFIX_SEL_GARR_MISSION, "SELECT ID, Name_lang, Location_lang, Description_lang FROM garr_mission_locale"
         " WHERE (`VerifiedBuild` > 0) = ? AND locale = ?", CONNECTION_SYNCH);
+
+    // GarrMissionXEncounter.db2
+    PrepareStatement(HOTFIX_SEL_GARR_MISSION_X_ENCOUNTER, "SELECT OrderIndex, ID, GarrEncounterID, GarrEncounterSetID, "
+        "GarrMissionID FROM garr_mission_x_encounter WHERE (`VerifiedBuild` > 0) = ?", CONNECTION_SYNCH);
+    PREPARE_MAX_ID_STMT(HOTFIX_SEL_GARR_MISSION_X_ENCOUNTER, "SELECT MAX(ID) + 1 FROM garr_mission_x_encounter", CONNECTION_SYNCH);
 
     // GarrPlot.db2
     PrepareStatement(HOTFIX_SEL_GARR_PLOT, "SELECT ID, Name, AllianceConstructObjID, HordeConstructObjID, UiCategoryID, PlotType, Flags, "

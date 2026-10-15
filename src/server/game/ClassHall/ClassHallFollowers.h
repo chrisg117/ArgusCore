@@ -38,6 +38,14 @@ public:
     // followers a character may activate per day
     static constexpr uint32 DAILY_FOLLOWER_ACTIVATIONS = 1;
 
+    struct Follower
+    {
+        GarrFollowerEntry const* Entry = nullptr;
+        WorldPackets::Garrison::GarrisonFollower PacketInfo;
+
+        bool IsActive() const { return (PacketInfo.FollowerStatus & FOLLOWER_STATUS_INACTIVE) == 0; }
+    };
+
     ClassHallFollowers(Player* owner, ClassHall const* classHall);
 
     void LoadFromDB(PreparedQueryResult followers);
@@ -50,6 +58,10 @@ public:
     void RemoveFollower(uint64 dbId);
     void SetFollowerInactive(uint64 dbId, bool inactive);
 
+    Follower const* GetFollower(uint64 dbId) const;
+    std::map<uint64 /*dbId*/, Follower> const& GetAllFollowers() const { return _followers; }
+    void SetFollowerMission(uint64 dbId, uint32 garrMissionId);
+
     uint32 GetActivationsRemaining() const { return _activationsRemaining; }
     void SetActivationsRemaining(uint32 activations) { _activationsRemaining = activations; }
     void ResetActivations();
@@ -61,14 +73,6 @@ public:
     uint32 CountTroops(uint32 garrClassSpecId) const;
 
 private:
-    struct Follower
-    {
-        GarrFollowerEntry const* Entry = nullptr;
-        WorldPackets::Garrison::GarrisonFollower PacketInfo;
-
-        bool IsActive() const { return (PacketInfo.FollowerStatus & FOLLOWER_STATUS_INACTIVE) == 0; }
-    };
-
     GarrisonError CanSetFollowerInactive(Follower const* follower, bool inactive) const;
     void SendActivationsRemaining() const;
     std::list<GarrAbilityEntry const*> GetAbilities(GarrFollowerEntry const* follower, uint32 quality) const;
