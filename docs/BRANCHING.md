@@ -95,6 +95,10 @@ An engine branch cannot run on its own, because the Docker files are only on
   orders: the order window from a gossip option, ordering by the order
   spell, collecting at the container object, the hall report), stacked on
   the followers. Landed in `dev`.
+- `engine/class-hall-missions`: class hall engine, fifth piece (the
+  mission table: offering, opening, starting with the client's success
+  chance, completing, rewards), stacked on the shipments. Landed in
+  `dev`.
 - `engine/quest-completed-bit`: one fix, cut from `main`: quest completed
   bits were written to the wrong block. The talents need it. Landed in
   `dev`.
