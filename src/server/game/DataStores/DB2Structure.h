@@ -1411,6 +1411,22 @@ struct GarrAbilityEntry
     uint32 ID;
 };
 
+struct GarrAbilityEffectEntry
+{
+    float CombatWeightBase;
+    float CombatWeightMax;
+    float ActionValueFlat;
+    int32 ActionRecordID;
+    uint16 GarrAbilityID;
+    uint8 AbilityAction;
+    uint8 AbilityTargetType;
+    uint8 GarrMechanicTypeID;
+    uint8 Flags;
+    uint8 ActionRace;
+    uint8 ActionHours;
+    uint32 ID;
+};
+
 struct GarrBuildingEntry
 {
     uint32 ID;
@@ -1470,6 +1486,32 @@ struct GarrClassSpecPlayerCondEntry
     uint32 GarrClassSpecID;
     uint32 PlayerConditionID;
     int32 FlavorGarrStringID;
+};
+
+struct GarrEncounterEntry
+{
+    LocalizedString Name;
+    int32 CreatureID;
+    float UiAnimScale;
+    float UiAnimHeight;
+    int32 PortraitFileDataID;
+    uint32 ID;
+    uint32 UiTextureKitID;
+};
+
+struct GarrEncounterSetXEncounterEntry
+{
+    uint32 ID;
+    uint32 GarrEncounterID;
+    uint32 GarrEncounterSetID;
+};
+
+struct GarrEncounterXMechanicEntry
+{
+    uint32 ID;
+    uint8 GarrMechanicID;
+    uint8 GarrMechanicSetID;
+    uint16 GarrEncounterID;
 };
 
 struct GarrFollowerEntry
@@ -1540,6 +1582,30 @@ struct GarrFollowerXAbilityEntry
     uint16 GarrFollowerID;
 };
 
+struct GarrMechanicEntry
+{
+    uint32 ID;
+    float Factor;
+    uint8 GarrMechanicTypeID;
+    int32 GarrAbilityID;
+};
+
+struct GarrMechanicSetXMechanicEntry
+{
+    uint8 GarrMechanicID;
+    uint32 ID;
+    uint32 GarrMechanicSetID;
+};
+
+struct GarrMechanicTypeEntry
+{
+    LocalizedString Name;
+    LocalizedString Description;
+    int32 IconFileDataID;
+    uint8 Category;
+    uint32 ID;
+};
+
 struct GarrMissionEntry
 {
     LocalizedString Name;
@@ -1571,6 +1637,15 @@ struct GarrMissionEntry
     uint32 OvermaxRewardPackID;
     uint32 EnvGarrMechanicID;
     uint32 GarrMissionSetID;
+};
+
+struct GarrMissionXEncounterEntry
+{
+    uint8 OrderIndex;
+    uint32 ID;
+    uint32 GarrEncounterID;
+    uint32 GarrEncounterSetID;
+    uint32 GarrMissionID;
 };
 
 struct GarrPlotEntry

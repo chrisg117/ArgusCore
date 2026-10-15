@@ -19,6 +19,7 @@
 #define TRINITYCORE_ADVENTURE_MAP_PACKETS_H
 
 #include "Packet.h"
+#include "ObjectGuid.h"
 
 namespace WorldPackets
 {
@@ -32,6 +33,16 @@ namespace WorldPackets
             void Read() override;
 
             int32 QuestID = 0;
+        };
+
+        class ShowAdventureMap final : public ServerPacket
+        {
+        public:
+            explicit ShowAdventureMap() : ServerPacket(SMSG_SHOW_ADVENTURE_MAP, 18) { }
+
+            WorldPacket const* Write() override;
+
+            ObjectGuid NpcGUID;
         };
     }
 }

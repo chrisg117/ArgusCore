@@ -50,8 +50,8 @@ void ClassHallFollowers::LoadFromDB(PreparedQueryResult followers)
 
     do
     {
-        //           0           1        2      3                4               5   6           7       8
-        // SELECT dbId, followerId, quality, level, itemLevelWeapon, itemLevelArmor, xp, durability, status FROM character_class_hall_follower WHERE guid = ?
+        //           0           1        2      3                4               5   6           7       8          9
+        // SELECT dbId, followerId, quality, level, itemLevelWeapon, itemLevelArmor, xp, durability, status, missionId FROM character_class_hall_follower WHERE guid = ?
         Field* fields = followers->Fetch();
         uint64 dbId = fields[0].GetUInt64();
         uint32 followerId = fields[1].GetUInt32();
@@ -74,6 +74,7 @@ void ClassHallFollowers::LoadFromDB(PreparedQueryResult followers)
         follower.PacketInfo.Xp = fields[6].GetUInt32();
         follower.PacketInfo.Durability = fields[7].GetUInt32();
         follower.PacketInfo.FollowerStatus = fields[8].GetUInt32();
+        follower.PacketInfo.CurrentMissionID = fields[9].GetUInt32();
         follower.PacketInfo.AbilityID = GetAbilities(entry, follower.PacketInfo.Quality);
     } while (followers->NextRow());
 }
@@ -98,6 +99,7 @@ void ClassHallFollowers::SaveToDB(CharacterDatabaseTransaction trans) const
         stmt->setUInt32(index++, follower.PacketInfo.Xp);
         stmt->setUInt32(index++, follower.PacketInfo.Durability);
         stmt->setUInt32(index++, follower.PacketInfo.FollowerStatus);
+        stmt->setUInt32(index++, follower.PacketInfo.CurrentMissionID);
         trans->Append(stmt);
     }
 }
@@ -165,15 +167,17 @@ void ClassHallFollowers::RemoveFollower(uint64 dbId)
     removeFollowerResult.FollowerDBID = dbId;
     removeFollowerResult.GarrTypeID = GARRISON_TYPE_CLASS_ORDER;
 
-    // only troops can be dismissed
+    // only troops can be dismissed, and not while they are on a mission
     auto itr = _followers.find(dbId);
-    if (itr != _followers.end() && IsTroop(itr->second.Entry))
+    if (itr == _followers.end() || !IsTroop(itr->second.Entry))
+        removeFollowerResult.Result = GARRISON_ERROR_INVALID_FOLLOWER;
+    else if (itr->second.PacketInfo.CurrentMissionID)
+        removeFollowerResult.Result = GARRISON_ERROR_FOLLOWER_ALREADY_ON_MISSION;
+    else
     {
         _followers.erase(itr);
         removeFollowerResult.Destroyed = 1;
     }
-    else
-        removeFollowerResult.Result = GARRISON_ERROR_INVALID_FOLLOWER;
 
     _owner->SendDirectMessage(removeFollowerResult.Write());
 }
@@ -209,6 +213,19 @@ void ClassHallFollowers::SetFollowerInactive(uint64 dbId, bool inactive)
 
     followerChangedStatus.Follower = follower->PacketInfo;
     _owner->SendDirectMessage(followerChangedStatus.Write());
+}
+
+ClassHallFollowers::Follower const* ClassHallFollowers::GetFollower(uint64 dbId) const
+{
+    auto itr = _followers.find(dbId);
+    return itr != _followers.end() ? &itr->second : nullptr;
+}
+
+void ClassHallFollowers::SetFollowerMission(uint64 dbId, uint32 garrMissionId)
+{
+    auto itr = _followers.find(dbId);
+    if (itr != _followers.end())
+        itr->second.PacketInfo.CurrentMissionID = garrMissionId;
 }
 
 void ClassHallFollowers::ResetActivations()
@@ -295,9 +312,12 @@ GarrisonError ClassHallFollowers::CanAddFollower(GarrFollowerEntry const* follow
 
 GarrisonError ClassHallFollowers::CanSetFollowerInactive(Follower const* follower, bool inactive) const
 {
-    // only champions can be set aside
+    // only champions can be set aside, and not while they are on a mission
     if (!follower || IsTroop(follower->Entry))
         return GARRISON_ERROR_INVALID_FOLLOWER;
+
+    if (follower->PacketInfo.CurrentMissionID)
+        return GARRISON_ERROR_FOLLOWER_ALREADY_ON_MISSION;
 
     if (inactive)
         return follower->IsActive() ? GARRISON_SUCCESS : GARRISON_ERROR_FOLLOWER_INACTIVE;

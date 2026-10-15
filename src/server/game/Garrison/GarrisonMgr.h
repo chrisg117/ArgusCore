@@ -34,6 +34,14 @@ struct GarrSiteLevelEntry;
 struct GarrSiteLevelPlotInstEntry;
 struct GarrTypeEntry;
 
+namespace WorldPackets
+{
+    namespace Garrison
+    {
+        struct GarrisonMissionReward;
+    }
+}
+
 struct FinalizeGarrisonPlotGOInfo
 {
     struct
@@ -75,11 +83,13 @@ public:
     uint64 GenerateFollowerDbId();
     std::list<GarrAbilityEntry const*> RollFollowerAbilities(uint32 garrFollowerId, GarrFollowerEntry const* follower, uint32 quality, uint32 faction, bool initial) const;
     std::list<GarrAbilityEntry const*> GetClassSpecAbilities(GarrFollowerEntry const* follower, uint32 faction) const;
+    std::vector<WorldPackets::Garrison::GarrisonMissionReward> const* GetClassHallMissionRewards(uint32 garrMissionId) const;
 
 private:
     void InitializeDbIdSequences();
     void LoadPlotFinalizeGOInfo();
     void LoadFollowerClassSpecAbilities();
+    void LoadClassHallMissionRewards();
 
     std::unordered_map<uint32 /*garrSiteId*/, std::vector<GarrSiteLevelPlotInstEntry const*>> _garrisonPlotInstBySiteLevel;
     std::unordered_map<uint32 /*mapId*/, std::unordered_map<uint32 /*garrPlotId*/, GameObjectsEntry const*>> _garrisonPlots;
@@ -90,6 +100,7 @@ private:
     std::unordered_map<uint32 /*garrFollowerId*/, GarrAbilities> _garrisonFollowerAbilities[2];
     std::unordered_map<uint32 /*classSpecId*/, std::list<GarrAbilityEntry const*>> _garrisonFollowerClassSpecAbilities;
     std::set<GarrAbilityEntry const*> _garrisonFollowerRandomTraits;
+    std::unordered_map<uint32 /*garrMissionId*/, std::vector<WorldPackets::Garrison::GarrisonMissionReward>> _classHallMissionRewards;
 
     uint64 _followerDbIdGenerator = UI64LIT(1);
 

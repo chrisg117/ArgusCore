@@ -25,11 +25,12 @@
 #include "Player.h"
 
 ClassHall::ClassHall(Player* owner) : _owner(owner), _siteLevel(nullptr), _talents(owner), _followers(owner, this),
-    _shipments(owner, this)
+    _shipments(owner, this), _missions(owner, this)
 {
 }
 
-bool ClassHall::LoadFromDB(PreparedQueryResult classHall, PreparedQueryResult talents, PreparedQueryResult followers, PreparedQueryResult shipments)
+bool ClassHall::LoadFromDB(PreparedQueryResult classHall, PreparedQueryResult talents, PreparedQueryResult followers, PreparedQueryResult shipments,
+    PreparedQueryResult missions)
 {
     if (!classHall)
         return false;
@@ -49,6 +50,8 @@ bool ClassHall::LoadFromDB(PreparedQueryResult classHall, PreparedQueryResult ta
     _followers.LoadFromDB(std::move(followers));
     _followers.SetActivationsRemaining(fields[1].GetUInt32());
     _shipments.LoadFromDB(std::move(shipments));
+    _missions.LoadFromDB(std::move(missions));
+    _missions.OfferMissions(false);
     return true;
 }
 
@@ -63,6 +66,7 @@ void ClassHall::SaveToDB(CharacterDatabaseTransaction trans) const
     _talents.SaveToDB(trans);
     _followers.SaveToDB(trans);
     _shipments.SaveToDB(trans);
+    _missions.SaveToDB(trans);
 }
 
 void ClassHall::DeleteFromDB(ObjectGuid::LowType ownerGuid, CharacterDatabaseTransaction trans)
@@ -74,6 +78,7 @@ void ClassHall::DeleteFromDB(ObjectGuid::LowType ownerGuid, CharacterDatabaseTra
     ClassHallTalents::DeleteFromDB(ownerGuid, trans);
     ClassHallFollowers::DeleteFromDB(ownerGuid, trans);
     ClassHallShipments::DeleteFromDB(ownerGuid, trans);
+    ClassHallMissions::DeleteFromDB(ownerGuid, trans);
 }
 
 bool ClassHall::Create(uint32 garrSiteId)
@@ -98,6 +103,7 @@ void ClassHall::BuildInfo(WorldPackets::Garrison::GarrisonInfo& info) const
 
     _talents.BuildInfo(info);
     _followers.BuildInfo(info);
+    _missions.BuildInfo(info);
 }
 
 uint32 ClassHall::GetGarrSiteID() const
@@ -108,4 +114,5 @@ uint32 ClassHall::GetGarrSiteID() const
 void ClassHall::Update()
 {
     _talents.Update();
+    _missions.Update();
 }
