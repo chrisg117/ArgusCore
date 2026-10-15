@@ -28,9 +28,12 @@
 
 class ClassHall;
 class Player;
+class SpellInfo;
 struct GarrAbilityEntry;
 struct GarrFollowerEntry;
 struct GarrFollowerQualityEntry;
+struct GarrItemLevelUpgradeDataEntry;
+enum SpellCastResult : int32;
 
 // The followers (champions and troops) of a character's class hall.
 // where a follower's experience came from, as the experience message tells the client
@@ -67,10 +70,17 @@ public:
     void SetFollowerInactive(uint64 dbId, bool inactive);
 
     Follower const* GetFollower(uint64 dbId) const;
+    Follower const* GetChampion(uint32 garrFollowerId) const;
     std::map<uint64 /*dbId*/, Follower> const& GetAllFollowers() const { return _followers; }
     void SetFollowerMission(uint64 dbId, uint32 garrMissionId);
     void AddExperience(uint64 dbId, uint32 amount, uint32 source);
     void SendUpdateFollower(uint64 dbId) const;
+    void UpgradeItemLevel(uint64 dbId, GarrItemLevelUpgradeDataEntry const* upgrade, int32 amount);
+
+    // checks an item's spell aimed at a champion (the client names the champion by its GarrFollower id)
+    static SpellCastResult CheckItemCast(Player const* caster, SpellInfo const* spellInfo, uint32 garrFollowerId);
+    static GarrItemLevelUpgradeDataEntry const* GetItemLevelUpgrade(int32 garrItemLevelUpgradeDataId);
+    static bool IsClassHallFollowerSpell(SpellInfo const* spellInfo);
 
     uint32 GetActivationsRemaining() const { return _activationsRemaining; }
     void SetActivationsRemaining(uint32 activations) { _activationsRemaining = activations; }

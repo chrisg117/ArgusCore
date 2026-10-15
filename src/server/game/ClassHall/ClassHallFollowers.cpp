@@ -23,6 +23,7 @@
 #include "GarrisonMgr.h"
 #include "Log.h"
 #include "Player.h"
+#include "SpellInfo.h"
 #include <algorithm>
 #include <set>
 
@@ -35,6 +36,21 @@ constexpr int64 FOLLOWER_ACTIVATION_COST = 250 * GOLD;
 bool IsTroop(GarrFollowerEntry const* follower)
 {
     return follower->Vitality > 0;
+}
+
+// an armament raises one of the two item levels: by an amount up to the row's cap, or to a value
+bool IsArmorUpgrade(GarrItemLevelUpgradeDataEntry const* upgrade)
+{
+    return upgrade->Operation == 0 || upgrade->Operation == 2;
+}
+
+uint32 GetUpgradedItemLevel(uint32 itemLevel, GarrItemLevelUpgradeDataEntry const* upgrade, int32 amount)
+{
+    if (upgrade->Operation == 2 || upgrade->Operation == 3)
+        return itemLevel >= uint32(upgrade->MaxItemLevel) ? itemLevel : std::min(itemLevel + amount, uint32(upgrade->MaxItemLevel));
+
+    // never lowered
+    return std::max(itemLevel, uint32(std::min(amount, upgrade->MaxItemLevel)));
 }
 
 GarrFollowerLevelXPEntry const* GetLevelXP(uint32 garrFollowerTypeId, uint32 level)
@@ -230,6 +246,16 @@ ClassHallFollowers::Follower const* ClassHallFollowers::GetFollower(uint64 dbId)
     return itr != _followers.end() ? &itr->second : nullptr;
 }
 
+// champions are unique: a character has a GarrFollower at most once
+ClassHallFollowers::Follower const* ClassHallFollowers::GetChampion(uint32 garrFollowerId) const
+{
+    for (auto const& [dbId, follower] : _followers)
+        if (follower.Entry->ID == garrFollowerId && !IsTroop(follower.Entry))
+            return &follower;
+
+    return nullptr;
+}
+
 void ClassHallFollowers::SetFollowerMission(uint64 dbId, uint32 garrMissionId)
 {
     auto itr = _followers.find(dbId);
@@ -312,6 +338,102 @@ void ClassHallFollowers::SendUpdateFollower(uint64 dbId) const
     WorldPackets::Garrison::GarrisonUpdateFollower updateFollower;
     updateFollower.Follower = itr->second.PacketInfo;
     _owner->SendDirectMessage(updateFollower.Write());
+}
+
+void ClassHallFollowers::UpgradeItemLevel(uint64 dbId, GarrItemLevelUpgradeDataEntry const* upgrade, int32 amount)
+{
+    auto itr = _followers.find(dbId);
+    if (itr == _followers.end())
+        return;
+
+    WorldPackets::Garrison::GarrisonFollower& follower = itr->second.PacketInfo;
+    uint32& itemLevel = IsArmorUpgrade(upgrade) ? follower.ItemLevelArmor : follower.ItemLevelWeapon;
+    uint32 upgraded = GetUpgradedItemLevel(itemLevel, upgrade, amount);
+    if (upgraded == itemLevel)
+        return;
+
+    itemLevel = upgraded;
+
+    WorldPackets::Garrison::GarrisonFollowerChangedItemLevel changedItemLevel;
+    changedItemLevel.Follower = follower;
+    _owner->SendDirectMessage(changedItemLevel.Write());
+}
+
+GarrItemLevelUpgradeDataEntry const* ClassHallFollowers::GetItemLevelUpgrade(int32 garrItemLevelUpgradeDataId)
+{
+    GarrItemLevelUpgradeDataEntry const* upgrade = sGarrItemLevelUpgradeDataStore.LookupEntry(garrItemLevelUpgradeDataId);
+    return upgrade && upgrade->FollowerTypeID == FOLLOWER_TYPE_CLASS_ORDER ? upgrade : nullptr;
+}
+
+// the follower item spells of the class hall: armaments name a class hall upgrade row, the others
+// name the class hall follower type
+bool ClassHallFollowers::IsClassHallFollowerSpell(SpellInfo const* spellInfo)
+{
+    for (SpellEffectInfo const& effect : spellInfo->GetEffects())
+    {
+        if (effect.IsEffect(SPELL_EFFECT_MODIFY_FOLLOWER_ITEM_LEVEL) && GetItemLevelUpgrade(effect.MiscValue))
+            return true;
+
+        if (effect.IsEffect(SPELL_EFFECT_INCREASE_FOLLOWER_EXPERIENCE) && effect.MiscValueB == FOLLOWER_TYPE_CLASS_ORDER)
+            return true;
+    }
+
+    return false;
+}
+
+// An item is refused before it is used when it would be wasted: no such champion, one that cannot
+// take it now, or a change that would change nothing.
+SpellCastResult ClassHallFollowers::CheckItemCast(Player const* caster, SpellInfo const* spellInfo, uint32 garrFollowerId)
+{
+    ClassHall const* classHall = caster->GetClassHall();
+    if (!classHall)
+        return SPELL_FAILED_GARRISON_NOT_OWNED;
+
+    ClassHallFollowers const& followers = classHall->GetFollowers();
+    Follower const* follower = followers.GetChampion(garrFollowerId);
+    if (!follower || !follower->IsActive())
+        return SPELL_FAILED_BAD_TARGETS;
+
+    if (follower->PacketInfo.CurrentMissionID)
+        return SPELL_FAILED_GARRISON_FOLLOWER_ON_MISSION;
+
+    uint32 followerType = follower->Entry->GarrFollowerTypeID;
+    bool atLevelCap = follower->PacketInfo.FollowerLevel >= GetLevelCap(followerType);
+    bool itemLevelChanges = false;
+    bool hasItemLevelUpgrade = false;
+    for (SpellEffectInfo const& effect : spellInfo->GetEffects())
+    {
+        if (effect.IsEffect(SPELL_EFFECT_INCREASE_FOLLOWER_EXPERIENCE))
+        {
+            // experience at the top quality would be lost
+            GarrFollowerQualityEntry const* quality = GetQuality(followerType, follower->PacketInfo.Quality);
+            if (atLevelCap && (!quality || !quality->XpToNextQuality))
+                return SPELL_FAILED_GARRISON_FOLLOWER_MAX_QUALITY;
+        }
+        else if (effect.IsEffect(SPELL_EFFECT_MODIFY_FOLLOWER_ITEM_LEVEL))
+        {
+            GarrItemLevelUpgradeDataEntry const* upgrade = GetItemLevelUpgrade(effect.MiscValue);
+            if (!upgrade)
+                continue;
+
+            hasItemLevelUpgrade = true;
+            uint32 itemLevel = IsArmorUpgrade(upgrade) ? follower->PacketInfo.ItemLevelArmor : follower->PacketInfo.ItemLevelWeapon;
+            if (GetUpgradedItemLevel(itemLevel, upgrade, effect.CalcValue(caster)) != itemLevel)
+                itemLevelChanges = true;
+        }
+    }
+
+    if (hasItemLevelUpgrade)
+    {
+        // a champion has an item level only at the level cap
+        if (!atLevelCap)
+            return SPELL_FAILED_GARRISON_FOLLOWER_NOT_MAX_LEVEL;
+
+        if (!itemLevelChanges)
+            return SPELL_FAILED_GARRISON_FOLLOWER_MAX_ITEM_LEVEL;
+    }
+
+    return SPELL_CAST_OK;
 }
 
 void ClassHallFollowers::ResetActivations()

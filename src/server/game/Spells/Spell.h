@@ -401,6 +401,8 @@ class TC_GAME_API Spell
         void EffectCreateConversation();
         void EffectCancelConversation();
         void EffectAddGarrisonFollower();
+        void EffectModifyFollowerItemLevel();
+        void EffectIncreaseFollowerExperience();
         void EffectActivateGarrisonBuilding();
         void EffectGrantBattlePetLevel();
         void EffectGiveExperience();

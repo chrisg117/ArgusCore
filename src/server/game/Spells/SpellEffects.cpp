@@ -165,7 +165,7 @@ NonDefaultConstructible<SpellEffectHandlerFn> SpellEffectHandlers[TOTAL_SPELL_EF
     &Spell::EffectScriptEffect,                             // 77 SPELL_EFFECT_SCRIPT_EFFECT
     &Spell::EffectUnused,                                   // 78 SPELL_EFFECT_ATTACK
     &Spell::EffectSanctuary,                                // 79 SPELL_EFFECT_SANCTUARY
-    &Spell::EffectNULL,                                     // 80 SPELL_EFFECT_MODIFY_FOLLOWER_ITEM_LEVEL
+    &Spell::EffectModifyFollowerItemLevel,                  // 80 SPELL_EFFECT_MODIFY_FOLLOWER_ITEM_LEVEL
     &Spell::EffectNULL,                                     // 81 SPELL_EFFECT_PUSH_ABILITY_TO_ACTION_BAR
     &Spell::EffectNULL,                                     // 82 SPELL_EFFECT_BIND_SIGHT
     &Spell::EffectDuel,                                     // 83 SPELL_EFFECT_DUEL
@@ -316,7 +316,7 @@ NonDefaultConstructible<SpellEffectHandlerFn> SpellEffectHandlers[TOTAL_SPELL_EF
     &Spell::EffectNULL,                                     //228 SPELL_EFFECT_228
     &Spell::EffectNULL,                                     //229 SPELL_EFFECT_SET_FOLLOWER_QUALITY
     &Spell::EffectNULL,                                     //230 SPELL_EFFECT_230
-    &Spell::EffectNULL,                                     //231 SPELL_EFFECT_INCREASE_FOLLOWER_EXPERIENCE
+    &Spell::EffectIncreaseFollowerExperience,               //231 SPELL_EFFECT_INCREASE_FOLLOWER_EXPERIENCE
     &Spell::EffectNULL,                                     //232 SPELL_EFFECT_REMOVE_PHASE
     &Spell::EffectNULL,                                     //233 SPELL_EFFECT_RANDOMIZE_FOLLOWER_ABILITIES
     &Spell::EffectNULL,                                     //234 SPELL_EFFECT_234
@@ -5471,6 +5471,39 @@ void Spell::EffectAddGarrisonFollower()
 
     if (Garrison* garrison = player->GetGarrison())
         garrison->AddFollower(effectInfo->MiscValue);
+}
+
+void Spell::EffectModifyFollowerItemLevel()
+{
+    if (effectHandleMode != SPELL_EFFECT_HANDLE_HIT_TARGET)
+        return;
+
+    if (!unitTarget || unitTarget->GetTypeId() != TYPEID_PLAYER)
+        return;
+
+    ClassHall* classHall = unitTarget->ToPlayer()->GetClassHall();
+    GarrItemLevelUpgradeDataEntry const* upgrade = ClassHallFollowers::GetItemLevelUpgrade(effectInfo->MiscValue);
+    if (!classHall || !upgrade)
+        return;
+
+    if (ClassHallFollowers::Follower const* follower = classHall->GetFollowers().GetChampion(m_misc.GarrFollower.Id))
+        classHall->GetFollowers().UpgradeItemLevel(follower->PacketInfo.DbID, upgrade, damage);
+}
+
+void Spell::EffectIncreaseFollowerExperience()
+{
+    if (effectHandleMode != SPELL_EFFECT_HANDLE_HIT_TARGET)
+        return;
+
+    if (!unitTarget || unitTarget->GetTypeId() != TYPEID_PLAYER || effectInfo->MiscValueB != FOLLOWER_TYPE_CLASS_ORDER)
+        return;
+
+    ClassHall* classHall = unitTarget->ToPlayer()->GetClassHall();
+    if (!classHall)
+        return;
+
+    if (ClassHallFollowers::Follower const* follower = classHall->GetFollowers().GetChampion(m_misc.GarrFollower.Id))
+        classHall->GetFollowers().AddExperience(follower->PacketInfo.DbID, uint32(damage), FOLLOWER_EXPERIENCE_SOURCE_ITEM);
 }
 
 void Spell::EffectCreateShipment()

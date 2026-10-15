@@ -22,6 +22,7 @@
 #include "BattlePetMgr.h"
 #include "CellImpl.h"
 #include "CharmInfo.h"
+#include "ClassHallFollowers.h"
 #include "ClassHallShipments.h"
 #include "CollectionMgr.h"
 #include "CombatLogPackets.h"
@@ -6624,6 +6625,18 @@ SpellCastResult Spell::CheckCast(bool strict, int32* param1 /*= nullptr*/, int32
                 if (!m_caster->ToPlayer()->GetSession()->GetCollectionMgr()->HasHeirloom(m_misc.Raw.Data[0]))
                     return SPELL_FAILED_BAD_TARGETS;
 
+                break;
+            }
+            case SPELL_EFFECT_MODIFY_FOLLOWER_ITEM_LEVEL:
+            case SPELL_EFFECT_INCREASE_FOLLOWER_EXPERIENCE:
+            {
+                Player const* playerCaster = m_caster->ToPlayer();
+                if (playerCaster && ClassHallFollowers::IsClassHallFollowerSpell(m_spellInfo))
+                {
+                    SpellCastResult result = ClassHallFollowers::CheckItemCast(playerCaster, m_spellInfo, m_misc.GarrFollower.Id);
+                    if (result != SPELL_CAST_OK)
+                        return result;
+                }
                 break;
             }
             case SPELL_EFFECT_CREATE_SHIPMENT:
