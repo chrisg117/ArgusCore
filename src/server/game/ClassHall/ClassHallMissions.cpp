@@ -136,7 +136,7 @@ void ClassHallMissions::LoadFromDB(PreparedQueryResult missions)
         } while (missions->NextRow());
     }
 
-    // a follower can only be on a mission the character holds in progress
+    // a follower can only be on a mission the character holds in progress, or completed with its chest unopened
     ClassHallFollowers& followers = _classHall->GetFollowers();
     for (auto const& [dbId, follower] : followers.GetAllFollowers())
     {
@@ -145,10 +145,10 @@ void ClassHallMissions::LoadFromDB(PreparedQueryResult missions)
             continue;
 
         auto itr = _missions.find(missionId);
-        if (itr != _missions.end() && itr->second.PacketInfo.MissionState == CLASS_HALL_MISSION_STATE_IN_PROGRESS)
+        if (itr != _missions.end() && itr->second.PacketInfo.MissionState != CLASS_HALL_MISSION_STATE_OFFERED)
             continue;
 
-        TC_LOG_ERROR("entities.player", "ClassHallMissions::LoadFromDB: player {} has a class hall follower on a mission it does not hold in progress (follower {}, GarrMission {}), set free.",
+        TC_LOG_ERROR("entities.player", "ClassHallMissions::LoadFromDB: player {} has a class hall follower on a mission it holds neither in progress nor completed (follower {}, GarrMission {}), set free.",
             _owner->GetGUID().ToString(), dbId, missionId);
         followers.SetFollowerMission(dbId, 0);
     }
@@ -531,15 +531,16 @@ void ClassHallMissions::CompleteMission(ObjectGuid npcGuid, uint32 garrMissionId
         if (follower.PacketInfo.CurrentMissionID == garrMissionId)
             completeMissionResult.Followers.push_back({ .FollowerDBID = dbId, .Flags = 0 });
 
-    for (WorldPackets::Garrison::GarrisonMissionFollowerInfo const& follower : completeMissionResult.Followers)
-        followers.SetFollowerMission(follower.FollowerDBID, 0);
-
-    // a successful mission waits for its chest to be opened; the client takes every completed mission
-    // for a successful one, so a failed mission goes back on offer, as one never started
+    // a successful mission waits for its chest to be opened, with its followers still on it: the client's
+    // report on it shows them. The client takes every completed mission for a successful one, so a
+    // failed mission goes back on offer, as one never started, and its followers come back at once.
     if (completeMissionResult.Succeeded)
         mission.PacketInfo.MissionState = CLASS_HALL_MISSION_STATE_COMPLETED;
     else
     {
+        for (WorldPackets::Garrison::GarrisonMissionFollowerInfo const& follower : completeMissionResult.Followers)
+            followers.SetFollowerMission(follower.FollowerDBID, 0);
+
         uint64 dbId = mission.PacketInfo.DbID;
         time_t offerTime = time_t(mission.PacketInfo.OfferTime);
         mission.PacketInfo = {};
@@ -572,6 +573,12 @@ void ClassHallMissions::BonusRoll(ObjectGuid npcGuid, uint32 garrMissionId)
     }
 
     GiveRewards(garrMissionId);
+
+    ClassHallFollowers& followers = _classHall->GetFollowers();
+    for (auto const& [dbId, follower] : followers.GetAllFollowers())
+        if (follower.PacketInfo.CurrentMissionID == garrMissionId)
+            followers.SetFollowerMission(dbId, 0);
+
     _missions.erase(itr);
     _owner->SendDirectMessage(bonusRollResult.Write());
 }
