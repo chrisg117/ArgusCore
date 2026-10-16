@@ -111,8 +111,8 @@ void ClassHallMissions::LoadFromDB(PreparedQueryResult missions)
     {
         do
         {
-            //               0     1          2          3              4      5
-            // SELECT missionId, dbId, offerTime, startTime, successChance, state FROM character_class_hall_mission WHERE guid = ?
+            //               0     1          2          3              4                5      6
+            // SELECT missionId, dbId, offerTime, startTime, successChance, missionDuration, state FROM character_class_hall_mission WHERE guid = ?
             Field* fields = missions->Fetch();
             uint32 missionId = fields[0].GetUInt32();
             uint64 dbId = fields[1].GetUInt64();
@@ -132,7 +132,10 @@ void ClassHallMissions::LoadFromDB(PreparedQueryResult missions)
             if (time_t startTime = fields[3].GetInt64())
                 mission.PacketInfo.StartTime = startTime;
             mission.PacketInfo.SuccessChance = uint32(fields[4].GetInt32());
-            mission.PacketInfo.MissionState = fields[5].GetUInt8();
+            // a mission started before its duration was kept has its own
+            if (uint32 missionDuration = fields[5].GetUInt32())
+                mission.PacketInfo.MissionDuration = Seconds(missionDuration);
+            mission.PacketInfo.MissionState = fields[6].GetUInt8();
         } while (missions->NextRow());
     }
 
@@ -170,6 +173,7 @@ void ClassHallMissions::SaveToDB(CharacterDatabaseTransaction trans) const
         stmt->setInt64(index++, time_t(mission.PacketInfo.OfferTime));
         stmt->setInt64(index++, mission.PacketInfo.MissionState == CLASS_HALL_MISSION_STATE_OFFERED ? time_t(0) : time_t(mission.PacketInfo.StartTime));
         stmt->setInt32(index++, int32(mission.PacketInfo.SuccessChance));
+        stmt->setUInt32(index++, mission.PacketInfo.MissionState == CLASS_HALL_MISSION_STATE_OFFERED ? 0 : uint32(Seconds(mission.PacketInfo.MissionDuration).count()));
         stmt->setUInt8(index++, uint8(mission.PacketInfo.MissionState));
         trans->Append(stmt);
     }
@@ -524,7 +528,7 @@ void ClassHallMissions::CompleteMission(ObjectGuid npcGuid, uint32 garrMissionId
     WorldPackets::Garrison::GarrisonCompleteMissionResult completeMissionResult;
     completeMissionResult.GarrMissionID = garrMissionId;
 
-    time_t endTime = time_t(mission.PacketInfo.StartTime) + mission.Entry->TravelDuration + mission.Entry->MissionDuration;
+    time_t endTime = time_t(mission.PacketInfo.StartTime) + Seconds(mission.PacketInfo.TravelDuration).count() + Seconds(mission.PacketInfo.MissionDuration).count();
     if (mission.PacketInfo.MissionState != CLASS_HALL_MISSION_STATE_IN_PROGRESS || endTime > GameTime::GetGameTime())
     {
         completeMissionResult.Result = GARRISON_ERROR_INVALID_MISSION_TIME;
