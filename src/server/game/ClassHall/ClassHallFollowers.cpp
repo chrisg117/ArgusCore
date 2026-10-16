@@ -16,6 +16,7 @@
  */
 
 #include "ClassHallFollowers.h"
+#include "advstd.h"
 #include "ClassHall.h"
 #include "ConditionMgr.h"
 #include "DatabaseEnv.h"
@@ -68,7 +69,7 @@ ClassHallFollowers::ClassHallFollowers(Player* owner, ClassHall const* classHall
 {
 }
 
-void ClassHallFollowers::LoadFromDB(PreparedQueryResult followers, PreparedQueryResult equipment)
+void ClassHallFollowers::LoadFromDB(PreparedQueryResult followers, PreparedQueryResult equipment, PreparedQueryResult temporaryAbilities)
 {
     if (!followers)
         return;
@@ -125,8 +126,31 @@ void ClassHallFollowers::LoadFromDB(PreparedQueryResult followers, PreparedQuery
         } while (equipment->NextRow());
     }
 
+    if (temporaryAbilities)
+    {
+        do
+        {
+            //           0          1
+            // SELECT dbId, abilityId FROM character_class_hall_follower_temporary_ability WHERE guid = ?
+            Field* fields = temporaryAbilities->Fetch();
+            uint64 dbId = fields[0].GetUInt64();
+            uint32 abilityId = fields[1].GetUInt32();
+            GarrAbilityEntry const* ability = sGarrAbilityStore.LookupEntry(abilityId);
+            auto itr = _followers.find(dbId);
+            if (itr == _followers.end() || itr->second.IsTroop() || !ability || !(ability->Flags & GARRISON_ABILITY_FLAG_SINGLE_MISSION_DURATION)
+                || advstd::ranges::contains(itr->second.TemporaryAbilities, abilityId))
+            {
+                TC_LOG_ERROR("entities.player", "ClassHallFollowers::LoadFromDB: player {} has a class hall temporary ability that cannot be held (follower {}, GarrAbility {}), skipped.",
+                    _owner->GetGUID().ToString(), dbId, abilityId);
+                continue;
+            }
+
+            itr->second.TemporaryAbilities.push_back(abilityId);
+        } while (temporaryAbilities->NextRow());
+    }
+
     for (auto& [dbId, follower] : _followers)
-        follower.PacketInfo.AbilityID = GetAbilities(follower.Entry, follower.PacketInfo.Quality, follower.Equipment);
+        follower.PacketInfo.AbilityID = GetAbilities(follower.Entry, follower.PacketInfo.Quality, follower.Equipment, follower.TemporaryAbilities);
 }
 
 void ClassHallFollowers::SaveToDB(CharacterDatabaseTransaction trans) const
@@ -172,6 +196,22 @@ void ClassHallFollowers::SaveToDB(CharacterDatabaseTransaction trans) const
             trans->Append(stmt);
         }
     }
+
+    stmt = CharacterDatabase.GetPreparedStatement(CHAR_DEL_CHARACTER_CLASS_HALL_FOLLOWER_TEMPORARY_ABILITY);
+    stmt->setUInt64(0, _owner->GetGUID().GetCounter());
+    trans->Append(stmt);
+
+    for (auto const& [dbId, follower] : _followers)
+    {
+        for (uint32 abilityId : follower.TemporaryAbilities)
+        {
+            stmt = CharacterDatabase.GetPreparedStatement(CHAR_INS_CHARACTER_CLASS_HALL_FOLLOWER_TEMPORARY_ABILITY);
+            stmt->setUInt64(0, _owner->GetGUID().GetCounter());
+            stmt->setUInt64(1, dbId);
+            stmt->setUInt32(2, abilityId);
+            trans->Append(stmt);
+        }
+    }
 }
 
 void ClassHallFollowers::DeleteFromDB(ObjectGuid::LowType ownerGuid, CharacterDatabaseTransaction trans)
@@ -181,6 +221,10 @@ void ClassHallFollowers::DeleteFromDB(ObjectGuid::LowType ownerGuid, CharacterDa
     trans->Append(stmt);
 
     stmt = CharacterDatabase.GetPreparedStatement(CHAR_DEL_CHARACTER_CLASS_HALL_FOLLOWER_EQUIPMENT);
+    stmt->setUInt64(0, ownerGuid);
+    trans->Append(stmt);
+
+    stmt = CharacterDatabase.GetPreparedStatement(CHAR_DEL_CHARACTER_CLASS_HALL_FOLLOWER_TEMPORARY_ABILITY);
     stmt->setUInt64(0, ownerGuid);
     trans->Append(stmt);
 }
@@ -394,7 +438,7 @@ void ClassHallFollowers::AddExperience(uint64 dbId, uint32 amount, uint32 source
     follower.PacketInfo.Xp = xp;
     // a higher quality can bring an ability or an equipment slot
     if (qualityChanged)
-        follower.PacketInfo.AbilityID = GetAbilities(follower.Entry, quality, follower.Equipment);
+        follower.PacketInfo.AbilityID = GetAbilities(follower.Entry, quality, follower.Equipment, follower.TemporaryAbilities);
 
     changedXp.After = follower.PacketInfo;
     _owner->SendDirectMessage(changedXp.Write());
@@ -445,6 +489,31 @@ void ClassHallFollowers::Equip(uint64 dbId, uint32 slot, GarrAbilityEntry const*
 
     Follower& follower = itr->second;
     follower.Equipment[slot] = trait->ID;
+    follower.PacketInfo.AbilityID = GetAbilities(follower.Entry, follower.PacketInfo.Quality, follower.Equipment, follower.TemporaryAbilities);
+    SendUpdateFollower(dbId);
+}
+
+void ClassHallFollowers::AddTemporaryAbility(uint64 dbId, GarrAbilityEntry const* ability)
+{
+    auto itr = _followers.find(dbId);
+    if (itr == _followers.end() || advstd::ranges::contains(itr->second.TemporaryAbilities, ability->ID))
+        return;
+
+    Follower& follower = itr->second;
+    follower.TemporaryAbilities.push_back(ability->ID);
+    follower.PacketInfo.AbilityID = GetAbilities(follower.Entry, follower.PacketInfo.Quality, follower.Equipment, follower.TemporaryAbilities);
+    SendUpdateFollower(dbId);
+}
+
+// a champion's temporary abilities last until its mission is completed, success or failure
+void ClassHallFollowers::RemoveTemporaryAbilities(uint64 dbId)
+{
+    auto itr = _followers.find(dbId);
+    if (itr == _followers.end() || itr->second.TemporaryAbilities.empty())
+        return;
+
+    Follower& follower = itr->second;
+    follower.TemporaryAbilities.clear();
     follower.PacketInfo.AbilityID = GetAbilities(follower.Entry, follower.PacketInfo.Quality, follower.Equipment);
     SendUpdateFollower(dbId);
 }
@@ -522,13 +591,17 @@ SpellCastResult ClassHallFollowers::CheckItemCast(Player const* caster, SpellInf
         }
         else if (effect.IsEffect(SPELL_EFFECT_LEARN_FOLLOWER_ABILITY))
         {
-            // equipment fills an unlocked equipment slot; abilities for a single mission are not handled
-            GarrAbilityEntry const* trait = sGarrAbilityStore.LookupEntry(effect.MiscValue);
-            if (!trait || !(trait->Flags & GARRISON_ABILITY_FLAG_TRAIT) || GetEquipmentSlot(*follower, abilityId) < 0)
+            // equipment fills an unlocked equipment slot; a temporary ability is added beside the others
+            GarrAbilityEntry const* learned = sGarrAbilityStore.LookupEntry(effect.MiscValue);
+            if (!learned)
+                return SPELL_FAILED_BAD_TARGETS;
+
+            if (!(learned->Flags & GARRISON_ABILITY_FLAG_SINGLE_MISSION_DURATION)
+                && (!(learned->Flags & GARRISON_ABILITY_FLAG_TRAIT) || GetEquipmentSlot(*follower, abilityId) < 0))
                 return SPELL_FAILED_BAD_TARGETS;
 
             for (GarrAbilityEntry const* ability : follower->PacketInfo.AbilityID)
-                if (ability->ID == trait->ID)
+                if (ability->ID == learned->ID)
                     return SPELL_FAILED_GARRISON_FOLLOWER_HAS_ABILITY;
         }
         else if (effect.IsEffect(SPELL_EFFECT_MODIFY_FOLLOWER_ITEM_LEVEL))
@@ -688,7 +761,7 @@ GarrFollowerQualityEntry const* ClassHallFollowers::GetQuality(uint32 garrFollow
 }
 
 std::list<GarrAbilityEntry const*> ClassHallFollowers::GetAbilities(GarrFollowerEntry const* follower, uint32 quality,
-    std::array<uint32, MAX_EQUIPMENT_SLOTS> const& equipment /*= { }*/) const
+    std::array<uint32, MAX_EQUIPMENT_SLOTS> const& equipment /*= { }*/, std::vector<uint32> const& temporaryAbilities /*= { }*/) const
 {
     std::list<GarrAbilityEntry const*> abilities;
 
@@ -732,6 +805,10 @@ std::list<GarrAbilityEntry const*> ClassHallFollowers::GetAbilities(GarrFollower
 
         abilities.push_back(ability);
     }
+
+    for (uint32 abilityId : temporaryAbilities)
+        if (GarrAbilityEntry const* ability = sGarrAbilityStore.LookupEntry(abilityId))
+            abilities.push_back(ability);
 
     return abilities;
 }

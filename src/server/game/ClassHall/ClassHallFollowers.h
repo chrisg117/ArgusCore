@@ -58,6 +58,7 @@ public:
         GarrFollowerEntry const* Entry = nullptr;
         WorldPackets::Garrison::GarrisonFollower PacketInfo;
         std::array<uint32, MAX_EQUIPMENT_SLOTS> Equipment = { };  // the trait in each equipment slot, 0 for none
+        std::vector<uint32> TemporaryAbilities;                     // abilities until the next mission is completed
 
         bool IsActive() const { return (PacketInfo.FollowerStatus & FOLLOWER_STATUS_INACTIVE) == 0; }
         bool IsTroop() const { return (PacketInfo.FollowerStatus & FOLLOWER_STATUS_TROOP) != 0; }
@@ -68,7 +69,7 @@ public:
 
     ClassHallFollowers(Player* owner, ClassHall const* classHall);
 
-    void LoadFromDB(PreparedQueryResult followers, PreparedQueryResult equipment);
+    void LoadFromDB(PreparedQueryResult followers, PreparedQueryResult equipment, PreparedQueryResult temporaryAbilities);
     void SaveToDB(CharacterDatabaseTransaction trans) const;
     static void DeleteFromDB(ObjectGuid::LowType ownerGuid, CharacterDatabaseTransaction trans);
 
@@ -88,6 +89,8 @@ public:
     void SendUpdateFollower(uint64 dbId) const;
     void UpgradeItemLevel(uint64 dbId, GarrItemLevelUpgradeDataEntry const* upgrade, int32 amount);
     void Equip(uint64 dbId, uint32 slot, GarrAbilityEntry const* trait);
+    void AddTemporaryAbility(uint64 dbId, GarrAbilityEntry const* ability);
+    void RemoveTemporaryAbilities(uint64 dbId);
     static int32 GetEquipmentSlot(Follower const& follower, uint32 abilityId);
 
     // checks an item's spell aimed at a champion (the client names the champion by its GarrFollower id)
@@ -112,7 +115,7 @@ private:
     GarrisonError CanSetFollowerInactive(Follower const* follower, bool inactive) const;
     void SendActivationsRemaining() const;
     std::list<GarrAbilityEntry const*> GetAbilities(GarrFollowerEntry const* follower, uint32 quality,
-        std::array<uint32, MAX_EQUIPMENT_SLOTS> const& equipment = { }) const;
+        std::array<uint32, MAX_EQUIPMENT_SLOTS> const& equipment = { }, std::vector<uint32> const& temporaryAbilities = { }) const;
     uint32 CountActiveChampions() const;
 
     Player* _owner;

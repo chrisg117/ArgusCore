@@ -100,6 +100,7 @@ DumpTable const DumpTables[] =
     { "character_class_hall",             DTT_CHAR_TABLE },
     { "character_class_hall_follower",    DTT_CLASS_HALL_FOLLOWER },
     { "character_class_hall_follower_equipment", DTT_CLASS_HALL_FOLLOWER },
+    { "character_class_hall_follower_temporary_ability", DTT_CLASS_HALL_FOLLOWER },
     { "character_class_hall_mission",     DTT_CHAR_TABLE },
     { "character_class_hall_shipment",    DTT_CHAR_TABLE },
     { "character_class_hall_talent",      DTT_CHAR_TABLE },

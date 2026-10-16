@@ -45,6 +45,7 @@ public:
     explicit ClassHall(Player* owner);
 
     bool LoadFromDB(PreparedQueryResult classHall, PreparedQueryResult talents, PreparedQueryResult followers, PreparedQueryResult equipment,
+        PreparedQueryResult temporaryAbilities,
         PreparedQueryResult shipments,
         PreparedQueryResult missions);
     void SaveToDB(CharacterDatabaseTransaction trans) const;

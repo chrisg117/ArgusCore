@@ -5515,16 +5515,21 @@ void Spell::EffectLearnFollowerAbility()
         return;
 
     ClassHall* classHall = unitTarget->ToPlayer()->GetClassHall();
-    GarrAbilityEntry const* trait = sGarrAbilityStore.LookupEntry(effectInfo->MiscValue);
-    if (!classHall || !trait || !(trait->Flags & GARRISON_ABILITY_FLAG_TRAIT))
+    GarrAbilityEntry const* ability = sGarrAbilityStore.LookupEntry(effectInfo->MiscValue);
+    if (!classHall || !ability)
         return;
 
     ClassHallFollowers& followers = classHall->GetFollowers();
     if (ClassHallFollowers::Follower const* follower = followers.GetChampion(m_misc.GarrFollower.Id))
     {
-        int32 slot = ClassHallFollowers::GetEquipmentSlot(*follower, m_misc.GarrFollower.AbilityId);
-        if (slot >= 0)
-            followers.Equip(follower->PacketInfo.DbID, uint32(slot), trait);
+        if (ability->Flags & GARRISON_ABILITY_FLAG_SINGLE_MISSION_DURATION)
+            followers.AddTemporaryAbility(follower->PacketInfo.DbID, ability);
+        else if (ability->Flags & GARRISON_ABILITY_FLAG_TRAIT)
+        {
+            int32 slot = ClassHallFollowers::GetEquipmentSlot(*follower, m_misc.GarrFollower.AbilityId);
+            if (slot >= 0)
+                followers.Equip(follower->PacketInfo.DbID, uint32(slot), ability);
+        }
     }
 }
 

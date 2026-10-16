@@ -709,6 +709,11 @@ void ClassHallMissions::CompleteMission(ObjectGuid npcGuid, uint32 garrMissionId
         }
     }
 
+    // the champions' temporary abilities were for this mission
+    for (ClassHallFollowers::Follower const* follower : team)
+        if (!follower->IsTroop())
+            followers.RemoveTemporaryAbilities(follower->PacketInfo.DbID);
+
     // a successful mission waits for its chest to be opened, with its followers still on it: the client's
     // report on it shows them. The client takes every completed mission for a successful one, so a
     // failed mission goes back on offer, as one never started, and its followers come back at once.
