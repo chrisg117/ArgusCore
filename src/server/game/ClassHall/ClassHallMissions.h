@@ -73,6 +73,15 @@ private:
         WorldPackets::Garrison::GarrisonMission PacketInfo;
     };
 
+    // what a team makes of a mission, as the client shows it before the mission is started
+    struct TeamEffects
+    {
+        uint32 SuccessChance = 0;
+        uint32 Cost = 0;
+        uint32 MissionDuration = 0;
+        bool Lethal = false;    // the troops on the mission are killed
+    };
+
     static bool IsClassHallMission(GarrMissionEntry const* mission);
     static void InitMission(Mission& mission, GarrMissionEntry const* entry, uint64 dbId, time_t offerTime);
     bool IsConditionMet(GarrMissionEntry const* mission) const;
@@ -85,7 +94,7 @@ private:
 
     static std::vector<GarrMechanicEntry const*> GetMechanics(GarrMissionEntry const* mission, uint64 dbId);
     static double GetBias(GarrMissionEntry const* mission, ClassHallFollowers::Follower const& follower);
-    uint32 GetSuccessChance(Mission const& mission, std::vector<ClassHallFollowers::Follower const*> const& team) const;
+    TeamEffects GetTeamEffects(Mission const& mission, std::vector<ClassHallFollowers::Follower const*> const& team) const;
     static uint32 GetExperienceBonus(Mission const& mission);
 
     Player* _owner;
