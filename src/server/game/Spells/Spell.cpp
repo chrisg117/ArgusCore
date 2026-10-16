@@ -6629,11 +6629,13 @@ SpellCastResult Spell::CheckCast(bool strict, int32* param1 /*= nullptr*/, int32
             }
             case SPELL_EFFECT_MODIFY_FOLLOWER_ITEM_LEVEL:
             case SPELL_EFFECT_INCREASE_FOLLOWER_EXPERIENCE:
+            case SPELL_EFFECT_LEARN_FOLLOWER_ABILITY:
             {
                 Player const* playerCaster = m_caster->ToPlayer();
                 if (playerCaster && ClassHallFollowers::IsClassHallFollowerSpell(m_spellInfo))
                 {
-                    SpellCastResult result = ClassHallFollowers::CheckItemCast(playerCaster, m_spellInfo, m_misc.GarrFollower.Id);
+                    SpellCastResult result = ClassHallFollowers::CheckItemCast(playerCaster, m_spellInfo, m_misc.GarrFollower.Id,
+                        m_misc.GarrFollower.AbilityId);
                     if (result != SPELL_CAST_OK)
                         return result;
                 }

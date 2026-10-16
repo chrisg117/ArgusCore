@@ -705,6 +705,9 @@ void CharacterDatabaseConnection::DoPrepareStatements()
     PrepareStatement(CHAR_SEL_CHARACTER_CLASS_HALL_FOLLOWERS, "SELECT dbId, followerId, quality, level, itemLevelWeapon, itemLevelArmor, xp, durability, status, missionId FROM character_class_hall_follower WHERE guid = ?", CONNECTION_ASYNC);
     PrepareStatement(CHAR_INS_CHARACTER_CLASS_HALL_FOLLOWER, "INSERT INTO character_class_hall_follower (dbId, guid, followerId, quality, level, itemLevelWeapon, itemLevelArmor, xp, durability, status, missionId) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", CONNECTION_ASYNC);
     PrepareStatement(CHAR_DEL_CHARACTER_CLASS_HALL_FOLLOWERS, "DELETE FROM character_class_hall_follower WHERE guid = ?", CONNECTION_ASYNC);
+    PrepareStatement(CHAR_SEL_CHARACTER_CLASS_HALL_FOLLOWER_EQUIPMENT, "SELECT dbId, slot, abilityId FROM character_class_hall_follower_equipment WHERE guid = ?", CONNECTION_ASYNC);
+    PrepareStatement(CHAR_INS_CHARACTER_CLASS_HALL_FOLLOWER_EQUIPMENT, "INSERT INTO character_class_hall_follower_equipment (guid, dbId, slot, abilityId) VALUES (?, ?, ?, ?)", CONNECTION_ASYNC);
+    PrepareStatement(CHAR_DEL_CHARACTER_CLASS_HALL_FOLLOWER_EQUIPMENT, "DELETE FROM character_class_hall_follower_equipment WHERE guid = ?", CONNECTION_ASYNC);
     PrepareStatement(CHAR_SEL_CHARACTER_CLASS_HALL_SHIPMENTS, "SELECT shipmentId, charShipmentId, creationTime, duration FROM character_class_hall_shipment WHERE guid = ?", CONNECTION_ASYNC);
     PrepareStatement(CHAR_INS_CHARACTER_CLASS_HALL_SHIPMENT, "INSERT INTO character_class_hall_shipment (guid, shipmentId, charShipmentId, creationTime, duration) VALUES (?, ?, ?, ?, ?)", CONNECTION_ASYNC);
     PrepareStatement(CHAR_DEL_CHARACTER_CLASS_HALL_SHIPMENTS, "DELETE FROM character_class_hall_shipment WHERE guid = ?", CONNECTION_ASYNC);

@@ -329,7 +329,7 @@ NonDefaultConstructible<SpellEffectHandlerFn> SpellEffectHandlers[TOTAL_SPELL_EF
     &Spell::EffectUnused,                                   //241 SPELL_EFFECT_241
     &Spell::EffectGiveArtifactPowerNoBonus,                 //242 SPELL_EFFECT_GIVE_ARTIFACT_POWER_NO_BONUS
     &Spell::EffectApplyEnchantIllusion,                     //243 SPELL_EFFECT_APPLY_ENCHANT_ILLUSION
-    &Spell::EffectNULL,                                     //244 SPELL_EFFECT_LEARN_FOLLOWER_ABILITY
+    &Spell::EffectLearnFollowerAbility,                     //244 SPELL_EFFECT_LEARN_FOLLOWER_ABILITY
     &Spell::EffectUpgradeHeirloom,                          //245 SPELL_EFFECT_UPGRADE_HEIRLOOM
     &Spell::EffectNULL,                                     //246 SPELL_EFFECT_FINISH_GARRISON_MISSION
     &Spell::EffectNULL,                                     //247 SPELL_EFFECT_ADD_GARRISON_MISSION_SET
@@ -5504,6 +5504,28 @@ void Spell::EffectIncreaseFollowerExperience()
 
     if (ClassHallFollowers::Follower const* follower = classHall->GetFollowers().GetChampion(m_misc.GarrFollower.Id))
         classHall->GetFollowers().AddExperience(follower->PacketInfo.DbID, uint32(damage), FOLLOWER_EXPERIENCE_SOURCE_ITEM);
+}
+
+void Spell::EffectLearnFollowerAbility()
+{
+    if (effectHandleMode != SPELL_EFFECT_HANDLE_HIT_TARGET)
+        return;
+
+    if (!unitTarget || unitTarget->GetTypeId() != TYPEID_PLAYER || effectInfo->MiscValueB != FOLLOWER_TYPE_CLASS_ORDER)
+        return;
+
+    ClassHall* classHall = unitTarget->ToPlayer()->GetClassHall();
+    GarrAbilityEntry const* trait = sGarrAbilityStore.LookupEntry(effectInfo->MiscValue);
+    if (!classHall || !trait || !(trait->Flags & GARRISON_ABILITY_FLAG_TRAIT))
+        return;
+
+    ClassHallFollowers& followers = classHall->GetFollowers();
+    if (ClassHallFollowers::Follower const* follower = followers.GetChampion(m_misc.GarrFollower.Id))
+    {
+        int32 slot = ClassHallFollowers::GetEquipmentSlot(*follower, m_misc.GarrFollower.AbilityId);
+        if (slot >= 0)
+            followers.Equip(follower->PacketInfo.DbID, uint32(slot), trait);
+    }
 }
 
 void Spell::EffectCreateShipment()
