@@ -43,17 +43,27 @@ constexpr time_t MISSION_OFFER_INTERVAL = MINUTE;
 // recruitment, zone support and invasion missions are other mechanisms, never on the table
 constexpr uint8 NonTableMissionTypes[] = { 11, 51, 52, 57 };
 
+// the highest chance the client shows
+constexpr double MAX_SUCCESS_CHANCE = 200.0;
+
 // what an ability effect (GarrAbilityEffect.AbilityAction) does, for those a team's effects read
 enum AbilityAction : uint8
 {
     ABILITY_ACTION_COUNTER_MECHANIC             = 0,    // counters a threat type, with a weight
     ABILITY_ACTION_SUCCESS_CHANCE               = 2,    // a flat bonus
+    ABILITY_ACTION_SUCCESS_CHANCE_LONG_MISSION  = 6,    // a flat bonus on a mission longer than some hours
+    ABILITY_ACTION_SUCCESS_CHANCE_SHORT_MISSION = 7,    // a flat bonus on a mission shorter than some hours
     ABILITY_ACTION_MISSION_DURATION             = 17,   // the mission's duration times a value
     ABILITY_ACTION_SUCCESS_CHANCE_WITH_SPEC     = 22,   // a flat bonus when a follower of a class spec is on the team
     ABILITY_ACTION_SUCCESS_CHANCE_WITH_MECHANIC = 23,   // a flat bonus when the mission has a threat of a type
+    ABILITY_ACTION_SUCCESS_CHANCE_PER_VITALITY  = 24,   // a flat bonus for each point of vitality of the team's troops
+    ABILITY_ACTION_SUCCESS_CHANCE_WITH_VITALITY = 25,   // a flat bonus when a troop on the team has a vitality
+    ABILITY_ACTION_SUCCESS_CHANCE_WITH_FOLLOWER = 26,   // a flat bonus when a follower is on the team
     ABILITY_ACTION_KILL_TROOPS                  = 27,   // a threat's: the troops on the mission are killed
     ABILITY_ACTION_NO_BONUS_LOOT                = 29,   // a threat's: the chance stops at 100
-    ABILITY_ACTION_MISSION_COST                 = 39    // the mission's cost in a currency times a value
+    ABILITY_ACTION_SUCCESS_CHANCE_MIXED_TROOPS  = 33,   // a flat bonus when the team's troops are of two class specs
+    ABILITY_ACTION_MISSION_COST                 = 39,   // the mission's cost in a currency times a value
+    ABILITY_ACTION_SUCCESS_CHANCE_ALONE         = 41    // a flat bonus when no other champion is on the team
 };
 }
 
@@ -324,8 +334,9 @@ double ClassHallMissions::GetBias(GarrMissionEntry const* mission, ClassHallFoll
 
 // The chance, cost and duration the client shows for a team, worked out the way the client does
 // (measured from the client's own numbers): champions bring power by their bias, abilities counter
-// threats up to each threat type's factor, and both are measured against the threats' factors; flat
-// bonuses are added on top. An uncountered threat that takes the bonus loot keeps the chance at 100.
+// threats up to each threat type's factor, and both are measured against the threats' factors; that
+// share takes the chance from the mission's base chance to 100, and flat bonuses are added on top.
+// An uncountered threat that takes the bonus loot keeps the chance at 100.
 // The team's abilities and the threats it does not counter multiply the cost and the duration, and
 // an uncountered threat can kill the troops.
 ClassHallMissions::TeamEffects ClassHallMissions::GetTeamEffects(Mission const& mission, std::vector<ClassHallFollowers::Follower const*> const& team) const
@@ -341,14 +352,27 @@ ClassHallMissions::TeamEffects ClassHallMissions::GetTeamEffects(Mission const& 
 
     ClassHallFollowers const& followers = _classHall->GetFollowers();
     std::set<uint32> classSpecs;
+    std::set<uint32> troopClassSpecs;
+    uint32 troopVitality = 0;
+    uint32 championCount = 0;
     for (ClassHallFollowers::Follower const* follower : team)
+    {
         classSpecs.insert(followers.GetClassSpec(follower->Entry));
+        if (follower->PacketInfo.FollowerStatus & FOLLOWER_STATUS_TROOP)
+        {
+            troopClassSpecs.insert(followers.GetClassSpec(follower->Entry));
+            troopVitality += follower->PacketInfo.Durability;
+        }
+        else
+            ++championCount;
+    }
 
     double power = 0.0;
     double flat = 0.0;
     double durationMultiplier = 1.0;
     double costMultiplier = 1.0;
     std::map<uint8 /*garrMechanicTypeId*/, double> counterWeights;
+    std::vector<GarrAbilityEffectEntry const*> durationBonuses;
     for (ClassHallFollowers::Follower const* follower : team)
     {
         bool troop = (follower->PacketInfo.FollowerStatus & FOLLOWER_STATUS_TROOP) != 0;
@@ -391,6 +415,36 @@ ClassHallMissions::TeamEffects ClassHallMissions::GetTeamEffects(Mission const& 
                         break;
                     case ABILITY_ACTION_SUCCESS_CHANCE_WITH_MECHANIC:
                         if (factors.contains(effect->GarrMechanicTypeID))
+                            flat += effect->ActionValueFlat;
+                        break;
+                    case ABILITY_ACTION_SUCCESS_CHANCE_LONG_MISSION:
+                    case ABILITY_ACTION_SUCCESS_CHANCE_SHORT_MISSION:
+                        // against the duration the team ends with
+                        durationBonuses.push_back(effect);
+                        break;
+                    case ABILITY_ACTION_SUCCESS_CHANCE_PER_VITALITY:
+                        flat += effect->ActionValueFlat * troopVitality;
+                        break;
+                    case ABILITY_ACTION_SUCCESS_CHANCE_WITH_VITALITY:
+                        if (std::any_of(team.begin(), team.end(), [effect](ClassHallFollowers::Follower const* other)
+                        {
+                            return (other->PacketInfo.FollowerStatus & FOLLOWER_STATUS_TROOP) && other->PacketInfo.Durability == uint32(effect->CombatWeightMax);
+                        }))
+                            flat += effect->ActionValueFlat;
+                        break;
+                    case ABILITY_ACTION_SUCCESS_CHANCE_WITH_FOLLOWER:
+                        if (std::any_of(team.begin(), team.end(), [effect, follower](ClassHallFollowers::Follower const* other)
+                        {
+                            return other != follower && int32(other->PacketInfo.GarrFollowerID) == effect->ActionRecordID;
+                        }))
+                            flat += effect->ActionValueFlat;
+                        break;
+                    case ABILITY_ACTION_SUCCESS_CHANCE_MIXED_TROOPS:
+                        if (troopClassSpecs.size() >= 2)
+                            flat += effect->ActionValueFlat;
+                        break;
+                    case ABILITY_ACTION_SUCCESS_CHANCE_ALONE:
+                        if (championCount == 1)
                             flat += effect->ActionValueFlat;
                         break;
                     default:
@@ -442,13 +496,23 @@ ClassHallMissions::TeamEffects ClassHallMissions::GetTeamEffects(Mission const& 
         }
     }
 
-    double chance = 100.0 * (power + countered) / (totalFactor + 100.0) + flat;
+    effects.Cost = uint32(std::max(0.0, std::nearbyint(mission.Entry->MissionCost * costMultiplier)));
+    effects.MissionDuration = uint32(std::max(0.0, std::nearbyint(mission.Entry->MissionDuration * durationMultiplier)));
+
+    for (GarrAbilityEffectEntry const* effect : durationBonuses)
+    {
+        uint32 hours = uint32(effect->ActionHours) * HOUR;
+        if (effect->AbilityAction == ABILITY_ACTION_SUCCESS_CHANCE_LONG_MISSION ? effects.MissionDuration > hours : effects.MissionDuration < hours)
+            flat += effect->ActionValueFlat;
+    }
+
+    // in the order the client works it out, so that a chance on the half rounds the same way
+    double core = 100.0 * (power + countered) / (totalFactor + 100.0);
+    double chance = mission.Entry->BaseCompletionChance + (100.0 - mission.Entry->BaseCompletionChance) * core / 100.0 + flat;
     if (noBonusLoot)
         chance = std::min(chance, 100.0);
 
-    effects.SuccessChance = uint32(std::max(0.0, std::nearbyint(chance)));
-    effects.Cost = uint32(std::max(0.0, std::nearbyint(mission.Entry->MissionCost * costMultiplier)));
-    effects.MissionDuration = uint32(std::max(0.0, std::nearbyint(mission.Entry->MissionDuration * durationMultiplier)));
+    effects.SuccessChance = uint32(std::clamp(std::nearbyint(chance), 0.0, MAX_SUCCESS_CHANCE));
     return effects;
 }
 
