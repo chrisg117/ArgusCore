@@ -60,6 +60,7 @@ enum AbilityAction : uint8
     ABILITY_ACTION_SUCCESS_CHANCE_WITH_VITALITY = 25,   // a flat bonus when a troop on the team has a vitality
     ABILITY_ACTION_SUCCESS_CHANCE_WITH_FOLLOWER = 26,   // a flat bonus when a follower is on the team
     ABILITY_ACTION_KILL_TROOPS                  = 27,   // a threat's: the troops on the mission are killed
+    ABILITY_ACTION_TROOP_VITALITY               = 28,   // a random troop on the mission recovers vitality, or takes less damage
     ABILITY_ACTION_NO_BONUS_LOOT                = 29,   // a threat's: the chance stops at 100
     ABILITY_ACTION_SUCCESS_CHANCE_MIXED_TROOPS  = 33,   // a flat bonus when the team's troops are of two class specs
     ABILITY_ACTION_MISSION_COST                 = 39,   // the mission's cost in a currency times a value
@@ -679,6 +680,29 @@ void ClassHallMissions::CompleteMission(ObjectGuid npcGuid, uint32 garrMissionId
     for (ClassHallFollowers::Follower const* follower : team)
         if (follower->IsTroop())
             troops.emplace_back(follower->PacketInfo.DbID, lethal || !follower->PacketInfo.Durability ? 0 : follower->PacketInfo.Durability - 1);
+
+    // a heal on the team then gives one of the troops still standing its amount back; the rows with a
+    // range (a chance not to take the damage, or to take more) are not known well enough to be used
+    for (ClassHallFollowers::Follower const* follower : team)
+    {
+        for (GarrAbilityEntry const* ability : follower->PacketInfo.AbilityID)
+        {
+            for (GarrAbilityEffectEntry const* effect : sGarrAbilityEffectStore)
+            {
+                if (effect->GarrAbilityID != ability->ID || effect->AbilityAction != ABILITY_ACTION_TROOP_VITALITY
+                    || effect->CombatWeightBase != effect->CombatWeightMax || effect->ActionValueFlat <= 0.0f)
+                    continue;
+
+                std::vector<std::pair<uint64, uint32>*> standing;
+                for (std::pair<uint64, uint32>& troop : troops)
+                    if (troop.second)
+                        standing.push_back(&troop);
+
+                if (!standing.empty())
+                    standing[urand(0, uint32(standing.size()) - 1)]->second += uint32(effect->ActionValueFlat);
+            }
+        }
+    }
 
     // a successful mission waits for its chest to be opened, with its followers still on it: the client's
     // report on it shows them. The client takes every completed mission for a successful one, so a
