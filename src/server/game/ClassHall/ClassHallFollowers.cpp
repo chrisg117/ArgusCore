@@ -312,6 +312,35 @@ void ClassHallFollowers::SetFollowerMission(uint64 dbId, uint32 garrMissionId)
         itr->second.PacketInfo.CurrentMissionID = garrMissionId;
 }
 
+// a troop's vitality runs from 0 to its kind's; the client is sent the whole follower
+void ClassHallFollowers::SetVitality(uint64 dbId, uint32 vitality)
+{
+    auto itr = _followers.find(dbId);
+    if (itr == _followers.end() || !itr->second.IsTroop())
+        return;
+
+    itr->second.PacketInfo.Durability = std::min(vitality, uint32(itr->second.Entry->Vitality));
+    SendUpdateFollower(dbId);
+}
+
+// a troop at 0 vitality leaves when its mission lets it go; the client drops it as one dismissed
+void ClassHallFollowers::RemoveExpiredTroop(uint64 dbId, bool notify)
+{
+    auto itr = _followers.find(dbId);
+    if (itr == _followers.end() || !itr->second.IsExpired())
+        return;
+
+    _followers.erase(itr);
+    if (!notify)
+        return;
+
+    WorldPackets::Garrison::GarrisonRemoveFollowerResult removeFollowerResult;
+    removeFollowerResult.FollowerDBID = dbId;
+    removeFollowerResult.GarrTypeID = GARRISON_TYPE_CLASS_ORDER;
+    removeFollowerResult.Destroyed = 1;
+    _owner->SendDirectMessage(removeFollowerResult.Write());
+}
+
 // Experience raises a champion's level up to the cap, then its quality; each step keeps what is
 // left over, so one gain can give several. At a quality with no next step the experience stops.
 // Troops do not grow.
