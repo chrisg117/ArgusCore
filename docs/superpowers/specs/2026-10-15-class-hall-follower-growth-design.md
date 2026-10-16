@@ -2,7 +2,7 @@
 
 Date: 2026-10-15
 Branch: `engine/class-hall-follower-growth`, stacked on `engine/class-hall-missions`
-Status: draft, awaiting review
+Status: built and tested in game on 2026-10-15; landed in `dev`
 Builds on: `2026-10-13-class-hall-followers-design.md`,
 `2026-10-14-class-hall-missions-design.md`
 
@@ -280,6 +280,53 @@ Checks, in a few short logins:
 - **The parked mission bug**: the client drops the mission complete reply,
   so the report's experience bars do not animate; the experience itself
   arrives in its own message.
+
+## What the tests showed
+
+Tested in game on 2026-10-15 with a priest, hand-planted champions and
+troops, a test add-on that read the client's own numbers, and the packet
+log.
+
+- **The team's experience bonus** is the mission's base experience times
+  the share of the success chance over 100%: 1,199 at 110% and 125% gave
+  300 and 750 on 3,000, and 1,065 at 114% gave 420. The report's bar
+  shows the base experience.
+- **The four messages.** 0x2912 (experience: amount, source, the
+  follower before and after), 0x2913 (item level) and 0x2914 (quality,
+  which the core had named the abilities message) each fire the client's
+  events; 0x2914 also redraws the champion page. 0x2904 (the whole
+  follower, which the core had named durability) is applied silently:
+  the page shows new equipment only after another champion is selected
+  and then this one again.
+- **Where the cast names the champion.** An item used on a champion
+  sends the champion's `GarrFollowerID` in the cast's first misc value
+  and, for equipment, the trait currently in the chosen slot in the
+  second.
+- **Every item cast first failed with "invalid target".** The items'
+  target flags hold 0x00100000, which the core reads as
+  `TARGET_FLAG_UNIT_PASSENGER`; the client sends no unit. Spells with a
+  follower effect no longer ask for one. The final review found this let
+  Warlords follower items through, used up for nothing (seen in game with
+  114128); those are refused again.
+- **A failed mission left its champions greyed out** with "0 sec" until
+  the next login, because the client drops the complete reply. The
+  server now also sends each freed follower and the mission back on
+  offer.
+- **Levels, quality and the remainder.** 300 experience at level 105
+  reached 107 with 50 left; 3,300 at rare quality reached epic with 2,300
+  left and a second slot; legendary stays at 0. A failed mission and
+  troops gain nothing.
+- **Item level.** +5 is refused at 850; +15 took 760 to 775; the 950
+  token set 950, after which the 880 one is refused; a champion below
+  110 and one on a mission are refused. Which upgrade operation is the
+  weapon and which the armor could not be told apart: both move
+  together.
+- **Equipment** fills a slot, replaces it, is refused for a locked slot
+  ("Upgrade ... to rare or epic to unlock this equipment slot") and for
+  a duplicate ("Follower already has one of these"), and survives a
+  relog and a character dump and load.
+- **Outside this piece:** `character erase` leaves the character's
+  achievement rows behind (existing core behaviour).
 
 ## What comes next
 
