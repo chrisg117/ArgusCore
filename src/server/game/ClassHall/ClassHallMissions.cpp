@@ -216,7 +216,10 @@ void ClassHallMissions::BuildInfo(WorldPackets::Garrison::GarrisonInfo& info) co
         if (std::vector<WorldPackets::Garrison::GarrisonMissionReward> const* missionRewards = sGarrisonMgr.GetClassHallMissionRewards(missionId))
             rewards = *missionRewards;
 
-        info.MissionOvermaxRewards.emplace_back();
+        std::vector<WorldPackets::Garrison::GarrisonMissionReward>& overmaxRewards = info.MissionOvermaxRewards.emplace_back();
+        if (std::vector<WorldPackets::Garrison::GarrisonMissionReward> const* missionOvermaxRewards = sGarrisonMgr.GetClassHallMissionOvermaxRewards(missionId))
+            overmaxRewards = *missionOvermaxRewards;
+
         info.CanStartMission.push_back(true);
     }
 }
@@ -837,6 +840,9 @@ void ClassHallMissions::SendAddMission(Mission const& mission) const
     addMissionResult.Mission = mission.PacketInfo;
     if (std::vector<WorldPackets::Garrison::GarrisonMissionReward> const* rewards = sGarrisonMgr.GetClassHallMissionRewards(mission.Entry->ID))
         addMissionResult.Rewards = *rewards;
+
+    if (std::vector<WorldPackets::Garrison::GarrisonMissionReward> const* overmaxRewards = sGarrisonMgr.GetClassHallMissionOvermaxRewards(mission.Entry->ID))
+        addMissionResult.OvermaxRewards = *overmaxRewards;
 
     addMissionResult.CanStart = true;
     _owner->SendDirectMessage(addMissionResult.Write());
