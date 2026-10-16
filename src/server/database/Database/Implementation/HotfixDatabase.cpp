@@ -537,6 +537,11 @@ void HotfixDatabaseConnection::DoPrepareStatements()
     PREPARE_LOCALE_STMT(HOTFIX_SEL_GARR_FOLLOWER, "SELECT ID, HordeSourceText_lang, AllianceSourceText_lang, TitleName_lang FROM garr_follower_locale"
         " WHERE (`VerifiedBuild` > 0) = ? AND locale = ?", CONNECTION_SYNCH);
 
+    // GarrFollowerLevelXP.db2
+    PrepareStatement(HOTFIX_SEL_GARR_FOLLOWER_LEVEL_XP, "SELECT ID, XpToNextLevel, ShipmentXP, FollowerLevel, GarrFollowerTypeID FROM garr_follower_level_xp"
+        " WHERE (`VerifiedBuild` > 0) = ?", CONNECTION_SYNCH);
+    PREPARE_MAX_ID_STMT(HOTFIX_SEL_GARR_FOLLOWER_LEVEL_XP, "SELECT MAX(ID) + 1 FROM garr_follower_level_xp", CONNECTION_SYNCH);
+
     // GarrFollowerQuality.db2
     PrepareStatement(HOTFIX_SEL_GARR_FOLLOWER_QUALITY, "SELECT ID, XpToNextQuality, ShipmentXP, Quality, AbilityCount, TraitCount, GarrFollowerTypeID, "
         "ClassSpecID FROM garr_follower_quality WHERE (`VerifiedBuild` > 0) = ?", CONNECTION_SYNCH);
@@ -550,6 +555,11 @@ void HotfixDatabaseConnection::DoPrepareStatements()
     // GarrFollowerXAbility.db2
     PrepareStatement(HOTFIX_SEL_GARR_FOLLOWER_X_ABILITY, "SELECT ID, GarrAbilityID, FactionIndex, GarrFollowerID FROM garr_follower_x_ability WHERE (`VerifiedBuild` > 0) = ?", CONNECTION_SYNCH);
     PREPARE_MAX_ID_STMT(HOTFIX_SEL_GARR_FOLLOWER_X_ABILITY, "SELECT MAX(ID) + 1 FROM garr_follower_x_ability", CONNECTION_SYNCH);
+
+    // GarrItemLevelUpgradeData.db2
+    PrepareStatement(HOTFIX_SEL_GARR_ITEM_LEVEL_UPGRADE_DATA, "SELECT ID, Operation, MinItemLevel, MaxItemLevel, FollowerTypeID FROM garr_item_level_upgrade_data"
+        " WHERE (`VerifiedBuild` > 0) = ?", CONNECTION_SYNCH);
+    PREPARE_MAX_ID_STMT(HOTFIX_SEL_GARR_ITEM_LEVEL_UPGRADE_DATA, "SELECT MAX(ID) + 1 FROM garr_item_level_upgrade_data", CONNECTION_SYNCH);
 
     // GarrMechanic.db2
     PrepareStatement(HOTFIX_SEL_GARR_MECHANIC, "SELECT ID, Factor, GarrMechanicTypeID, GarrAbilityID FROM garr_mechanic"

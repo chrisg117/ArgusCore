@@ -499,7 +499,8 @@ Still open:
   chest. A retail 7.x capture of any class hall mission being completed
   would settle the layout. Fallbacks if none turns up: complete missions
   on the server when they come due and send the info again, or an
-  add-on.
+  add-on. Tracked in
+  [issue #1](https://github.com/chrisg117/ArgusCore/issues/1).
 - **The rotation's size** stays 10 (`ROTATING_MISSIONS_ON_OFFER`), a
   deliberate choice.
 - **The archived-mission list**: what keeps finished one-time missions

@@ -4423,6 +4423,15 @@ void SpellInfo::_InitializeExplicitTargetMask()
     ExplicitTargetMask |= Targets;
     if (!HasAttribute(SPELL_ATTR13_DO_NOT_FAIL_IF_NO_TARGET))
         RequiredExplicitTargetMask |= Targets;
+
+    // A spell aimed at a garrison follower names TARGET_FLAG_UNIT_PASSENGER in its target flags, but
+    // the client names the follower in the cast's misc values and sends no unit.
+    if (HasEffect(SPELL_EFFECT_MODIFY_FOLLOWER_ITEM_LEVEL) || HasEffect(SPELL_EFFECT_INCREASE_FOLLOWER_EXPERIENCE)
+        || HasEffect(SPELL_EFFECT_LEARN_FOLLOWER_ABILITY))
+    {
+        ExplicitTargetMask &= ~TARGET_FLAG_UNIT_PASSENGER;
+        RequiredExplicitTargetMask &= ~TARGET_FLAG_UNIT_PASSENGER;
+    }
 }
 
 inline bool _isPositiveTarget(SpellEffectInfo const& effect)

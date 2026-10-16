@@ -409,6 +409,16 @@ uint32 ClassHallMissions::GetSuccessChance(Mission const& mission, std::vector<C
     return uint32(std::max(0.0, std::nearbyint(chance)));
 }
 
+// The client shows the experience bonus of a team as the share of the mission's experience by which
+// the team's chance goes over 100 (measured from the client's own numbers).
+uint32 ClassHallMissions::GetExperienceBonus(Mission const& mission)
+{
+    if (mission.PacketInfo.SuccessChance <= 100)
+        return 0;
+
+    return mission.Entry->BaseFollowerXP * (mission.PacketInfo.SuccessChance - 100) / 100;
+}
+
 void ClassHallMissions::OpenNpc(ObjectGuid npcGuid)
 {
     _openNpc = npcGuid;
@@ -535,16 +545,28 @@ void ClassHallMissions::CompleteMission(ObjectGuid npcGuid, uint32 garrMissionId
     // report on it shows them. The client takes every completed mission for a successful one, so a
     // failed mission goes back on offer, as one never started, and its followers come back at once.
     if (completeMissionResult.Succeeded)
+    {
         mission.PacketInfo.MissionState = CLASS_HALL_MISSION_STATE_COMPLETED;
+
+        // only a success gives experience
+        uint32 experience = mission.Entry->BaseFollowerXP + GetExperienceBonus(mission);
+        for (WorldPackets::Garrison::GarrisonMissionFollowerInfo const& follower : completeMissionResult.Followers)
+            followers.AddExperience(follower.FollowerDBID, experience, FOLLOWER_EXPERIENCE_SOURCE_MISSION);
+    }
     else
     {
+        // the 7.3.5 client does not take the complete reply, so it is told with the messages it takes
         for (WorldPackets::Garrison::GarrisonMissionFollowerInfo const& follower : completeMissionResult.Followers)
+        {
             followers.SetFollowerMission(follower.FollowerDBID, 0);
+            followers.SendUpdateFollower(follower.FollowerDBID);
+        }
 
         uint64 dbId = mission.PacketInfo.DbID;
         time_t offerTime = time_t(mission.PacketInfo.OfferTime);
         mission.PacketInfo = {};
         InitMission(mission, mission.Entry, dbId, offerTime);
+        SendAddMission(mission);
     }
 
     completeMissionResult.Mission = mission.PacketInfo;
@@ -617,14 +639,17 @@ void ClassHallMissions::AddMission(GarrMissionEntry const* entry, time_t offerTi
     Mission& mission = _missions[entry->ID];
     InitMission(mission, entry, _nextMissionDbId++, offerTime);
 
-    if (!notify)
-        return;
+    if (notify)
+        SendAddMission(mission);
+}
 
+void ClassHallMissions::SendAddMission(Mission const& mission) const
+{
     WorldPackets::Garrison::GarrisonAddMissionResult addMissionResult;
     addMissionResult.GarrTypeID = GARRISON_TYPE_CLASS_ORDER;
     addMissionResult.State = CLASS_HALL_MISSION_STATE_OFFERED;
     addMissionResult.Mission = mission.PacketInfo;
-    if (std::vector<WorldPackets::Garrison::GarrisonMissionReward> const* rewards = sGarrisonMgr.GetClassHallMissionRewards(entry->ID))
+    if (std::vector<WorldPackets::Garrison::GarrisonMissionReward> const* rewards = sGarrisonMgr.GetClassHallMissionRewards(mission.Entry->ID))
         addMissionResult.Rewards = *rewards;
 
     addMissionResult.CanStart = true;

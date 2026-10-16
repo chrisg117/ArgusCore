@@ -77,6 +77,7 @@ private:
     static void InitMission(Mission& mission, GarrMissionEntry const* entry, uint64 dbId, time_t offerTime);
     bool IsConditionMet(GarrMissionEntry const* mission) const;
     void AddMission(GarrMissionEntry const* entry, time_t offerTime, bool notify);
+    void SendAddMission(Mission const& mission) const;
     static bool IsOfferExpired(Mission const& mission, time_t now);
     bool IsOpenNpc(ObjectGuid npcGuid) const;
     GarrisonError CanStartMission(Mission const* mission, std::vector<ClassHallFollowers::Follower const*> const& team) const;
@@ -85,6 +86,7 @@ private:
     static std::vector<GarrMechanicEntry const*> GetMechanics(GarrMissionEntry const* mission, uint64 dbId);
     static double GetBias(GarrMissionEntry const* mission, ClassHallFollowers::Follower const& follower);
     uint32 GetSuccessChance(Mission const& mission, std::vector<ClassHallFollowers::Follower const*> const& team) const;
+    static uint32 GetExperienceBonus(Mission const& mission);
 
     Player* _owner;
     ClassHall* _classHall;

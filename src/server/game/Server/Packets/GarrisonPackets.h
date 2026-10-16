@@ -423,6 +423,51 @@ namespace WorldPackets
             GarrisonFollower Follower;
         };
 
+        class GarrisonFollowerChangedXp final : public ServerPacket
+        {
+        public:
+            explicit GarrisonFollowerChangedXp() : ServerPacket(SMSG_GARRISON_FOLLOWER_CHANGED_XP, 4 + 4 + 2 * (8 + 4 * 12 + 5 * 4 + 1)) { }
+
+            WorldPacket const* Write() override;
+
+            int32 XPEarned = 0;
+            int32 XPSource = 0;
+            GarrisonFollower Before;
+            GarrisonFollower After;
+        };
+
+        class GarrisonFollowerChangedItemLevel final : public ServerPacket
+        {
+        public:
+            explicit GarrisonFollowerChangedItemLevel() : ServerPacket(SMSG_GARRISON_FOLLOWER_CHANGED_ITEM_LEVEL, 8 + 4 * 12 + 5 * 4 + 1) { }
+
+            WorldPacket const* Write() override;
+
+            GarrisonFollower Follower;
+        };
+
+        class GarrisonFollowerChangedQuality final : public ServerPacket
+        {
+        public:
+            explicit GarrisonFollowerChangedQuality() : ServerPacket(SMSG_GARRISON_FOLLOWER_CHANGED_QUALITY, 8 + 4 * 12 + 5 * 4 + 1) { }
+
+            WorldPacket const* Write() override;
+
+            GarrisonFollower Follower;
+        };
+
+        // the whole follower; the 7.3.5 client applies it without telling its interface
+        class GarrisonUpdateFollower final : public ServerPacket
+        {
+        public:
+            explicit GarrisonUpdateFollower() : ServerPacket(SMSG_GARRISON_UPDATE_FOLLOWER, 4 + 8 + 4 * 12 + 5 * 4 + 1) { }
+
+            WorldPacket const* Write() override;
+
+            uint32 Result = 0;
+            GarrisonFollower Follower;
+        };
+
         class GarrisonNumFollowerActivationsRemaining final : public ServerPacket
         {
         public:
