@@ -145,13 +145,26 @@ void ClassHallMissions::LoadFromDB(PreparedQueryResult missions)
 
     // a follower can only be on a mission the character holds in progress, or completed with its chest unopened
     ClassHallFollowers& followers = _classHall->GetFollowers();
+    std::vector<uint64> expired;
     for (auto const& [dbId, follower] : followers.GetAllFollowers())
     {
         uint32 missionId = follower.PacketInfo.CurrentMissionID;
+        auto itr = missionId ? _missions.find(missionId) : _missions.end();
+        if (follower.IsExpired())
+        {
+            // an expired troop stays only on a completed mission, until its chest is opened
+            if (itr != _missions.end() && itr->second.PacketInfo.MissionState == CLASS_HALL_MISSION_STATE_COMPLETED)
+                continue;
+
+            TC_LOG_ERROR("entities.player", "ClassHallMissions::LoadFromDB: player {} has a class hall troop at 0 vitality that no completed mission holds (follower {}, GarrMission {}), removed.",
+                _owner->GetGUID().ToString(), dbId, missionId);
+            expired.push_back(dbId);
+            continue;
+        }
+
         if (!missionId)
             continue;
 
-        auto itr = _missions.find(missionId);
         if (itr != _missions.end() && itr->second.PacketInfo.MissionState != CLASS_HALL_MISSION_STATE_OFFERED)
             continue;
 
@@ -159,6 +172,9 @@ void ClassHallMissions::LoadFromDB(PreparedQueryResult missions)
             _owner->GetGUID().ToString(), dbId, missionId);
         followers.SetFollowerMission(dbId, 0);
     }
+
+    for (uint64 dbId : expired)
+        followers.RemoveExpiredTroop(dbId, false);
 }
 
 void ClassHallMissions::SaveToDB(CharacterDatabaseTransaction trans) const
@@ -647,9 +663,22 @@ void ClassHallMissions::CompleteMission(ObjectGuid npcGuid, uint32 garrMissionId
     completeMissionResult.Succeeded = mission.PacketInfo.SuccessChance >= 100 || roll_chance_i(int32(mission.PacketInfo.SuccessChance));
 
     ClassHallFollowers& followers = _classHall->GetFollowers();
+    std::vector<ClassHallFollowers::Follower const*> team;
     for (auto const& [dbId, follower] : followers.GetAllFollowers())
+    {
         if (follower.PacketInfo.CurrentMissionID == garrMissionId)
+        {
             completeMissionResult.Followers.push_back({ .FollowerDBID = dbId, .Flags = 0 });
+            team.push_back(&follower);
+        }
+    }
+
+    // the troops wear out on every mission, and all of it on one whose Lethal threat the team does not counter
+    bool lethal = GetTeamEffects(mission, team).Lethal;
+    std::vector<std::pair<uint64 /*dbId*/, uint32 /*vitality*/>> troops;
+    for (ClassHallFollowers::Follower const* follower : team)
+        if (follower->IsTroop())
+            troops.emplace_back(follower->PacketInfo.DbID, lethal || !follower->PacketInfo.Durability ? 0 : follower->PacketInfo.Durability - 1);
 
     // a successful mission waits for its chest to be opened, with its followers still on it: the client's
     // report on it shows them. The client takes every completed mission for a successful one, so a
@@ -657,6 +686,10 @@ void ClassHallMissions::CompleteMission(ObjectGuid npcGuid, uint32 garrMissionId
     if (completeMissionResult.Succeeded)
     {
         mission.PacketInfo.MissionState = CLASS_HALL_MISSION_STATE_COMPLETED;
+
+        // an expired troop stays on the mission until the chest is opened
+        for (auto const& [dbId, vitality] : troops)
+            followers.SetVitality(dbId, vitality);
 
         // only a success gives experience
         uint32 experience = mission.Entry->BaseFollowerXP + GetExperienceBonus(mission);
@@ -667,9 +700,18 @@ void ClassHallMissions::CompleteMission(ObjectGuid npcGuid, uint32 garrMissionId
     {
         // the 7.3.5 client does not take the complete reply, so it is told with the messages it takes
         for (WorldPackets::Garrison::GarrisonMissionFollowerInfo const& follower : completeMissionResult.Followers)
-        {
             followers.SetFollowerMission(follower.FollowerDBID, 0);
-            followers.SendUpdateFollower(follower.FollowerDBID);
+
+        for (auto const& [dbId, vitality] : troops)
+            followers.SetVitality(dbId, vitality);
+
+        for (WorldPackets::Garrison::GarrisonMissionFollowerInfo const& follower : completeMissionResult.Followers)
+        {
+            ClassHallFollowers::Follower const* freed = followers.GetFollower(follower.FollowerDBID);
+            if (freed && freed->IsExpired())
+                followers.RemoveExpiredTroop(follower.FollowerDBID, true);
+            else if (freed && !freed->IsTroop())
+                followers.SendUpdateFollower(follower.FollowerDBID);
         }
 
         uint64 dbId = mission.PacketInfo.DbID;
@@ -707,9 +749,19 @@ void ClassHallMissions::BonusRoll(ObjectGuid npcGuid, uint32 garrMissionId)
     GiveRewards(garrMissionId);
 
     ClassHallFollowers& followers = _classHall->GetFollowers();
+    std::vector<uint64> expired;
     for (auto const& [dbId, follower] : followers.GetAllFollowers())
-        if (follower.PacketInfo.CurrentMissionID == garrMissionId)
-            followers.SetFollowerMission(dbId, 0);
+    {
+        if (follower.PacketInfo.CurrentMissionID != garrMissionId)
+            continue;
+
+        followers.SetFollowerMission(dbId, 0);
+        if (follower.IsExpired())
+            expired.push_back(dbId);
+    }
+
+    for (uint64 dbId : expired)
+        followers.RemoveExpiredTroop(dbId, true);
 
     _missions.erase(itr);
     _owner->SendDirectMessage(bonusRollResult.Write());

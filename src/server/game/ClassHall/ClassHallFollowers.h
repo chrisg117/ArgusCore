@@ -60,6 +60,10 @@ public:
         std::array<uint32, MAX_EQUIPMENT_SLOTS> Equipment = { };  // the trait in each equipment slot, 0 for none
 
         bool IsActive() const { return (PacketInfo.FollowerStatus & FOLLOWER_STATUS_INACTIVE) == 0; }
+        bool IsTroop() const { return (PacketInfo.FollowerStatus & FOLLOWER_STATUS_TROOP) != 0; }
+
+        // a troop missions have used up
+        bool IsExpired() const { return IsTroop() && !PacketInfo.Durability; }
     };
 
     ClassHallFollowers(Player* owner, ClassHall const* classHall);
@@ -78,6 +82,8 @@ public:
     Follower const* GetChampion(uint32 garrFollowerId) const;
     std::map<uint64 /*dbId*/, Follower> const& GetAllFollowers() const { return _followers; }
     void SetFollowerMission(uint64 dbId, uint32 garrMissionId);
+    void SetVitality(uint64 dbId, uint32 vitality);
+    void RemoveExpiredTroop(uint64 dbId, bool notify);
     void AddExperience(uint64 dbId, uint32 amount, uint32 source);
     void SendUpdateFollower(uint64 dbId) const;
     void UpgradeItemLevel(uint64 dbId, GarrItemLevelUpgradeDataEntry const* upgrade, int32 amount);
