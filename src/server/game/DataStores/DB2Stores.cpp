@@ -125,9 +125,11 @@ DB2Storage<GarrEncounterEntry>                  sGarrEncounterStore("GarrEncount
 DB2Storage<GarrEncounterSetXEncounterEntry>     sGarrEncounterSetXEncounterStore("GarrEncounterSetXEncounter.db2", &GarrEncounterSetXEncounterLoadInfo::Instance);
 DB2Storage<GarrEncounterXMechanicEntry>         sGarrEncounterXMechanicStore("GarrEncounterXMechanic.db2", &GarrEncounterXMechanicLoadInfo::Instance);
 DB2Storage<GarrFollowerEntry>                   sGarrFollowerStore("GarrFollower.db2", &GarrFollowerLoadInfo::Instance);
+DB2Storage<GarrFollowerLevelXPEntry>            sGarrFollowerLevelXPStore("GarrFollowerLevelXP.db2", &GarrFollowerLevelXPLoadInfo::Instance);
 DB2Storage<GarrFollowerQualityEntry>            sGarrFollowerQualityStore("GarrFollowerQuality.db2", &GarrFollowerQualityLoadInfo::Instance);
 DB2Storage<GarrFollowerTypeEntry>               sGarrFollowerTypeStore("GarrFollowerType.db2", &GarrFollowerTypeLoadInfo::Instance);
 DB2Storage<GarrFollowerXAbilityEntry>           sGarrFollowerXAbilityStore("GarrFollowerXAbility.db2", &GarrFollowerXAbilityLoadInfo::Instance);
+DB2Storage<GarrItemLevelUpgradeDataEntry>       sGarrItemLevelUpgradeDataStore("GarrItemLevelUpgradeData.db2", &GarrItemLevelUpgradeDataLoadInfo::Instance);
 DB2Storage<GarrMechanicEntry>                   sGarrMechanicStore("GarrMechanic.db2", &GarrMechanicLoadInfo::Instance);
 DB2Storage<GarrMechanicSetXMechanicEntry>       sGarrMechanicSetXMechanicStore("GarrMechanicSetXMechanic.db2", &GarrMechanicSetXMechanicLoadInfo::Instance);
 DB2Storage<GarrMechanicTypeEntry>               sGarrMechanicTypeStore("GarrMechanicType.db2", &GarrMechanicTypeLoadInfo::Instance);
@@ -655,9 +657,11 @@ uint32 DB2Manager::LoadStores(std::string const& dataPath, LocaleConstant defaul
     LOAD_DB2(sGarrEncounterSetXEncounterStore);
     LOAD_DB2(sGarrEncounterXMechanicStore);
     LOAD_DB2(sGarrFollowerStore);
+    LOAD_DB2(sGarrFollowerLevelXPStore);
     LOAD_DB2(sGarrFollowerQualityStore);
     LOAD_DB2(sGarrFollowerTypeStore);
     LOAD_DB2(sGarrFollowerXAbilityStore);
+    LOAD_DB2(sGarrItemLevelUpgradeDataStore);
     LOAD_DB2(sGarrMechanicStore);
     LOAD_DB2(sGarrMechanicSetXMechanicStore);
     LOAD_DB2(sGarrMechanicTypeStore);

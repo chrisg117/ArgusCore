@@ -44,7 +44,8 @@ class TC_GAME_API ClassHall
 public:
     explicit ClassHall(Player* owner);
 
-    bool LoadFromDB(PreparedQueryResult classHall, PreparedQueryResult talents, PreparedQueryResult followers, PreparedQueryResult shipments,
+    bool LoadFromDB(PreparedQueryResult classHall, PreparedQueryResult talents, PreparedQueryResult followers, PreparedQueryResult equipment,
+        PreparedQueryResult shipments,
         PreparedQueryResult missions);
     void SaveToDB(CharacterDatabaseTransaction trans) const;
     static void DeleteFromDB(ObjectGuid::LowType ownerGuid, CharacterDatabaseTransaction trans);
