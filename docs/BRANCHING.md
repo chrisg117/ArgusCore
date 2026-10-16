@@ -102,6 +102,9 @@ An engine branch cannot run on its own, because the Docker files are only on
 - `engine/class-hall-follower-growth`: class hall engine, sixth piece
   (follower experience, levels, quality, item level and equipment),
   stacked on the missions. Landed in `dev`.
+- `engine/class-hall-mission-extras`: class hall engine, seventh piece
+  (the whole team's chance, cost and duration, troop vitality, Lethal,
+  heals), stacked on the follower growth. Landed in `dev`.
 - `engine/quest-completed-bit`: one fix, cut from `main`: quest completed
   bits were written to the wrong block. The talents need it. Landed in
   `dev`.

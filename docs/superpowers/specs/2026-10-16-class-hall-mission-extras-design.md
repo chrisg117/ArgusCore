@@ -2,7 +2,7 @@
 
 Date: 2026-10-16
 Branch: `engine/class-hall-mission-extras`, stacked on `engine/class-hall-follower-growth`
-Status: draft, awaiting review
+Status: built and tested in game on 2026-10-16; landed in `dev`
 Builds on: `2026-10-14-class-hall-missions-design.md`,
 `2026-10-15-class-hall-follower-growth-design.md`
 
@@ -264,6 +264,53 @@ Checks, in a few short logins:
 - **The parked mission bug** (issue #1): the client drops the mission
   complete reply, so the report does not show troop deaths as they
   happen; the removal arrives in its own message.
+
+## What the tests showed
+
+Tested in game on 2026-10-16 with a priest, hand-planted champions,
+troops and missions, a test add-on that read the client's own chance,
+cost and duration for every team of one to three followers on 18
+missions (6,714 teams), and the packet log. The rule was fitted to half
+the teams and checked on the other half; it matches all of them.
+
+- **Threats.** A threat whose type a team ability counters loses all its
+  effects: duration, cost, Lethal and the cap at 100. The client shows
+  an uncountered threat's changes even with no team on the mission.
+- **Multipliers multiply** (3 h with two 0.8 abilities is 6,912 s), and
+  the cost and duration are rounded to the nearest whole number (800
+  times 0.7 shows 560).
+- **The 4 h and 8 h bonuses** compare the duration the team ends with,
+  strictly: a 6 h mission doubled to 12 h counts as longer than 8 h; a
+  mission of exactly 4 h is not shorter than 4 h.
+- **A champion far below the mission** still brings its cost and duration
+  abilities, but nothing to the chance.
+- **A term the design did not know: the mission's base chance.** Many
+  missions have `BaseCompletionChance` 75. The team's power and counters
+  take the chance from there to 100, and the flat bonuses come on top:
+  `base + (100 - base) x share + bonuses`. Missions with base 0 are
+  unchanged. The chance stops at 200.
+- **The conditions.** Per-vitality bonuses count the vitality of the
+  team's troops, not the troops. "Troops of only N vitality" needs one
+  troop at N, not all. "Troops of different kinds" means two class specs:
+  two troop kinds of the same spec give nothing. "No other champion"
+  counts champions only; troops may come along.
+- **Heals** are the action 28 rows with one amount (Light of Valor,
+  Leeching Poisons); the amount is `ActionValueFlat`. A heal goes to a
+  troop still above 0 after the mission's loss, so a troop at 1 with a
+  healer still expires; no source says which way retail does it.
+- **The removal message** for an expired troop: the 7.3.5 client drops
+  the troop for both values of `Destroyed`.
+- **Checked in game:** stored chances, costs taken and durations equal
+  what the table showed; a changed duration survives a relog; a team
+  that cannot afford the doubled cost is refused by the client itself
+  (the server check is there for a modified client); troops lose one per
+  mission, all on an uncountered Lethal mission, one on a countered one;
+  an expired troop leaves at once on a failure and at the chest on a
+  success, also after a relog before the chest; a heal gives the point
+  back; a healer with no troop changes nothing.
+- **The final review** found the chance worked out in a different order
+  than the client, so a chance exactly on the half could round the other
+  way; fixed before landing.
 
 ## What comes next
 
