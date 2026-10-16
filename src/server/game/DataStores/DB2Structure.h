@@ -1550,6 +1550,15 @@ struct GarrFollowerEntry
     uint32 ID;
 };
 
+struct GarrFollowerLevelXPEntry
+{
+    uint32 ID;
+    uint16 XpToNextLevel;
+    uint16 ShipmentXP;
+    uint8 FollowerLevel;
+    uint8 GarrFollowerTypeID;
+};
+
 struct GarrFollowerQualityEntry
 {
     uint32 ID;
@@ -1580,6 +1589,15 @@ struct GarrFollowerXAbilityEntry
     uint16 GarrAbilityID;
     uint8 FactionIndex;
     uint16 GarrFollowerID;
+};
+
+struct GarrItemLevelUpgradeDataEntry
+{
+    uint32 ID;
+    int32 Operation;
+    int32 MinItemLevel;
+    int32 MaxItemLevel;
+    int32 FollowerTypeID;
 };
 
 struct GarrMechanicEntry

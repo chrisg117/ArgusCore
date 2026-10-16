@@ -398,6 +398,38 @@ WorldPacket const* GarrisonFollowerChangedStatus::Write()
     return &_worldPacket;
 }
 
+WorldPacket const* GarrisonFollowerChangedXp::Write()
+{
+    _worldPacket << int32(XPEarned);
+    _worldPacket << int32(XPSource);
+    _worldPacket << Before;
+    _worldPacket << After;
+
+    return &_worldPacket;
+}
+
+WorldPacket const* GarrisonFollowerChangedItemLevel::Write()
+{
+    _worldPacket << Follower;
+
+    return &_worldPacket;
+}
+
+WorldPacket const* GarrisonFollowerChangedQuality::Write()
+{
+    _worldPacket << Follower;
+
+    return &_worldPacket;
+}
+
+WorldPacket const* GarrisonUpdateFollower::Write()
+{
+    _worldPacket << uint32(Result);
+    _worldPacket << Follower;
+
+    return &_worldPacket;
+}
+
 WorldPacket const* GarrisonNumFollowerActivationsRemaining::Write()
 {
     _worldPacket << uint32(GarrSiteID);

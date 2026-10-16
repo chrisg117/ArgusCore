@@ -23,6 +23,7 @@
 #include "GarrisonMgr.h"
 #include "Log.h"
 #include "Player.h"
+#include "SpellInfo.h"
 #include <algorithm>
 #include <set>
 
@@ -36,6 +37,30 @@ bool IsTroop(GarrFollowerEntry const* follower)
 {
     return follower->Vitality > 0;
 }
+
+// an armament raises one of the two item levels: by an amount up to the row's cap, or to a value
+bool IsArmorUpgrade(GarrItemLevelUpgradeDataEntry const* upgrade)
+{
+    return upgrade->Operation == 0 || upgrade->Operation == 2;
+}
+
+uint32 GetUpgradedItemLevel(uint32 itemLevel, GarrItemLevelUpgradeDataEntry const* upgrade, int32 amount)
+{
+    if (upgrade->Operation == 2 || upgrade->Operation == 3)
+        return itemLevel >= uint32(upgrade->MaxItemLevel) ? itemLevel : std::min(itemLevel + amount, uint32(upgrade->MaxItemLevel));
+
+    // never lowered
+    return std::max(itemLevel, uint32(std::min(amount, upgrade->MaxItemLevel)));
+}
+
+GarrFollowerLevelXPEntry const* GetLevelXP(uint32 garrFollowerTypeId, uint32 level)
+{
+    for (GarrFollowerLevelXPEntry const* entry : sGarrFollowerLevelXPStore)
+        if (entry->GarrFollowerTypeID == garrFollowerTypeId && entry->FollowerLevel == level)
+            return entry;
+
+    return nullptr;
+}
 }
 
 ClassHallFollowers::ClassHallFollowers(Player* owner, ClassHall const* classHall) : _owner(owner), _classHall(classHall),
@@ -43,7 +68,7 @@ ClassHallFollowers::ClassHallFollowers(Player* owner, ClassHall const* classHall
 {
 }
 
-void ClassHallFollowers::LoadFromDB(PreparedQueryResult followers)
+void ClassHallFollowers::LoadFromDB(PreparedQueryResult followers, PreparedQueryResult equipment)
 {
     if (!followers)
         return;
@@ -75,8 +100,33 @@ void ClassHallFollowers::LoadFromDB(PreparedQueryResult followers)
         follower.PacketInfo.Durability = fields[7].GetUInt32();
         follower.PacketInfo.FollowerStatus = fields[8].GetUInt32();
         follower.PacketInfo.CurrentMissionID = fields[9].GetUInt32();
-        follower.PacketInfo.AbilityID = GetAbilities(entry, follower.PacketInfo.Quality);
     } while (followers->NextRow());
+
+    if (equipment)
+    {
+        do
+        {
+            //           0     1          2
+            // SELECT dbId, slot, abilityId FROM character_class_hall_follower_equipment WHERE guid = ?
+            Field* fields = equipment->Fetch();
+            uint64 dbId = fields[0].GetUInt64();
+            uint32 slot = fields[1].GetUInt8();
+            uint32 abilityId = fields[2].GetUInt32();
+            GarrAbilityEntry const* trait = sGarrAbilityStore.LookupEntry(abilityId);
+            auto itr = _followers.find(dbId);
+            if (itr == _followers.end() || slot >= MAX_EQUIPMENT_SLOTS || !trait || !(trait->Flags & GARRISON_ABILITY_FLAG_TRAIT))
+            {
+                TC_LOG_ERROR("entities.player", "ClassHallFollowers::LoadFromDB: player {} has class hall follower equipment that cannot be held (follower {}, slot {}, GarrAbility {}), skipped.",
+                    _owner->GetGUID().ToString(), dbId, slot, abilityId);
+                continue;
+            }
+
+            itr->second.Equipment[slot] = abilityId;
+        } while (equipment->NextRow());
+    }
+
+    for (auto& [dbId, follower] : _followers)
+        follower.PacketInfo.AbilityID = GetAbilities(follower.Entry, follower.PacketInfo.Quality, follower.Equipment);
 }
 
 void ClassHallFollowers::SaveToDB(CharacterDatabaseTransaction trans) const
@@ -102,11 +152,35 @@ void ClassHallFollowers::SaveToDB(CharacterDatabaseTransaction trans) const
         stmt->setUInt32(index++, follower.PacketInfo.CurrentMissionID);
         trans->Append(stmt);
     }
+
+    stmt = CharacterDatabase.GetPreparedStatement(CHAR_DEL_CHARACTER_CLASS_HALL_FOLLOWER_EQUIPMENT);
+    stmt->setUInt64(0, _owner->GetGUID().GetCounter());
+    trans->Append(stmt);
+
+    for (auto const& [dbId, follower] : _followers)
+    {
+        for (uint32 slot = 0; slot < MAX_EQUIPMENT_SLOTS; ++slot)
+        {
+            if (!follower.Equipment[slot])
+                continue;
+
+            stmt = CharacterDatabase.GetPreparedStatement(CHAR_INS_CHARACTER_CLASS_HALL_FOLLOWER_EQUIPMENT);
+            stmt->setUInt64(0, _owner->GetGUID().GetCounter());
+            stmt->setUInt64(1, dbId);
+            stmt->setUInt8(2, uint8(slot));
+            stmt->setUInt32(3, follower.Equipment[slot]);
+            trans->Append(stmt);
+        }
+    }
 }
 
 void ClassHallFollowers::DeleteFromDB(ObjectGuid::LowType ownerGuid, CharacterDatabaseTransaction trans)
 {
     CharacterDatabasePreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_DEL_CHARACTER_CLASS_HALL_FOLLOWERS);
+    stmt->setUInt64(0, ownerGuid);
+    trans->Append(stmt);
+
+    stmt = CharacterDatabase.GetPreparedStatement(CHAR_DEL_CHARACTER_CLASS_HALL_FOLLOWER_EQUIPMENT);
     stmt->setUInt64(0, ownerGuid);
     trans->Append(stmt);
 }
@@ -221,11 +295,237 @@ ClassHallFollowers::Follower const* ClassHallFollowers::GetFollower(uint64 dbId)
     return itr != _followers.end() ? &itr->second : nullptr;
 }
 
+// champions are unique: a character has a GarrFollower at most once
+ClassHallFollowers::Follower const* ClassHallFollowers::GetChampion(uint32 garrFollowerId) const
+{
+    for (auto const& [dbId, follower] : _followers)
+        if (follower.Entry->ID == garrFollowerId && !IsTroop(follower.Entry))
+            return &follower;
+
+    return nullptr;
+}
+
 void ClassHallFollowers::SetFollowerMission(uint64 dbId, uint32 garrMissionId)
 {
     auto itr = _followers.find(dbId);
     if (itr != _followers.end())
         itr->second.PacketInfo.CurrentMissionID = garrMissionId;
+}
+
+// Experience raises a champion's level up to the cap, then its quality; each step keeps what is
+// left over, so one gain can give several. At a quality with no next step the experience stops.
+// Troops do not grow.
+void ClassHallFollowers::AddExperience(uint64 dbId, uint32 amount, uint32 source)
+{
+    auto itr = _followers.find(dbId);
+    if (itr == _followers.end() || IsTroop(itr->second.Entry))
+        return;
+
+    Follower& follower = itr->second;
+    WorldPackets::Garrison::GarrisonFollowerChangedXp changedXp;
+    changedXp.XPEarned = int32(amount);
+    changedXp.XPSource = int32(source);
+    changedXp.Before = follower.PacketInfo;
+
+    uint32 followerType = follower.Entry->GarrFollowerTypeID;
+    uint32 levelCap = GetLevelCap(followerType);
+    uint32 quality = follower.PacketInfo.Quality;
+    uint32 level = follower.PacketInfo.FollowerLevel;
+    uint32 xp = follower.PacketInfo.Xp + amount;
+    while (true)
+    {
+        if (level < levelCap)
+        {
+            GarrFollowerLevelXPEntry const* levelXp = GetLevelXP(followerType, level);
+            if (!levelXp || !levelXp->XpToNextLevel || xp < levelXp->XpToNextLevel)
+                break;
+
+            xp -= levelXp->XpToNextLevel;
+            ++level;
+            continue;
+        }
+
+        GarrFollowerQualityEntry const* followerQuality = GetQuality(followerType, quality);
+        if (!followerQuality || !followerQuality->XpToNextQuality)
+        {
+            xp = 0;
+            break;
+        }
+
+        if (xp < followerQuality->XpToNextQuality)
+            break;
+
+        xp -= followerQuality->XpToNextQuality;
+        ++quality;
+    }
+
+    bool qualityChanged = quality != follower.PacketInfo.Quality;
+    follower.PacketInfo.Quality = quality;
+    follower.PacketInfo.FollowerLevel = level;
+    follower.PacketInfo.Xp = xp;
+    // a higher quality can bring an ability or an equipment slot
+    if (qualityChanged)
+        follower.PacketInfo.AbilityID = GetAbilities(follower.Entry, quality, follower.Equipment);
+
+    changedXp.After = follower.PacketInfo;
+    _owner->SendDirectMessage(changedXp.Write());
+
+    if (qualityChanged)
+    {
+        WorldPackets::Garrison::GarrisonFollowerChangedQuality changedQuality;
+        changedQuality.Follower = follower.PacketInfo;
+        _owner->SendDirectMessage(changedQuality.Write());
+    }
+}
+
+void ClassHallFollowers::SendUpdateFollower(uint64 dbId) const
+{
+    auto itr = _followers.find(dbId);
+    if (itr == _followers.end())
+        return;
+
+    WorldPackets::Garrison::GarrisonUpdateFollower updateFollower;
+    updateFollower.Follower = itr->second.PacketInfo;
+    _owner->SendDirectMessage(updateFollower.Write());
+}
+
+void ClassHallFollowers::UpgradeItemLevel(uint64 dbId, GarrItemLevelUpgradeDataEntry const* upgrade, int32 amount)
+{
+    auto itr = _followers.find(dbId);
+    if (itr == _followers.end())
+        return;
+
+    WorldPackets::Garrison::GarrisonFollower& follower = itr->second.PacketInfo;
+    uint32& itemLevel = IsArmorUpgrade(upgrade) ? follower.ItemLevelArmor : follower.ItemLevelWeapon;
+    uint32 upgraded = GetUpgradedItemLevel(itemLevel, upgrade, amount);
+    if (upgraded == itemLevel)
+        return;
+
+    itemLevel = upgraded;
+
+    WorldPackets::Garrison::GarrisonFollowerChangedItemLevel changedItemLevel;
+    changedItemLevel.Follower = follower;
+    _owner->SendDirectMessage(changedItemLevel.Write());
+}
+
+void ClassHallFollowers::Equip(uint64 dbId, uint32 slot, GarrAbilityEntry const* trait)
+{
+    auto itr = _followers.find(dbId);
+    if (itr == _followers.end() || slot >= MAX_EQUIPMENT_SLOTS)
+        return;
+
+    Follower& follower = itr->second;
+    follower.Equipment[slot] = trait->ID;
+    follower.PacketInfo.AbilityID = GetAbilities(follower.Entry, follower.PacketInfo.Quality, follower.Equipment);
+    SendUpdateFollower(dbId);
+}
+
+// The client names an equipment slot by the trait in it now: the empty slot or the equipment there.
+// Slots count among the follower's traits, in order; -1 if the trait is not one of them.
+int32 ClassHallFollowers::GetEquipmentSlot(Follower const& follower, uint32 abilityId)
+{
+    int32 slot = 0;
+    for (GarrAbilityEntry const* ability : follower.PacketInfo.AbilityID)
+    {
+        if (!(ability->Flags & GARRISON_ABILITY_FLAG_TRAIT))
+            continue;
+
+        if (ability->ID == abilityId)
+            return slot;
+
+        ++slot;
+    }
+
+    return -1;
+}
+
+GarrItemLevelUpgradeDataEntry const* ClassHallFollowers::GetItemLevelUpgrade(int32 garrItemLevelUpgradeDataId)
+{
+    GarrItemLevelUpgradeDataEntry const* upgrade = sGarrItemLevelUpgradeDataStore.LookupEntry(garrItemLevelUpgradeDataId);
+    return upgrade && upgrade->FollowerTypeID == FOLLOWER_TYPE_CLASS_ORDER ? upgrade : nullptr;
+}
+
+// the follower item spells of the class hall: armaments name a class hall upgrade row, the others
+// name the class hall follower type
+bool ClassHallFollowers::IsClassHallFollowerSpell(SpellInfo const* spellInfo)
+{
+    for (SpellEffectInfo const& effect : spellInfo->GetEffects())
+    {
+        if (effect.IsEffect(SPELL_EFFECT_MODIFY_FOLLOWER_ITEM_LEVEL) && GetItemLevelUpgrade(effect.MiscValue))
+            return true;
+
+        if ((effect.IsEffect(SPELL_EFFECT_INCREASE_FOLLOWER_EXPERIENCE) || effect.IsEffect(SPELL_EFFECT_LEARN_FOLLOWER_ABILITY))
+            && effect.MiscValueB == FOLLOWER_TYPE_CLASS_ORDER)
+            return true;
+    }
+
+    return false;
+}
+
+// An item is refused before it is used when it would be wasted: no such champion, one that cannot
+// take it now, or a change that would change nothing.
+SpellCastResult ClassHallFollowers::CheckItemCast(Player const* caster, SpellInfo const* spellInfo, uint32 garrFollowerId, uint32 abilityId)
+{
+    ClassHall const* classHall = caster->GetClassHall();
+    if (!classHall)
+        return SPELL_FAILED_GARRISON_NOT_OWNED;
+
+    ClassHallFollowers const& followers = classHall->GetFollowers();
+    Follower const* follower = followers.GetChampion(garrFollowerId);
+    if (!follower || !follower->IsActive())
+        return SPELL_FAILED_BAD_TARGETS;
+
+    if (follower->PacketInfo.CurrentMissionID)
+        return SPELL_FAILED_GARRISON_FOLLOWER_ON_MISSION;
+
+    uint32 followerType = follower->Entry->GarrFollowerTypeID;
+    bool atLevelCap = follower->PacketInfo.FollowerLevel >= GetLevelCap(followerType);
+    bool itemLevelChanges = false;
+    bool hasItemLevelUpgrade = false;
+    for (SpellEffectInfo const& effect : spellInfo->GetEffects())
+    {
+        if (effect.IsEffect(SPELL_EFFECT_INCREASE_FOLLOWER_EXPERIENCE))
+        {
+            // experience at the top quality would be lost
+            GarrFollowerQualityEntry const* quality = GetQuality(followerType, follower->PacketInfo.Quality);
+            if (atLevelCap && (!quality || !quality->XpToNextQuality))
+                return SPELL_FAILED_GARRISON_FOLLOWER_MAX_QUALITY;
+        }
+        else if (effect.IsEffect(SPELL_EFFECT_LEARN_FOLLOWER_ABILITY))
+        {
+            // equipment fills an unlocked equipment slot; abilities for a single mission are not handled
+            GarrAbilityEntry const* trait = sGarrAbilityStore.LookupEntry(effect.MiscValue);
+            if (!trait || !(trait->Flags & GARRISON_ABILITY_FLAG_TRAIT) || GetEquipmentSlot(*follower, abilityId) < 0)
+                return SPELL_FAILED_BAD_TARGETS;
+
+            for (GarrAbilityEntry const* ability : follower->PacketInfo.AbilityID)
+                if (ability->ID == trait->ID)
+                    return SPELL_FAILED_GARRISON_FOLLOWER_HAS_ABILITY;
+        }
+        else if (effect.IsEffect(SPELL_EFFECT_MODIFY_FOLLOWER_ITEM_LEVEL))
+        {
+            GarrItemLevelUpgradeDataEntry const* upgrade = GetItemLevelUpgrade(effect.MiscValue);
+            if (!upgrade)
+                continue;
+
+            hasItemLevelUpgrade = true;
+            uint32 itemLevel = IsArmorUpgrade(upgrade) ? follower->PacketInfo.ItemLevelArmor : follower->PacketInfo.ItemLevelWeapon;
+            if (GetUpgradedItemLevel(itemLevel, upgrade, effect.CalcValue(caster)) != itemLevel)
+                itemLevelChanges = true;
+        }
+    }
+
+    if (hasItemLevelUpgrade)
+    {
+        // a champion has an item level only at the level cap
+        if (!atLevelCap)
+            return SPELL_FAILED_GARRISON_FOLLOWER_NOT_MAX_LEVEL;
+
+        if (!itemLevelChanges)
+            return SPELL_FAILED_GARRISON_FOLLOWER_MAX_ITEM_LEVEL;
+    }
+
+    return SPELL_CAST_OK;
 }
 
 void ClassHallFollowers::ResetActivations()
@@ -338,21 +638,33 @@ GarrisonError ClassHallFollowers::CanSetFollowerInactive(Follower const* followe
     return GARRISON_SUCCESS;
 }
 
-std::list<GarrAbilityEntry const*> ClassHallFollowers::GetAbilities(GarrFollowerEntry const* follower, uint32 quality) const
+// the level a follower of this type stops at: the one that needs no experience to a next level
+uint32 ClassHallFollowers::GetLevelCap(uint32 garrFollowerTypeId)
+{
+    uint32 levelCap = 0;
+    for (GarrFollowerLevelXPEntry const* entry : sGarrFollowerLevelXPStore)
+        if (entry->GarrFollowerTypeID == garrFollowerTypeId && !entry->XpToNextLevel)
+            levelCap = std::max<uint32>(levelCap, entry->FollowerLevel);
+
+    return levelCap;
+}
+
+GarrFollowerQualityEntry const* ClassHallFollowers::GetQuality(uint32 garrFollowerTypeId, uint32 quality)
+{
+    for (GarrFollowerQualityEntry const* entry : sGarrFollowerQualityStore)
+        if (entry->GarrFollowerTypeID == garrFollowerTypeId && entry->Quality == quality)
+            return entry;
+
+    return nullptr;
+}
+
+std::list<GarrAbilityEntry const*> ClassHallFollowers::GetAbilities(GarrFollowerEntry const* follower, uint32 quality,
+    std::array<uint32, MAX_EQUIPMENT_SLOTS> const& equipment /*= { }*/) const
 {
     std::list<GarrAbilityEntry const*> abilities;
 
     // how many abilities and traits a follower of this type has at this quality
-    GarrFollowerQualityEntry const* followerQuality = nullptr;
-    for (GarrFollowerQualityEntry const* entry : sGarrFollowerQualityStore)
-    {
-        if (entry->GarrFollowerTypeID == follower->GarrFollowerTypeID && entry->Quality == quality)
-        {
-            followerQuality = entry;
-            break;
-        }
-    }
-
+    GarrFollowerQualityEntry const* followerQuality = GetQuality(follower->GarrFollowerTypeID, quality);
     if (!followerQuality)
         return abilities;
 
@@ -375,7 +687,11 @@ std::list<GarrAbilityEntry const*> ClassHallFollowers::GetAbilities(GarrFollower
             if (traitCount >= followerQuality->TraitCount)
                 continue;
 
-            ++traitCount;
+            // an equipment slot shows its equipment, if any, in place of the empty slot
+            uint32 slot = traitCount++;
+            if ((ability->Flags & GARRISON_ABILITY_FLAG_IS_EMPTY_SLOT) && slot < MAX_EQUIPMENT_SLOTS && equipment[slot])
+                if (GarrAbilityEntry const* equipped = sGarrAbilityStore.LookupEntry(equipment[slot]))
+                    ability = equipped;
         }
         else
         {
