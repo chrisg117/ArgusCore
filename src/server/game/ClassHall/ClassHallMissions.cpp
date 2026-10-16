@@ -116,8 +116,8 @@ void ClassHallMissions::LoadFromDB(PreparedQueryResult missions)
     {
         do
         {
-            //               0     1          2          3              4                5      6
-            // SELECT missionId, dbId, offerTime, startTime, successChance, missionDuration, state FROM character_class_hall_mission WHERE guid = ?
+            //               0     1          2          3              4                5         6      7
+            // SELECT missionId, dbId, offerTime, startTime, successChance, missionDuration, bonusWon, state FROM character_class_hall_mission WHERE guid = ?
             Field* fields = missions->Fetch();
             uint32 missionId = fields[0].GetUInt32();
             uint64 dbId = fields[1].GetUInt64();
@@ -140,7 +140,8 @@ void ClassHallMissions::LoadFromDB(PreparedQueryResult missions)
             // a mission started before its duration was kept has its own
             if (uint32 missionDuration = fields[5].GetUInt32())
                 mission.PacketInfo.MissionDuration = Seconds(missionDuration);
-            mission.PacketInfo.MissionState = fields[6].GetUInt8();
+            mission.BonusWon = fields[6].GetUInt8() != 0;
+            mission.PacketInfo.MissionState = fields[7].GetUInt8();
         } while (missions->NextRow());
     }
 
@@ -195,6 +196,7 @@ void ClassHallMissions::SaveToDB(CharacterDatabaseTransaction trans) const
         stmt->setInt64(index++, mission.PacketInfo.MissionState == CLASS_HALL_MISSION_STATE_OFFERED ? time_t(0) : time_t(mission.PacketInfo.StartTime));
         stmt->setInt32(index++, int32(mission.PacketInfo.SuccessChance));
         stmt->setUInt32(index++, mission.PacketInfo.MissionState == CLASS_HALL_MISSION_STATE_OFFERED ? 0 : uint32(Seconds(mission.PacketInfo.MissionDuration).count()));
+        stmt->setUInt8(index++, uint8(mission.BonusWon));
         stmt->setUInt8(index++, uint8(mission.PacketInfo.MissionState));
         trans->Append(stmt);
     }
@@ -714,6 +716,11 @@ void ClassHallMissions::CompleteMission(ObjectGuid npcGuid, uint32 garrMissionId
     {
         mission.PacketInfo.MissionState = CLASS_HALL_MISSION_STATE_COMPLETED;
 
+        // the chance over 100 is the chance of the bonus rewards, as the client shows it; the 7.3.5
+        // client learns of the result only from the complete reply it drops, so it is not told
+        if (sGarrisonMgr.GetClassHallMissionOvermaxRewards(garrMissionId))
+            mission.BonusWon = roll_chance_i(std::clamp(int32(mission.PacketInfo.SuccessChance) - 100, 0, 100));
+
         // an expired troop stays on the mission until the chest is opened
         for (auto const& [dbId, vitality] : troops)
             followers.SetVitality(dbId, vitality);
@@ -773,7 +780,12 @@ void ClassHallMissions::BonusRoll(ObjectGuid npcGuid, uint32 garrMissionId)
         return;
     }
 
-    GiveRewards(garrMissionId);
+    if (std::vector<WorldPackets::Garrison::GarrisonMissionReward> const* rewards = sGarrisonMgr.GetClassHallMissionRewards(garrMissionId))
+        GiveRewards(*rewards);
+
+    if (itr->second.BonusWon)
+        if (std::vector<WorldPackets::Garrison::GarrisonMissionReward> const* overmaxRewards = sGarrisonMgr.GetClassHallMissionOvermaxRewards(garrMissionId))
+            GiveRewards(*overmaxRewards);
 
     ClassHallFollowers& followers = _classHall->GetFollowers();
     std::vector<uint64> expired;
@@ -794,13 +806,9 @@ void ClassHallMissions::BonusRoll(ObjectGuid npcGuid, uint32 garrMissionId)
     _owner->SendDirectMessage(bonusRollResult.Write());
 }
 
-void ClassHallMissions::GiveRewards(uint32 garrMissionId)
+void ClassHallMissions::GiveRewards(std::vector<WorldPackets::Garrison::GarrisonMissionReward> const& rewards)
 {
-    std::vector<WorldPackets::Garrison::GarrisonMissionReward> const* rewards = sGarrisonMgr.GetClassHallMissionRewards(garrMissionId);
-    if (!rewards)
-        return;
-
-    for (WorldPackets::Garrison::GarrisonMissionReward const& reward : *rewards)
+    for (WorldPackets::Garrison::GarrisonMissionReward const& reward : rewards)
     {
         // an item that does not fit in the bags is mailed
         if (reward.ItemID && reward.ItemQuantity)

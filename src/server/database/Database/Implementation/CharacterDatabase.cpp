@@ -711,8 +711,8 @@ void CharacterDatabaseConnection::DoPrepareStatements()
     PrepareStatement(CHAR_SEL_CHARACTER_CLASS_HALL_SHIPMENTS, "SELECT shipmentId, charShipmentId, creationTime, duration FROM character_class_hall_shipment WHERE guid = ?", CONNECTION_ASYNC);
     PrepareStatement(CHAR_INS_CHARACTER_CLASS_HALL_SHIPMENT, "INSERT INTO character_class_hall_shipment (guid, shipmentId, charShipmentId, creationTime, duration) VALUES (?, ?, ?, ?, ?)", CONNECTION_ASYNC);
     PrepareStatement(CHAR_DEL_CHARACTER_CLASS_HALL_SHIPMENTS, "DELETE FROM character_class_hall_shipment WHERE guid = ?", CONNECTION_ASYNC);
-    PrepareStatement(CHAR_SEL_CHARACTER_CLASS_HALL_MISSIONS, "SELECT missionId, dbId, offerTime, startTime, successChance, missionDuration, state FROM character_class_hall_mission WHERE guid = ?", CONNECTION_ASYNC);
-    PrepareStatement(CHAR_INS_CHARACTER_CLASS_HALL_MISSION, "INSERT INTO character_class_hall_mission (guid, missionId, dbId, offerTime, startTime, successChance, missionDuration, state) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", CONNECTION_ASYNC);
+    PrepareStatement(CHAR_SEL_CHARACTER_CLASS_HALL_MISSIONS, "SELECT missionId, dbId, offerTime, startTime, successChance, missionDuration, bonusWon, state FROM character_class_hall_mission WHERE guid = ?", CONNECTION_ASYNC);
+    PrepareStatement(CHAR_INS_CHARACTER_CLASS_HALL_MISSION, "INSERT INTO character_class_hall_mission (guid, missionId, dbId, offerTime, startTime, successChance, missionDuration, bonusWon, state) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", CONNECTION_ASYNC);
     PrepareStatement(CHAR_DEL_CHARACTER_CLASS_HALL_MISSIONS, "DELETE FROM character_class_hall_mission WHERE guid = ?", CONNECTION_ASYNC);
 
     // Black Market
