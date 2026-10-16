@@ -6631,9 +6631,12 @@ SpellCastResult Spell::CheckCast(bool strict, int32* param1 /*= nullptr*/, int32
             case SPELL_EFFECT_INCREASE_FOLLOWER_EXPERIENCE:
             case SPELL_EFFECT_LEARN_FOLLOWER_ABILITY:
             {
-                Player const* playerCaster = m_caster->ToPlayer();
-                if (playerCaster && ClassHallFollowers::IsClassHallFollowerSpell(m_spellInfo))
+                if (Player const* playerCaster = m_caster->ToPlayer())
                 {
+                    // only class hall followers are handled; any other follower would take the item for nothing
+                    if (!ClassHallFollowers::IsClassHallFollowerSpell(m_spellInfo))
+                        return SPELL_FAILED_BAD_TARGETS;
+
                     SpellCastResult result = ClassHallFollowers::CheckItemCast(playerCaster, m_spellInfo, m_misc.GarrFollower.Id,
                         m_misc.GarrFollower.AbilityId);
                     if (result != SPELL_CAST_OK)
