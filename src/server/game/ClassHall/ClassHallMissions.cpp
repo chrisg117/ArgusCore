@@ -43,24 +43,18 @@ constexpr time_t MISSION_OFFER_INTERVAL = MINUTE;
 // recruitment, zone support and invasion missions are other mechanisms, never on the table
 constexpr uint8 NonTableMissionTypes[] = { 11, 51, 52, 57 };
 
-// what an ability effect (GarrAbilityEffect.AbilityAction) does, for those the success chance reads
+// what an ability effect (GarrAbilityEffect.AbilityAction) does, for those a team's effects read
 enum AbilityAction : uint8
 {
     ABILITY_ACTION_COUNTER_MECHANIC             = 0,    // counters a threat type, with a weight
     ABILITY_ACTION_SUCCESS_CHANCE               = 2,    // a flat bonus
+    ABILITY_ACTION_MISSION_DURATION             = 17,   // the mission's duration times a value
     ABILITY_ACTION_SUCCESS_CHANCE_WITH_SPEC     = 22,   // a flat bonus when a follower of a class spec is on the team
     ABILITY_ACTION_SUCCESS_CHANCE_WITH_MECHANIC = 23,   // a flat bonus when the mission has a threat of a type
-    ABILITY_ACTION_NO_BONUS_LOOT                = 29    // a threat's: the chance stops at 100
+    ABILITY_ACTION_KILL_TROOPS                  = 27,   // a threat's: the troops on the mission are killed
+    ABILITY_ACTION_NO_BONUS_LOOT                = 29,   // a threat's: the chance stops at 100
+    ABILITY_ACTION_MISSION_COST                 = 39    // the mission's cost in a currency times a value
 };
-
-bool HasEffect(uint32 garrAbilityId, uint8 abilityAction)
-{
-    for (GarrAbilityEffectEntry const* effect : sGarrAbilityEffectStore)
-        if (effect->GarrAbilityID == garrAbilityId && effect->AbilityAction == abilityAction)
-            return true;
-
-    return false;
-}
 }
 
 ClassHallMissions::ClassHallMissions(Player* owner, ClassHall* classHall) : _owner(owner), _classHall(classHall), _nextMissionDbId(1),
@@ -328,11 +322,13 @@ double ClassHallMissions::GetBias(GarrMissionEntry const* mission, ClassHallFoll
     return std::clamp(bias, -1.0, 1.0);
 }
 
-// The chance the client shows for a team, worked out the way the client does (measured from the
-// client's own numbers): champions bring power by their bias, abilities counter threats up to each
-// threat type's factor, and both are measured against the threats' factors; flat bonuses are added
-// on top. An uncountered threat that takes the bonus loot keeps the chance at 100.
-uint32 ClassHallMissions::GetSuccessChance(Mission const& mission, std::vector<ClassHallFollowers::Follower const*> const& team) const
+// The chance, cost and duration the client shows for a team, worked out the way the client does
+// (measured from the client's own numbers): champions bring power by their bias, abilities counter
+// threats up to each threat type's factor, and both are measured against the threats' factors; flat
+// bonuses are added on top. An uncountered threat that takes the bonus loot keeps the chance at 100.
+// The team's abilities and the threats it does not counter multiply the cost and the duration, and
+// an uncountered threat can kill the troops.
+ClassHallMissions::TeamEffects ClassHallMissions::GetTeamEffects(Mission const& mission, std::vector<ClassHallFollowers::Follower const*> const& team) const
 {
     std::vector<GarrMechanicEntry const*> mechanics = GetMechanics(mission.Entry, mission.PacketInfo.DbID);
     std::map<uint8 /*garrMechanicTypeId*/, double> factors;
@@ -350,26 +346,33 @@ uint32 ClassHallMissions::GetSuccessChance(Mission const& mission, std::vector<C
 
     double power = 0.0;
     double flat = 0.0;
+    double durationMultiplier = 1.0;
+    double costMultiplier = 1.0;
     std::map<uint8 /*garrMechanicTypeId*/, double> counterWeights;
     for (ClassHallFollowers::Follower const* follower : team)
     {
         bool troop = (follower->PacketInfo.FollowerStatus & FOLLOWER_STATUS_TROOP) != 0;
         double bias = GetBias(mission.Entry, *follower);
 
-        // a champion far below the mission adds nothing, not even its traits
-        if (!troop)
-        {
-            if (bias <= -1.0)
-                continue;
-
+        // a champion far below the mission adds nothing to the chance, not even its traits; it still
+        // changes the cost and the duration
+        bool addsToChance = troop || bias > -1.0;
+        if (!troop && addsToChance)
             power += bias < 0.0 ? 100.0 * (1.0 + bias) : 100.0 + 50.0 * bias;
-        }
 
         for (GarrAbilityEntry const* ability : follower->PacketInfo.AbilityID)
         {
             for (GarrAbilityEffectEntry const* effect : sGarrAbilityEffectStore)
             {
                 if (effect->GarrAbilityID != ability->ID)
+                    continue;
+
+                if (effect->AbilityAction == ABILITY_ACTION_MISSION_DURATION)
+                    durationMultiplier *= effect->ActionValueFlat;
+                else if (effect->AbilityAction == ABILITY_ACTION_MISSION_COST && effect->ActionRecordID == mission.Entry->MissionCostCurrencyTypesID)
+                    costMultiplier *= effect->ActionValueFlat;
+
+                if (!addsToChance)
                     continue;
 
                 switch (effect->AbilityAction)
@@ -405,12 +408,48 @@ uint32 ClassHallMissions::GetSuccessChance(Mission const& mission, std::vector<C
             countered += std::min(itr->second, factor);
     }
 
-    double chance = 100.0 * (power + countered) / (totalFactor + 100.0) + flat;
+    // a threat the team counters does nothing more
+    TeamEffects effects;
+    bool noBonusLoot = false;
     for (GarrMechanicEntry const* mechanic : mechanics)
-        if (!counterWeights.contains(mechanic->GarrMechanicTypeID) && HasEffect(mechanic->GarrAbilityID, ABILITY_ACTION_NO_BONUS_LOOT))
-            chance = std::min(chance, 100.0);
+    {
+        if (counterWeights.contains(mechanic->GarrMechanicTypeID))
+            continue;
 
-    return uint32(std::max(0.0, std::nearbyint(chance)));
+        for (GarrAbilityEffectEntry const* effect : sGarrAbilityEffectStore)
+        {
+            if (effect->GarrAbilityID != mechanic->GarrAbilityID)
+                continue;
+
+            switch (effect->AbilityAction)
+            {
+                case ABILITY_ACTION_MISSION_DURATION:
+                    durationMultiplier *= effect->ActionValueFlat;
+                    break;
+                case ABILITY_ACTION_MISSION_COST:
+                    if (effect->ActionRecordID == mission.Entry->MissionCostCurrencyTypesID)
+                        costMultiplier *= effect->ActionValueFlat;
+                    break;
+                case ABILITY_ACTION_KILL_TROOPS:
+                    effects.Lethal = true;
+                    break;
+                case ABILITY_ACTION_NO_BONUS_LOOT:
+                    noBonusLoot = true;
+                    break;
+                default:
+                    break;
+            }
+        }
+    }
+
+    double chance = 100.0 * (power + countered) / (totalFactor + 100.0) + flat;
+    if (noBonusLoot)
+        chance = std::min(chance, 100.0);
+
+    effects.SuccessChance = uint32(std::max(0.0, std::nearbyint(chance)));
+    effects.Cost = uint32(std::max(0.0, std::nearbyint(mission.Entry->MissionCost * costMultiplier)));
+    effects.MissionDuration = uint32(std::max(0.0, std::nearbyint(mission.Entry->MissionDuration * durationMultiplier)));
+    return effects;
 }
 
 // The client shows the experience bonus of a team as the share of the mission's experience by which
@@ -469,8 +508,9 @@ GarrisonError ClassHallMissions::CanStartMission(Mission const* mission, std::ve
             return GARRISON_ERROR_FOLLOWER_ALREADY_ON_MISSION;
     }
 
-    if (mission->Entry->MissionCost && mission->Entry->MissionCostCurrencyTypesID
-        && !_owner->HasCurrency(mission->Entry->MissionCostCurrencyTypesID, mission->Entry->MissionCost))
+    // the cost as the team changes it
+    uint32 cost = GetTeamEffects(*mission, team).Cost;
+    if (cost && mission->Entry->MissionCostCurrencyTypesID && !_owner->HasCurrency(mission->Entry->MissionCostCurrencyTypesID, cost))
         return GARRISON_ERROR_NOT_ENOUGH_CURRENCY;
 
     return GARRISON_SUCCESS;
@@ -494,10 +534,12 @@ void ClassHallMissions::StartMission(ObjectGuid npcGuid, uint32 garrMissionId, s
     startMissionResult.FollowerDBIDs = followerDbIds;
     if (startMissionResult.Result == GARRISON_SUCCESS)
     {
-        if (mission->Entry->MissionCost && mission->Entry->MissionCostCurrencyTypesID)
-            _owner->RemoveCurrency(mission->Entry->MissionCostCurrencyTypesID, int32(mission->Entry->MissionCost), CurrencyDestroyReason::Garrison);
+        TeamEffects effects = GetTeamEffects(*mission, team);
+        if (effects.Cost && mission->Entry->MissionCostCurrencyTypesID)
+            _owner->RemoveCurrency(mission->Entry->MissionCostCurrencyTypesID, int32(effects.Cost), CurrencyDestroyReason::Garrison);
 
-        mission->PacketInfo.SuccessChance = GetSuccessChance(*mission, team);
+        mission->PacketInfo.SuccessChance = effects.SuccessChance;
+        mission->PacketInfo.MissionDuration = Seconds(effects.MissionDuration);
         mission->PacketInfo.MissionState = CLASS_HALL_MISSION_STATE_IN_PROGRESS;
         mission->PacketInfo.StartTime = GameTime::GetGameTime();
         for (uint64 followerDbId : followerDbIds)
