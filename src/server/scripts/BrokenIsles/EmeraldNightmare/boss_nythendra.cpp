@@ -17,7 +17,11 @@
 
 #include "AreaTrigger.h"
 #include "AreaTriggerAI.h"
+#include "Containers.h"
 #include "InstanceScript.h"
+#include "Log.h"
+#include "MotionMaster.h"
+#include "ObjectAccessor.h"
 #include "ScriptedCreature.h"
 #include "ScriptMgr.h"
 #include "SpellAuraEffects.h"
@@ -33,14 +37,20 @@ enum NythendraSpells
     SPELL_ROT                       = 203096, // ticks 203097 every 3 s for 9 s
     SPELL_VOLATILE_ROT              = 204463, // detonates (204470, 204777) after 8 s
     SPELL_INFESTED_GROUND           = 203044, // creates area trigger 5887 at a destination
-    SPELL_INFESTED_GROUND_DAMAGE    = 203045  // applied to units standing in a pool
+    SPELL_INFESTED_GROUND_DAMAGE    = 203045, // applied to units standing in a pool
+    SPELL_HEART_OF_THE_SWARM        = 203552, // 3.7 s cast, 20 s self channel, +5 energy a second
+    SPELL_BURST_OF_CORRUPTION       = 203646  // cast by a swollen vermin, stacks +25% taken
 };
 
 enum NythendraEvents
 {
     EVENT_ROT = 1,
     EVENT_VOLATILE_ROT,
-    EVENT_INFESTED_BREATH
+    EVENT_INFESTED_BREATH,
+    EVENT_HEART_OF_THE_SWARM,
+    EVENT_SWELL_VERMIN,
+    EVENT_BURST_OF_CORRUPTION,
+    EVENT_END_HEART_OF_THE_SWARM
 };
 
 enum NythendraTalks
@@ -61,8 +71,13 @@ enum NythendraMisc
     ENERGY_PER_BREATH               = 50,
     VOLATILE_ROTS_PER_PHASE         = 3,
     POOLS_ON_ROT_EXPIRE             = 3,
-    POOLS_ON_VOLATILE_ROT_EXPIRE    = 5
+    POOLS_ON_VOLATILE_ROT_EXPIRE    = 5,
+    VERMIN_COUNT                    = 40,
+    BURSTS_PER_VERMIN               = 3
 };
+
+float const VerminSpreadRadius  = 45.0f; // around her spawn, inside the 55 yard boundary
+float const PoolPullSpeed       = 12.0f; // yards a second towards her in Phase 2
 
 // Drops Infested Ground pools around a point. The boss casts them so they are
 // hers: Unit::GetAreaTriggers finds them again in Phase 2.
@@ -98,19 +113,83 @@ struct boss_nythendra : public BossAI
     {
         _rotTargets = 1;
         _volatileRotCount = 0;
+        events.Reset();
         events.SetPhase(PHASE_ONE);
         events.ScheduleEvent(EVENT_ROT, 8s, 0, PHASE_ONE);
         events.ScheduleEvent(EVENT_VOLATILE_ROT, 20s, 0, PHASE_ONE);
         events.ScheduleEvent(EVENT_INFESTED_BREATH, 45s, 0, PHASE_ONE);
     }
 
+    // Energy is 0: once the last breath has finished she collapses into Heart of the Swarm.
+    void StartPhaseTwo()
+    {
+        events.Reset();
+        events.SetPhase(PHASE_TWO);
+        events.ScheduleEvent(EVENT_HEART_OF_THE_SWARM, 5s, 0, PHASE_TWO);
+    }
+
+    // The channel has begun: every pool slides into her, the vermin appear,
+    // and from 10 s one of them swells each second.
+    void StartChannel()
+    {
+        for (AreaTrigger* pool : me->GetAreaTriggers(SPELL_INFESTED_GROUND))
+        {
+            if (pool->GetExactDist2d(me) < 2.0f)
+            {
+                pool->Remove();
+                continue;
+            }
+
+            pool->InitSplines({ G3D::Vector3(pool->GetPositionX(), pool->GetPositionY(), pool->GetPositionZ()),
+                G3D::Vector3(me->GetPositionX(), me->GetPositionY(), me->GetPositionZ()) }, PoolPullSpeed);
+        }
+
+        for (uint32 i = 0; i < VERMIN_COUNT; ++i)
+        {
+            float x, y, z;
+            me->GetRandomPoint(me->GetHomePosition(), VerminSpreadRadius, x, y, z);
+            me->SummonCreature(NPC_CORRUPTED_VERMIN, x, y, z, frand(0.0f, 2.0f * float(M_PI)), TEMPSUMMON_MANUAL_DESPAWN);
+        }
+
+        events.ScheduleEvent(EVENT_SWELL_VERMIN, 10s, 0, PHASE_TWO);
+        events.ScheduleEvent(EVENT_BURST_OF_CORRUPTION, 11s, 0, PHASE_TWO);
+        events.ScheduleEvent(EVENT_END_HEART_OF_THE_SWARM, 20s, 0, PHASE_TWO);
+    }
+
+    void EndPhaseTwo()
+    {
+        me->InterruptNonMeleeSpells(false);
+        summons.DespawnAll();
+        _swelling.clear();
+        me->RemoveAreaTrigger(SPELL_INFESTED_GROUND);
+        me->SetControlled(false, UNIT_STATE_ROOT);
+        me->SetReactState(REACT_AGGRESSIVE);
+        me->SetPower(POWER_ENERGY, 100);
+        StartPhaseOne();
+
+        if (Unit* target = SelectTarget(SelectTargetMethod::MaxThreat, 0))
+            AttackStart(target);
+    }
+
+    void JustSummoned(Creature* summon) override
+    {
+        // Not BossAI::JustSummoned: the vermin must not join the fight.
+        summons.Summon(summon);
+        summon->SetReactState(REACT_PASSIVE);
+        summon->SetControlled(true, UNIT_STATE_ROOT);
+    }
+
     void CleanUp()
     {
         summons.DespawnAll();
+        _swelling.clear();
         me->RemoveAllAreaTriggers();
+        me->SetControlled(false, UNIT_STATE_ROOT);
+        me->SetReactState(REACT_AGGRESSIVE);
         instance->DoRemoveAurasDueToSpellOnPlayers(SPELL_ROT);
         instance->DoRemoveAurasDueToSpellOnPlayers(SPELL_VOLATILE_ROT);
         instance->DoRemoveAurasDueToSpellOnPlayers(SPELL_INFESTED_BREATH);
+        instance->DoRemoveAurasDueToSpellOnPlayers(SPELL_BURST_OF_CORRUPTION);
     }
 
     void EnterEvadeMode(EvadeReason /*why*/) override
@@ -130,8 +209,20 @@ struct boss_nythendra : public BossAI
         _JustDied();
     }
 
+    void OnSpellFailed(SpellInfo const* spell) override
+    {
+        if (spell->Id == SPELL_HEART_OF_THE_SWARM)
+            TC_LOG_ERROR("scripts", "boss_nythendra: Heart of the Swarm was interrupted");
+    }
+
     void OnSpellCast(SpellInfo const* spell) override
     {
+        if (spell->Id == SPELL_HEART_OF_THE_SWARM)
+        {
+            StartChannel();
+            return;
+        }
+
         if (spell->Id != SPELL_INFESTED_BREATH)
             return;
 
@@ -142,6 +233,8 @@ struct boss_nythendra : public BossAI
 
         if (energy > 0)
             events.ScheduleEvent(EVENT_INFESTED_BREATH, 45s, 0, PHASE_ONE);
+        else
+            StartPhaseTwo();
     }
 
     void UpdateAI(uint32 diff) override
@@ -151,7 +244,8 @@ struct boss_nythendra : public BossAI
 
         events.Update(diff);
 
-        if (me->HasUnitState(UNIT_STATE_CASTING))
+        // Phase 2 runs its events through her channel.
+        if (events.IsInPhase(PHASE_ONE) && me->HasUnitState(UNIT_STATE_CASTING))
             return;
 
         while (uint32 eventId = events.ExecuteEvent())
@@ -190,11 +284,73 @@ struct boss_nythendra : public BossAI
                         DoCast(target, SPELL_INFESTED_BREATH);
                     }
                     break;
+                case EVENT_HEART_OF_THE_SWARM:
+                {
+                    // The last breath is a 5 s channel: wait for it to end.
+                    if (me->HasUnitState(UNIT_STATE_CASTING))
+                    {
+                        events.Repeat(500ms);
+                        break;
+                    }
+
+                    // The cast breaks on movement and the channel on turning, so the
+                    // chase movement has to go before she starts.
+                    me->AttackStop();
+                    me->SetReactState(REACT_PASSIVE);
+                    me->GetMotionMaster()->Clear();
+                    me->GetMotionMaster()->MoveIdle();
+                    me->SetControlled(true, UNIT_STATE_ROOT);
+                    SpellCastResult result = DoCastSelf(SPELL_HEART_OF_THE_SWARM);
+                    if (result != SPELL_CAST_OK)
+                        TC_LOG_ERROR("scripts", "boss_nythendra: Heart of the Swarm failed to cast (result {})", uint32(result));
+                    break;
+                }
+                case EVENT_SWELL_VERMIN:
+                {
+                    std::vector<Creature*> candidates;
+                    for (ObjectGuid const& guid : summons)
+                        if (Creature* vermin = ObjectAccessor::GetCreature(*me, guid))
+                            if (vermin->IsAlive() && !_swelling.contains(guid))
+                                candidates.push_back(vermin);
+
+                    if (!candidates.empty())
+                    {
+                        Creature* vermin = Trinity::Containers::SelectRandomContainerElement(candidates);
+                        vermin->SetObjectScale(2.0f);
+                        _swelling[vermin->GetGUID()] = BURSTS_PER_VERMIN;
+                    }
+                    events.Repeat(1s);
+                    break;
+                }
+                case EVENT_BURST_OF_CORRUPTION:
+                    for (auto itr = _swelling.begin(); itr != _swelling.end();)
+                    {
+                        Creature* vermin = ObjectAccessor::GetCreature(*me, itr->first);
+                        if (!vermin)
+                        {
+                            itr = _swelling.erase(itr);
+                            continue;
+                        }
+
+                        vermin->CastSpell(vermin, SPELL_BURST_OF_CORRUPTION, CastSpellExtraArgs(TRIGGERED_FULL_MASK).SetOriginalCaster(me->GetGUID()));
+                        if (--itr->second == 0)
+                        {
+                            vermin->DespawnOrUnsummon(500ms);
+                            itr = _swelling.erase(itr);
+                        }
+                        else
+                            ++itr;
+                    }
+                    events.Repeat(1s);
+                    break;
+                case EVENT_END_HEART_OF_THE_SWARM:
+                    EndPhaseTwo();
+                    return;
                 default:
                     break;
             }
 
-            if (me->HasUnitState(UNIT_STATE_CASTING))
+            if (events.IsInPhase(PHASE_ONE) && me->HasUnitState(UNIT_STATE_CASTING))
                 return;
         }
     }
@@ -202,6 +358,7 @@ struct boss_nythendra : public BossAI
 private:
     uint32 _rotTargets;
     uint32 _volatileRotCount;
+    std::unordered_map<ObjectGuid, uint32> _swelling; // vermin -> bursts left
 };
 
 // 202977 - Infested Breath
@@ -303,6 +460,12 @@ struct at_nythendra_infested_ground : AreaTriggerAI
                     return;
 
         unit->RemoveAurasDueToSpell(SPELL_INFESTED_GROUND_DAMAGE, at->GetCasterGuid());
+    }
+
+    // Phase 2 pulls every pool into her; it is consumed when it arrives.
+    void OnDestinationReached() override
+    {
+        at->Remove();
     }
 };
 
