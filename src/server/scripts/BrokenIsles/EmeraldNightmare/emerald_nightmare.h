@@ -50,6 +50,9 @@ enum ENCreatureIds
     BOSS_EMERISS                    = 102683,
     BOSS_CENARIUS                   = 104636,
     BOSS_XAVIUS                     = 103769,
+
+    // Nythendra
+    NPC_CORRUPTED_VERMIN            = 111005,
 };
 
 template <class AI, class T>

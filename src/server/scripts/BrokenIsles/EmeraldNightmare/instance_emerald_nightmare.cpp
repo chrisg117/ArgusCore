@@ -15,9 +15,18 @@
  * with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "AreaBoundary.h"
 #include "InstanceScript.h"
 #include "ScriptMgr.h"
 #include "emerald_nightmare.h"
+
+// Nythendra: the room is a circle fitted through three points on its edge
+// (measured in game, 2026-10-17). The check is 3D, so the centre needs the
+// floor height. There are no doors in v1.
+BossBoundaryData const boundaries =
+{
+    { DATA_NYTHENDRA, new CircleBoundary(Position(1881.5f, 1311.0f, 369.5f), 55.0f) }
+};
 
 // The four Dragons of Nightmare are left out: how they are tracked is decided
 // with that encounter's script.
@@ -55,6 +64,7 @@ class instance_emerald_nightmare : public InstanceMapScript
                 SetHeaders(DataHeader);
                 SetBossNumber(EncounterCount);
                 LoadObjectData(creatureData, nullptr);
+                LoadBossBoundaries(boundaries);
                 LoadDungeonEncounterData(encounters);
             }
         };
