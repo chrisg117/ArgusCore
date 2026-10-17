@@ -438,7 +438,8 @@ void ClassHallFollowers::RemoveExpiredTroop(uint64 dbId, bool notify)
 // its limit) stays kept, and nothing is said
 bool ClassHallFollowers::ReviveExpiredTroop(uint32 vitality)
 {
-    if (_expiredTroops.empty())
+    // with no vitality the troop would come back already used up
+    if (_expiredTroops.empty() || !vitality)
         return false;
 
     uint32 garrFollowerId = _expiredTroops.back().first;
@@ -573,7 +574,7 @@ void ClassHallFollowers::AddTemporaryAbility(uint64 dbId, GarrAbilityEntry const
 }
 
 // a champion's temporary abilities last until its mission is completed, success or failure
-void ClassHallFollowers::RemoveTemporaryAbilities(uint64 dbId)
+void ClassHallFollowers::RemoveTemporaryAbilities(uint64 dbId, bool notify)
 {
     auto itr = _followers.find(dbId);
     if (itr == _followers.end() || itr->second.TemporaryAbilities.empty())
@@ -582,7 +583,8 @@ void ClassHallFollowers::RemoveTemporaryAbilities(uint64 dbId)
     Follower& follower = itr->second;
     follower.TemporaryAbilities.clear();
     follower.PacketInfo.AbilityID = GetAbilities(follower.Entry, follower.PacketInfo.Quality, follower.Equipment);
-    SendUpdateFollower(dbId);
+    if (notify)
+        SendUpdateFollower(dbId);
 }
 
 // The client names an equipment slot by the trait in it now: the empty slot or the equipment there.

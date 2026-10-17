@@ -27,6 +27,7 @@
 #include <array>
 #include <list>
 #include <map>
+#include <vector>
 
 class ClassHall;
 class Player;
@@ -96,7 +97,7 @@ public:
     void UpgradeItemLevel(uint64 dbId, GarrItemLevelUpgradeDataEntry const* upgrade, int32 amount);
     void Equip(uint64 dbId, uint32 slot, GarrAbilityEntry const* trait);
     void AddTemporaryAbility(uint64 dbId, GarrAbilityEntry const* ability);
-    void RemoveTemporaryAbilities(uint64 dbId);
+    void RemoveTemporaryAbilities(uint64 dbId, bool notify);
     static int32 GetEquipmentSlot(Follower const& follower, uint32 abilityId);
 
     // checks an item's spell aimed at a champion (the client names the champion by its GarrFollower id)

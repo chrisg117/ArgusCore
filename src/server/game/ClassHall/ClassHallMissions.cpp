@@ -710,10 +710,11 @@ void ClassHallMissions::CompleteMission(ObjectGuid npcGuid, uint32 garrMissionId
         }
     }
 
-    // the champions' temporary abilities were for this mission
+    // the champions' temporary abilities were for this mission; the champions of a failed one are sent whole
+    // when they are freed below
     for (ClassHallFollowers::Follower const* follower : team)
         if (!follower->IsTroop())
-            followers.RemoveTemporaryAbilities(follower->PacketInfo.DbID);
+            followers.RemoveTemporaryAbilities(follower->PacketInfo.DbID, completeMissionResult.Succeeded);
 
     // a successful mission waits for its chest to be opened, with its followers still on it: the client's
     // report on it shows them. The client takes every completed mission for a successful one, so a
@@ -723,7 +724,8 @@ void ClassHallMissions::CompleteMission(ObjectGuid npcGuid, uint32 garrMissionId
         mission.PacketInfo.MissionState = CLASS_HALL_MISSION_STATE_COMPLETED;
 
         // the chance over 100 is the chance of the bonus rewards, as the client shows it; the 7.3.5
-        // client learns of the result only from the complete reply it drops, so it is not told
+        // client learns of the result only from the complete reply it drops, so it is not told and shows the
+        // bonus as failed
         if (sGarrisonMgr.GetClassHallMissionOvermaxRewards(garrMissionId))
             mission.BonusWon = roll_chance_i(std::clamp(int32(mission.PacketInfo.SuccessChance) - 100, 0, 100));
 
