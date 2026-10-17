@@ -84,6 +84,7 @@ public:
     std::list<GarrAbilityEntry const*> RollFollowerAbilities(uint32 garrFollowerId, GarrFollowerEntry const* follower, uint32 quality, uint32 faction, bool initial) const;
     std::list<GarrAbilityEntry const*> GetClassSpecAbilities(GarrFollowerEntry const* follower, uint32 faction) const;
     std::vector<WorldPackets::Garrison::GarrisonMissionReward> const* GetClassHallMissionRewards(uint32 garrMissionId) const;
+    std::vector<WorldPackets::Garrison::GarrisonMissionReward> const* GetClassHallMissionOvermaxRewards(uint32 garrMissionId) const;
 
 private:
     void InitializeDbIdSequences();
@@ -101,6 +102,7 @@ private:
     std::unordered_map<uint32 /*classSpecId*/, std::list<GarrAbilityEntry const*>> _garrisonFollowerClassSpecAbilities;
     std::set<GarrAbilityEntry const*> _garrisonFollowerRandomTraits;
     std::unordered_map<uint32 /*garrMissionId*/, std::vector<WorldPackets::Garrison::GarrisonMissionReward>> _classHallMissionRewards;
+    std::unordered_map<uint32 /*garrMissionId*/, std::vector<WorldPackets::Garrison::GarrisonMissionReward>> _classHallMissionOvermaxRewards;
 
     uint64 _followerDbIdGenerator = UI64LIT(1);
 

@@ -23,9 +23,11 @@
 #include "Garrison.h"
 #include "GarrisonPackets.h"
 #include "ObjectGuid.h"
+#include "Optional.h"
 #include <array>
 #include <list>
 #include <map>
+#include <vector>
 
 class ClassHall;
 class Player;
@@ -53,11 +55,15 @@ public:
     // a champion's equipment slots: the empty-slot traits of its abilities
     static constexpr uint32 MAX_EQUIPMENT_SLOTS = 3;
 
+    // the expired troops kept for a revive; past it the oldest is forgotten (a chosen number, retail's is not known)
+    static constexpr uint32 MAX_EXPIRED_TROOPS = 10;
+
     struct Follower
     {
         GarrFollowerEntry const* Entry = nullptr;
         WorldPackets::Garrison::GarrisonFollower PacketInfo;
         std::array<uint32, MAX_EQUIPMENT_SLOTS> Equipment = { };  // the trait in each equipment slot, 0 for none
+        std::vector<uint32> TemporaryAbilities;                     // abilities until the next mission is completed
 
         bool IsActive() const { return (PacketInfo.FollowerStatus & FOLLOWER_STATUS_INACTIVE) == 0; }
         bool IsTroop() const { return (PacketInfo.FollowerStatus & FOLLOWER_STATUS_TROOP) != 0; }
@@ -68,13 +74,14 @@ public:
 
     ClassHallFollowers(Player* owner, ClassHall const* classHall);
 
-    void LoadFromDB(PreparedQueryResult followers, PreparedQueryResult equipment);
+    void LoadFromDB(PreparedQueryResult followers, PreparedQueryResult equipment, PreparedQueryResult temporaryAbilities,
+        PreparedQueryResult expiredTroops);
     void SaveToDB(CharacterDatabaseTransaction trans) const;
     static void DeleteFromDB(ObjectGuid::LowType ownerGuid, CharacterDatabaseTransaction trans);
 
     void BuildInfo(WorldPackets::Garrison::GarrisonInfo& info) const;
 
-    GarrisonError AddFollower(uint32 garrFollowerId);
+    GarrisonError AddFollower(uint32 garrFollowerId, Optional<uint32> vitality = {});
     void RemoveFollower(uint64 dbId);
     void SetFollowerInactive(uint64 dbId, bool inactive);
 
@@ -84,10 +91,13 @@ public:
     void SetFollowerMission(uint64 dbId, uint32 garrMissionId);
     void SetVitality(uint64 dbId, uint32 vitality);
     void RemoveExpiredTroop(uint64 dbId, bool notify);
+    bool ReviveExpiredTroop(uint32 vitality);
     void AddExperience(uint64 dbId, uint32 amount, uint32 source);
     void SendUpdateFollower(uint64 dbId) const;
     void UpgradeItemLevel(uint64 dbId, GarrItemLevelUpgradeDataEntry const* upgrade, int32 amount);
     void Equip(uint64 dbId, uint32 slot, GarrAbilityEntry const* trait);
+    void AddTemporaryAbility(uint64 dbId, GarrAbilityEntry const* ability);
+    void RemoveTemporaryAbilities(uint64 dbId, bool notify);
     static int32 GetEquipmentSlot(Follower const& follower, uint32 abilityId);
 
     // checks an item's spell aimed at a champion (the client names the champion by its GarrFollower id)
@@ -112,12 +122,13 @@ private:
     GarrisonError CanSetFollowerInactive(Follower const* follower, bool inactive) const;
     void SendActivationsRemaining() const;
     std::list<GarrAbilityEntry const*> GetAbilities(GarrFollowerEntry const* follower, uint32 quality,
-        std::array<uint32, MAX_EQUIPMENT_SLOTS> const& equipment = { }) const;
+        std::array<uint32, MAX_EQUIPMENT_SLOTS> const& equipment = { }, std::vector<uint32> const& temporaryAbilities = { }) const;
     uint32 CountActiveChampions() const;
 
     Player* _owner;
     ClassHall const* _classHall;
     std::map<uint64 /*dbId*/, Follower> _followers;
+    std::vector<std::pair<uint32 /*garrFollowerId*/, time_t>> _expiredTroops;   // oldest first
     uint32 _activationsRemaining;
 };
 
