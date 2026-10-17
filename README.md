@@ -31,9 +31,9 @@ It is derived from the [TrinityCore](https://github.com/TrinityCore/TrinityCore)
 
 ## What this fork adds
 
-The default branch, `dev`, is upstream's `main` plus everything marked
-"in `dev`" below. Content is built on `feature/*` branches and joins `dev` when
-it is called finished. How the branches relate is in
+The default branch, `dev`, is upstream's `main` plus everything below: the
+engine work, which is built on the `engine` branch and merged in piece by
+piece, and all content, which is built on `dev` itself. How the branches relate is in
 [docs/BRANCHING.md](docs/BRANCHING.md); every engine piece has a design and a
 plan in [docs/superpowers](docs/superpowers).
 
