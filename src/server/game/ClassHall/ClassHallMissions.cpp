@@ -63,6 +63,7 @@ enum AbilityAction : uint8
     ABILITY_ACTION_TROOP_VITALITY               = 28,   // a random troop on the mission recovers vitality, or takes less damage
     ABILITY_ACTION_NO_BONUS_LOOT                = 29,   // a threat's: the chance stops at 100
     ABILITY_ACTION_SUCCESS_CHANCE_MIXED_TROOPS  = 33,   // a flat bonus when the team's troops are of two class specs
+    ABILITY_ACTION_REVIVE_TROOP                 = 35,   // a chance that an expired troop comes back, with a vitality
     ABILITY_ACTION_MISSION_COST                 = 39,   // the mission's cost in a currency times a value
     ABILITY_ACTION_SUCCESS_CHANCE_ALONE         = 41    // a flat bonus when no other champion is on the team
 };
@@ -794,6 +795,7 @@ void ClassHallMissions::BonusRoll(ObjectGuid npcGuid, uint32 garrMissionId)
 
     ClassHallFollowers& followers = _classHall->GetFollowers();
     std::vector<uint64> expired;
+    std::vector<GarrAbilityEntry const*> abilities;
     for (auto const& [dbId, follower] : followers.GetAllFollowers())
     {
         if (follower.PacketInfo.CurrentMissionID != garrMissionId)
@@ -802,10 +804,19 @@ void ClassHallMissions::BonusRoll(ObjectGuid npcGuid, uint32 garrMissionId)
         followers.SetFollowerMission(dbId, 0);
         if (follower.IsExpired())
             expired.push_back(dbId);
+
+        abilities.insert(abilities.end(), follower.PacketInfo.AbilityID.begin(), follower.PacketInfo.AbilityID.end());
     }
 
     for (uint64 dbId : expired)
         followers.RemoveExpiredTroop(dbId, true);
+
+    // a revive brings back the troop that expired last, the ones of this mission included
+    for (GarrAbilityEntry const* ability : abilities)
+        for (GarrAbilityEffectEntry const* effect : sGarrAbilityEffectStore)
+            if (effect->GarrAbilityID == ability->ID && effect->AbilityAction == ABILITY_ACTION_REVIVE_TROOP
+                && roll_chance_f(effect->ActionValueFlat))
+                followers.ReviveExpiredTroop(uint32(effect->CombatWeightMax));
 
     _missions.erase(itr);
     _owner->SendDirectMessage(bonusRollResult.Write());

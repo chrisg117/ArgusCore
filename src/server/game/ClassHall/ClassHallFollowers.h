@@ -23,6 +23,7 @@
 #include "Garrison.h"
 #include "GarrisonPackets.h"
 #include "ObjectGuid.h"
+#include "Optional.h"
 #include <array>
 #include <list>
 #include <map>
@@ -79,7 +80,7 @@ public:
 
     void BuildInfo(WorldPackets::Garrison::GarrisonInfo& info) const;
 
-    GarrisonError AddFollower(uint32 garrFollowerId);
+    GarrisonError AddFollower(uint32 garrFollowerId, Optional<uint32> vitality = {});
     void RemoveFollower(uint64 dbId);
     void SetFollowerInactive(uint64 dbId, bool inactive);
 
@@ -89,6 +90,7 @@ public:
     void SetFollowerMission(uint64 dbId, uint32 garrMissionId);
     void SetVitality(uint64 dbId, uint32 vitality);
     void RemoveExpiredTroop(uint64 dbId, bool notify);
+    bool ReviveExpiredTroop(uint32 vitality);
     void AddExperience(uint64 dbId, uint32 amount, uint32 source);
     void SendUpdateFollower(uint64 dbId) const;
     void UpgradeItemLevel(uint64 dbId, GarrItemLevelUpgradeDataEntry const* upgrade, int32 amount);

@@ -280,7 +280,8 @@ void ClassHallFollowers::BuildInfo(WorldPackets::Garrison::GarrisonInfo& info) c
         info.Followers.push_back(&follower.PacketInfo);
 }
 
-GarrisonError ClassHallFollowers::AddFollower(uint32 garrFollowerId)
+// a troop comes with its kind's vitality, unless it is given less
+GarrisonError ClassHallFollowers::AddFollower(uint32 garrFollowerId, Optional<uint32> vitality /*= {}*/)
 {
     GarrFollowerEntry const* entry = sGarrFollowerStore.LookupEntry(garrFollowerId);
 
@@ -311,7 +312,7 @@ GarrisonError ClassHallFollowers::AddFollower(uint32 garrFollowerId)
     follower.PacketInfo.FollowerLevel = entry->FollowerLevel;
     follower.PacketInfo.ItemLevelWeapon = entry->ItemLevelWeapon;
     follower.PacketInfo.ItemLevelArmor = entry->ItemLevelArmor;
-    follower.PacketInfo.Durability = entry->Vitality;
+    follower.PacketInfo.Durability = vitality ? std::min(*vitality, uint32(entry->Vitality)) : entry->Vitality;
     follower.PacketInfo.FollowerStatus = status;
     follower.PacketInfo.AbilityID = GetAbilities(entry, entry->Quality);
 
@@ -431,6 +432,24 @@ void ClassHallFollowers::RemoveExpiredTroop(uint64 dbId, bool notify)
     removeFollowerResult.GarrTypeID = GARRISON_TYPE_CLASS_ORDER;
     removeFollowerResult.Destroyed = 1;
     _owner->SendDirectMessage(removeFollowerResult.Write());
+}
+
+// the troop that expired last comes back, with the vitality given; one that cannot be had now (its kind at
+// its limit) stays kept, and nothing is said
+bool ClassHallFollowers::ReviveExpiredTroop(uint32 vitality)
+{
+    if (_expiredTroops.empty())
+        return false;
+
+    uint32 garrFollowerId = _expiredTroops.back().first;
+    if (CanAddFollower(sGarrFollowerStore.LookupEntry(garrFollowerId)) != GARRISON_SUCCESS)
+        return false;
+
+    if (AddFollower(garrFollowerId, vitality) != GARRISON_SUCCESS)
+        return false;
+
+    _expiredTroops.pop_back();
+    return true;
 }
 
 // Experience raises a champion's level up to the cap, then its quality; each step keeps what is
