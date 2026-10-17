@@ -452,6 +452,12 @@ std::vector<WorldPackets::Garrison::GarrisonMissionReward> const* GarrisonMgr::G
     return itr != _classHallMissionRewards.end() ? &itr->second : nullptr;
 }
 
+std::vector<WorldPackets::Garrison::GarrisonMissionReward> const* GarrisonMgr::GetClassHallMissionOvermaxRewards(uint32 garrMissionId) const
+{
+    auto itr = _classHallMissionOvermaxRewards.find(garrMissionId);
+    return itr != _classHallMissionOvermaxRewards.end() ? &itr->second : nullptr;
+}
+
 void GarrisonMgr::LoadFollowerClassSpecAbilities()
 {
     QueryResult result = WorldDatabase.Query("SELECT classSpecId, abilityId FROM garrison_follower_class_spec_abilities");
@@ -495,8 +501,8 @@ void GarrisonMgr::LoadFollowerClassSpecAbilities()
 
 void GarrisonMgr::LoadClassHallMissionRewards()
 {
-    //                                                0       1             2           3                 4
-    QueryResult result = WorldDatabase.Query("SELECT MissionID, ItemID, ItemQuantity, CurrencyID, CurrencyQuantity FROM class_hall_mission_reward ORDER BY MissionID, Idx");
+    //                                                0        1       2             3           4                 5
+    QueryResult result = WorldDatabase.Query("SELECT MissionID, Overmax, ItemID, ItemQuantity, CurrencyID, CurrencyQuantity FROM class_hall_mission_reward ORDER BY MissionID, Overmax, Idx");
     if (!result)
     {
         TC_LOG_INFO("server.loading", ">> Loaded 0 class hall mission rewards. DB table `class_hall_mission_reward` is empty.");
@@ -509,34 +515,36 @@ void GarrisonMgr::LoadClassHallMissionRewards()
     {
         Field* fields = result->Fetch();
         uint32 missionId = fields[0].GetUInt32();
-        uint32 itemId = fields[1].GetUInt32();
-        uint32 currencyId = fields[3].GetUInt32();
+        bool overmax = fields[1].GetUInt8() != 0;
+        uint32 itemId = fields[2].GetUInt32();
+        uint32 currencyId = fields[4].GetUInt32();
+        char const* kind = overmax ? "bonus reward" : "reward";
 
         GarrMissionEntry const* mission = sGarrMissionStore.LookupEntry(missionId);
         if (!mission || mission->GarrTypeID != GARRISON_TYPE_CLASS_ORDER)
         {
-            TC_LOG_ERROR("sql.sql", "Table `class_hall_mission_reward` has a reward for GarrMission {} which is not a class hall mission, skipped.", missionId);
+            TC_LOG_ERROR("sql.sql", "Table `class_hall_mission_reward` has a {} for GarrMission {} which is not a class hall mission, skipped.", kind, missionId);
             continue;
         }
 
         if (itemId && !sObjectMgr->GetItemTemplate(itemId))
         {
-            TC_LOG_ERROR("sql.sql", "Table `class_hall_mission_reward` has a reward of non-existing item {} for GarrMission {}, skipped.", itemId, missionId);
+            TC_LOG_ERROR("sql.sql", "Table `class_hall_mission_reward` has a {} of non-existing item {} for GarrMission {}, skipped.", kind, itemId, missionId);
             continue;
         }
 
         // currency 0 is money
         if (currencyId && !sCurrencyTypesStore.LookupEntry(currencyId))
         {
-            TC_LOG_ERROR("sql.sql", "Table `class_hall_mission_reward` has a reward of non-existing currency {} for GarrMission {}, skipped.", currencyId, missionId);
+            TC_LOG_ERROR("sql.sql", "Table `class_hall_mission_reward` has a {} of non-existing currency {} for GarrMission {}, skipped.", kind, currencyId, missionId);
             continue;
         }
 
-        WorldPackets::Garrison::GarrisonMissionReward& reward = _classHallMissionRewards[missionId].emplace_back();
+        WorldPackets::Garrison::GarrisonMissionReward& reward = (overmax ? _classHallMissionOvermaxRewards : _classHallMissionRewards)[missionId].emplace_back();
         reward.ItemID = itemId;
-        reward.ItemQuantity = fields[2].GetUInt32();
+        reward.ItemQuantity = fields[3].GetUInt32();
         reward.CurrencyID = currencyId;
-        reward.CurrencyQuantity = fields[4].GetUInt32();
+        reward.CurrencyQuantity = fields[5].GetUInt32();
         ++count;
     } while (result->NextRow());
 

@@ -71,6 +71,7 @@ private:
     {
         GarrMissionEntry const* Entry = nullptr;
         WorldPackets::Garrison::GarrisonMission PacketInfo;
+        bool BonusWon = false;      // a successful mission's bonus roll, given with its chest
     };
 
     // what a team makes of a mission, as the client shows it before the mission is started
@@ -90,7 +91,7 @@ private:
     static bool IsOfferExpired(Mission const& mission, time_t now);
     bool IsOpenNpc(ObjectGuid npcGuid) const;
     GarrisonError CanStartMission(Mission const* mission, std::vector<ClassHallFollowers::Follower const*> const& team) const;
-    void GiveRewards(uint32 garrMissionId);
+    void GiveRewards(std::vector<WorldPackets::Garrison::GarrisonMissionReward> const& rewards);
 
     static std::vector<GarrMechanicEntry const*> GetMechanics(GarrMissionEntry const* mission, uint64 dbId);
     static double GetBias(GarrMissionEntry const* mission, ClassHallFollowers::Follower const& follower);
