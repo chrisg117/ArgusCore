@@ -75,8 +75,9 @@ namespace WorldPackets
         class AreaTriggerRePath final : public ServerPacket
         {
         public:
-            // TODO: not sure if this should be SMSG_AREA_TRIGGER_RE_SHAPE - opcode was changed in TC BFA
-            explicit AreaTriggerRePath() : ServerPacket(SMSG_AREA_TRIGGER_RE_PATH, 17) { }
+            // 7.3.5 sends this as SMSG_AREA_TRIGGER_RE_SHAPE (TrinityCore TDB735.00);
+            // SMSG_AREA_TRIGGER_RE_PATH took it over in later builds.
+            explicit AreaTriggerRePath() : ServerPacket(SMSG_AREA_TRIGGER_RE_SHAPE, 17) { }
 
             WorldPacket const* Write() override;
 
