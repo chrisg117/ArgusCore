@@ -109,7 +109,5 @@ onto `engine`, so it holds every core change `dev` has.
 
 ## Current branches (2026-10-17)
 
-- `main`, `engine`, `dev`.
-- `feature/emerald-nightmare`: the Emerald Nightmare, cut before the
-  change by another session; it becomes a topic branch when that session
-  next works on it.
+- `main`, `engine`, `dev`. The Emerald Nightmare work, which had its own
+  branch for a day, is on `dev` too.
