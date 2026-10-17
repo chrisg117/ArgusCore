@@ -32,6 +32,9 @@ void AddSC_instance_trial_of_valor();
 void AddSC_boss_amalgam_of_souls();
 void AddSC_instance_black_rook_hold();
 
+// Emerald Nightmare
+void AddSC_instance_emerald_nightmare();
+
 // Broken Shore scenario
 void AddSC_broken_shore_alliance_forces();
 void AddSC_broken_shore_dread_commander();
@@ -61,6 +64,9 @@ void AddBrokenIslesScripts()
     // Black Rook Hold
     AddSC_boss_amalgam_of_souls();
     AddSC_instance_black_rook_hold();
+
+    // Emerald Nightmare
+    AddSC_instance_emerald_nightmare();
 
     // Broken Shore scenario
     AddSC_broken_shore_alliance_forces();
