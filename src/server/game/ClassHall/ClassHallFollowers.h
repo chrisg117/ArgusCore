@@ -53,6 +53,9 @@ public:
     // a champion's equipment slots: the empty-slot traits of its abilities
     static constexpr uint32 MAX_EQUIPMENT_SLOTS = 3;
 
+    // the expired troops kept for a revive; past it the oldest is forgotten (a chosen number, retail's is not known)
+    static constexpr uint32 MAX_EXPIRED_TROOPS = 10;
+
     struct Follower
     {
         GarrFollowerEntry const* Entry = nullptr;
@@ -69,7 +72,8 @@ public:
 
     ClassHallFollowers(Player* owner, ClassHall const* classHall);
 
-    void LoadFromDB(PreparedQueryResult followers, PreparedQueryResult equipment, PreparedQueryResult temporaryAbilities);
+    void LoadFromDB(PreparedQueryResult followers, PreparedQueryResult equipment, PreparedQueryResult temporaryAbilities,
+        PreparedQueryResult expiredTroops);
     void SaveToDB(CharacterDatabaseTransaction trans) const;
     static void DeleteFromDB(ObjectGuid::LowType ownerGuid, CharacterDatabaseTransaction trans);
 
@@ -121,6 +125,7 @@ private:
     Player* _owner;
     ClassHall const* _classHall;
     std::map<uint64 /*dbId*/, Follower> _followers;
+    std::vector<std::pair<uint32 /*garrFollowerId*/, time_t>> _expiredTroops;   // oldest first
     uint32 _activationsRemaining;
 };
 

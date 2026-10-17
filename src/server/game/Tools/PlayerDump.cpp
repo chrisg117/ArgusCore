@@ -98,6 +98,7 @@ DumpTable const DumpTables[] =
     { "character_aura",                   DTT_CHAR_TABLE },
     { "character_aura_effect",            DTT_CHAR_TABLE },
     { "character_class_hall",             DTT_CHAR_TABLE },
+    { "character_class_hall_expired_troop", DTT_CHAR_TABLE },
     { "character_class_hall_follower",    DTT_CLASS_HALL_FOLLOWER },
     { "character_class_hall_follower_equipment", DTT_CLASS_HALL_FOLLOWER },
     { "character_class_hall_follower_temporary_ability", DTT_CLASS_HALL_FOLLOWER },

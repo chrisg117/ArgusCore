@@ -711,6 +711,9 @@ void CharacterDatabaseConnection::DoPrepareStatements()
     PrepareStatement(CHAR_SEL_CHARACTER_CLASS_HALL_FOLLOWER_TEMPORARY_ABILITY, "SELECT dbId, abilityId FROM character_class_hall_follower_temporary_ability WHERE guid = ?", CONNECTION_ASYNC);
     PrepareStatement(CHAR_INS_CHARACTER_CLASS_HALL_FOLLOWER_TEMPORARY_ABILITY, "INSERT INTO character_class_hall_follower_temporary_ability (guid, dbId, abilityId) VALUES (?, ?, ?)", CONNECTION_ASYNC);
     PrepareStatement(CHAR_DEL_CHARACTER_CLASS_HALL_FOLLOWER_TEMPORARY_ABILITY, "DELETE FROM character_class_hall_follower_temporary_ability WHERE guid = ?", CONNECTION_ASYNC);
+    PrepareStatement(CHAR_SEL_CHARACTER_CLASS_HALL_EXPIRED_TROOPS, "SELECT followerId, expireTime FROM character_class_hall_expired_troop WHERE guid = ? ORDER BY idx", CONNECTION_ASYNC);
+    PrepareStatement(CHAR_INS_CHARACTER_CLASS_HALL_EXPIRED_TROOP, "INSERT INTO character_class_hall_expired_troop (guid, idx, followerId, expireTime) VALUES (?, ?, ?, ?)", CONNECTION_ASYNC);
+    PrepareStatement(CHAR_DEL_CHARACTER_CLASS_HALL_EXPIRED_TROOPS, "DELETE FROM character_class_hall_expired_troop WHERE guid = ?", CONNECTION_ASYNC);
     PrepareStatement(CHAR_SEL_CHARACTER_CLASS_HALL_SHIPMENTS, "SELECT shipmentId, charShipmentId, creationTime, duration FROM character_class_hall_shipment WHERE guid = ?", CONNECTION_ASYNC);
     PrepareStatement(CHAR_INS_CHARACTER_CLASS_HALL_SHIPMENT, "INSERT INTO character_class_hall_shipment (guid, shipmentId, charShipmentId, creationTime, duration) VALUES (?, ?, ?, ?, ?)", CONNECTION_ASYNC);
     PrepareStatement(CHAR_DEL_CHARACTER_CLASS_HALL_SHIPMENTS, "DELETE FROM character_class_hall_shipment WHERE guid = ?", CONNECTION_ASYNC);

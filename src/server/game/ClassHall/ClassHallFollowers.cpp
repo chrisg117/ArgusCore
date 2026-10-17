@@ -21,6 +21,7 @@
 #include "ConditionMgr.h"
 #include "DatabaseEnv.h"
 #include "DB2Stores.h"
+#include "GameTime.h"
 #include "GarrisonMgr.h"
 #include "Log.h"
 #include "Player.h"
@@ -69,8 +70,32 @@ ClassHallFollowers::ClassHallFollowers(Player* owner, ClassHall const* classHall
 {
 }
 
-void ClassHallFollowers::LoadFromDB(PreparedQueryResult followers, PreparedQueryResult equipment, PreparedQueryResult temporaryAbilities)
+void ClassHallFollowers::LoadFromDB(PreparedQueryResult followers, PreparedQueryResult equipment, PreparedQueryResult temporaryAbilities,
+    PreparedQueryResult expiredTroops)
 {
+    if (expiredTroops)
+    {
+        do
+        {
+            //                0           1
+            // SELECT followerId, expireTime FROM character_class_hall_expired_troop WHERE guid = ? ORDER BY idx
+            Field* fields = expiredTroops->Fetch();
+            uint32 followerId = fields[0].GetUInt32();
+            GarrFollowerEntry const* entry = sGarrFollowerStore.LookupEntry(followerId);
+            if (!entry || entry->GarrTypeID != GARRISON_TYPE_CLASS_ORDER || !IsTroop(entry))
+            {
+                TC_LOG_ERROR("entities.player", "ClassHallFollowers::LoadFromDB: player {} has an expired class hall troop of GarrFollower {} which is not a class hall troop, skipped.",
+                    _owner->GetGUID().ToString(), followerId);
+                continue;
+            }
+
+            _expiredTroops.emplace_back(followerId, time_t(fields[1].GetInt64()));
+        } while (expiredTroops->NextRow());
+
+        if (_expiredTroops.size() > MAX_EXPIRED_TROOPS)
+            _expiredTroops.erase(_expiredTroops.begin(), _expiredTroops.end() - MAX_EXPIRED_TROOPS);
+    }
+
     if (!followers)
         return;
 
@@ -212,6 +237,20 @@ void ClassHallFollowers::SaveToDB(CharacterDatabaseTransaction trans) const
             trans->Append(stmt);
         }
     }
+
+    stmt = CharacterDatabase.GetPreparedStatement(CHAR_DEL_CHARACTER_CLASS_HALL_EXPIRED_TROOPS);
+    stmt->setUInt64(0, _owner->GetGUID().GetCounter());
+    trans->Append(stmt);
+
+    for (std::size_t i = 0; i < _expiredTroops.size(); ++i)
+    {
+        stmt = CharacterDatabase.GetPreparedStatement(CHAR_INS_CHARACTER_CLASS_HALL_EXPIRED_TROOP);
+        stmt->setUInt64(0, _owner->GetGUID().GetCounter());
+        stmt->setUInt8(1, uint8(i));
+        stmt->setUInt32(2, _expiredTroops[i].first);
+        stmt->setInt64(3, int64(_expiredTroops[i].second));
+        trans->Append(stmt);
+    }
 }
 
 void ClassHallFollowers::DeleteFromDB(ObjectGuid::LowType ownerGuid, CharacterDatabaseTransaction trans)
@@ -225,6 +264,10 @@ void ClassHallFollowers::DeleteFromDB(ObjectGuid::LowType ownerGuid, CharacterDa
     trans->Append(stmt);
 
     stmt = CharacterDatabase.GetPreparedStatement(CHAR_DEL_CHARACTER_CLASS_HALL_FOLLOWER_TEMPORARY_ABILITY);
+    stmt->setUInt64(0, ownerGuid);
+    trans->Append(stmt);
+
+    stmt = CharacterDatabase.GetPreparedStatement(CHAR_DEL_CHARACTER_CLASS_HALL_EXPIRED_TROOPS);
     stmt->setUInt64(0, ownerGuid);
     trans->Append(stmt);
 }
@@ -367,12 +410,17 @@ void ClassHallFollowers::SetVitality(uint64 dbId, uint32 vitality)
     SendUpdateFollower(dbId);
 }
 
-// a troop at 0 vitality leaves when its mission lets it go; the client drops it as one dismissed
+// a troop at 0 vitality leaves when its mission lets it go; the client drops it as one dismissed. Its kind
+// is kept for a revive.
 void ClassHallFollowers::RemoveExpiredTroop(uint64 dbId, bool notify)
 {
     auto itr = _followers.find(dbId);
     if (itr == _followers.end() || !itr->second.IsExpired())
         return;
+
+    _expiredTroops.emplace_back(itr->second.PacketInfo.GarrFollowerID, GameTime::GetGameTime());
+    if (_expiredTroops.size() > MAX_EXPIRED_TROOPS)
+        _expiredTroops.erase(_expiredTroops.begin());
 
     _followers.erase(itr);
     if (!notify)

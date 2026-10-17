@@ -17973,6 +17973,7 @@ bool Player::LoadFromDB(ObjectGuid guid, CharacterDatabaseQueryHolder const& hol
         holder.GetPreparedResult(PLAYER_LOGIN_QUERY_LOAD_CLASS_HALL_FOLLOWERS),
         holder.GetPreparedResult(PLAYER_LOGIN_QUERY_LOAD_CLASS_HALL_FOLLOWER_EQUIPMENT),
         holder.GetPreparedResult(PLAYER_LOGIN_QUERY_LOAD_CLASS_HALL_FOLLOWER_TEMPORARY_ABILITIES),
+        holder.GetPreparedResult(PLAYER_LOGIN_QUERY_LOAD_CLASS_HALL_EXPIRED_TROOPS),
         holder.GetPreparedResult(PLAYER_LOGIN_QUERY_LOAD_CLASS_HALL_SHIPMENTS),
         holder.GetPreparedResult(PLAYER_LOGIN_QUERY_LOAD_CLASS_HALL_MISSIONS)))
         _classHall = std::move(classHall);
