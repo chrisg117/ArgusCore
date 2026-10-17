@@ -32,9 +32,16 @@ void AddSC_instance_trial_of_valor();
 void AddSC_boss_amalgam_of_souls();
 void AddSC_instance_black_rook_hold();
 
+// Broken Shore scenario
+void AddSC_broken_shore_alliance_forces();
+void AddSC_broken_shore_dread_commander();
+void AddSC_broken_shore_krosus();
+void AddSC_scenario_broken_shore();
+
 // Orderhalls
 void AddSC_orderhall_warrior();
 void AddSC_orderhall_rogue();
+void AddSC_orderhall_priest();
 
 // The name of this function should match:
 // void Add${NameOfDirectory}Scripts()
@@ -55,7 +62,14 @@ void AddBrokenIslesScripts()
     AddSC_boss_amalgam_of_souls();
     AddSC_instance_black_rook_hold();
 
+    // Broken Shore scenario
+    AddSC_broken_shore_alliance_forces();
+    AddSC_broken_shore_dread_commander();
+    AddSC_broken_shore_krosus();
+    AddSC_scenario_broken_shore();
+
     // Orderhalls
     AddSC_orderhall_warrior();
     AddSC_orderhall_rogue();
+    AddSC_orderhall_priest();
 }

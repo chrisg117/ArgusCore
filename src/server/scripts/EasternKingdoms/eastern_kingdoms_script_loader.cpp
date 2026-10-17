@@ -163,6 +163,8 @@ void AddSC_boss_hogger();
 void AddSC_boss_randolph_moloch();
 void AddSC_boss_lord_overheat();
 void AddSC_instance_throne_of_the_tides();   //Throne of the Tides
+void AddSC_instance_tirisfal_artifact_scenarios(); //Tirisfal artifact scenarios
+void AddSC_scenario_blade_in_twilight();
 void AddSC_boss_akilzon();                   //Zul'Aman
 void AddSC_boss_halazzi();
 void AddSC_boss_hex_lord_malacrass();
@@ -356,6 +358,8 @@ void AddEasternKingdomsScripts()
     AddSC_boss_randolph_moloch();
     AddSC_boss_lord_overheat();
     AddSC_instance_throne_of_the_tides();   //Throne of the Tides
+    AddSC_instance_tirisfal_artifact_scenarios(); //Tirisfal artifact scenarios
+    AddSC_scenario_blade_in_twilight();
     AddSC_boss_archaedas();                 //Uldaman
     AddSC_boss_ironaya();
     AddSC_uldaman();

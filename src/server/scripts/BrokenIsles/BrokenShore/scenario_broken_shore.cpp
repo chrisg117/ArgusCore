@@ -1,0 +1,2577 @@
+/*
+ * This file is part of the TrinityCore Project. See AUTHORS file for Copyright information
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published by the
+ * Free Software Foundation; either version 2 of the License, or (at your
+ * option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
+ * more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program. If not, see <http://www.gnu.org/licenses/>.
+ */
+
+#include "ScriptMgr.h"
+#include "CellImpl.h"
+#include "Containers.h"
+#include "DB2Stores.h"
+#include "GameEventSender.h"
+#include "GameObject.h"
+#include "GameObjectAI.h"
+#include "GridNotifiersImpl.h"
+#include "InstanceScenario.h"
+#include "InstanceScript.h"
+#include "Log.h"
+#include "Map.h"
+#include "MotionMaster.h"
+#include "ObjectAccessor.h"
+#include "PassiveAI.h"
+#include "PathGenerator.h"
+#include "Player.h"
+#include "Random.h"
+#include "ScriptedCreature.h"
+#include "ScriptedGossip.h"
+#include "SpellMgr.h"
+#include "SpellScript.h"
+#include "TaskScheduler.h"
+#include "TemporarySummon.h"
+#include "World.h"
+#include "broken_shore.h"
+#include <span>
+
+ObjectData const creatureData[] =
+{
+    { NPC_KING_VARIAN_WRYNN,        DATA_KING_VARIAN_WRYNN        },
+    { NPC_HIGHLORD_TIRION_FORDRING, DATA_HIGHLORD_TIRION_FORDRING },
+    { NPC_GULDAN,                   DATA_GULDAN                   },
+    { NPC_LADY_JAINA_PROUDMOORE,    DATA_LADY_JAINA_PROUDMOORE    },
+    { NPC_GENN_GREYMANE,            DATA_GENN_GREYMANE            },
+    { NPC_DREAD_COMMANDER_ARGANOTH, DATA_DREAD_COMMANDER_ARGANOTH },
+    { NPC_GELBIN_MEKKATORQUE,       DATA_GELBIN_MEKKATORQUE       },
+    { NPC_LADY_SYLVANAS_WINDRUNNER, DATA_LADY_SYLVANAS_WINDRUNNER },
+    { NPC_THRALL,                   DATA_THRALL                   },
+    { NPC_KROSUS,                   DATA_KROSUS                   },
+    { 0,                            0                             }  // END
+};
+
+// How close a player has to come to King Varian Wrynn to have found him
+static constexpr float VarianFoundDistance = 30.0f;
+
+// How far into "Find Varian" its cutscene starts. All that is known of it is that on retail players have the
+// time to ride all the way to Varian before it does.
+static constexpr Seconds FindVarianSceneDelay = 60s;
+
+// The cutscene lasts 20 seconds. A player whose client has not said by then that it is over is taken out of it.
+static constexpr Seconds FindVarianSceneTimeout = 30s;
+
+// Where Jaina and Genn are put on the hilltop and at Varian's side: this far from where players arrive or
+// from Varian, and at this angle to either side
+static constexpr float LeaderPlaceDistance = 6.0f;
+static constexpr float LeaderPlaceAngle = 0.6f;
+
+// The Fel Meteors on the way from the hilltop to Varian come from stalkers in the air above it. The stalkers
+// are this far apart along the way and this high above it, and none of them is this close to the hilltop,
+// where players arrive, or to Varian. All of that is a guess: a video of the retail scenario shows several
+// meteors at a time on the way, which come from high up.
+static constexpr float FelMeteorSpacing = 15.0f;
+static constexpr float FelMeteorHeight = 40.0f;
+static constexpr float FelMeteorHilltopDistance = 25.0f;
+static constexpr float FelMeteorVarianDistance = 45.0f;
+
+// A stalker sends a meteor down this often, to land this far at most from the ground below it, after this
+// long a wait and a flight at this speed, in yards a second. The spells that the core does not have say
+// every three seconds and ten yards a second; with those a player on foot does not get through, so there
+// are half as many meteors and they take twice as long to come down. Each stalker starts at a moment of its
+// own, so that the meteors do not all land at once.
+static constexpr Milliseconds FelMeteorPeriod = 6s;
+static constexpr float FelMeteorSpread = 10.0f;
+static constexpr Milliseconds FelMeteorLaunchDelay = 2s;
+static constexpr float FelMeteorSpeed = 5.0f;
+
+// What a Fel Meteor costs a player, in percent of the player's health
+static constexpr int32 FelMeteorDamagePct = 200;
+
+// The map's navigation mesh gives a long way a part at a time; no more parts than this are asked for
+static constexpr uint8 WayToVarianParts = 8;
+
+// How far from an Eredar Chaos Guard the Shielded Anchor it shields is at most. They are spawned four yards
+// apart, and the next anchor is more than seven yards away.
+static constexpr float ChaosGuardAnchorDistance = 6.0f;
+
+// Varian's forces stand behind him in two rows, this far from him and from each other, and Gelbin
+// Mekkatorque at his side. Who they are is from videos of the retail scenario; how many and where is not
+// known.
+static constexpr float VarianForcesRowDistance = 7.0f;
+static constexpr float VarianForcesRowSpacing = 4.0f;
+static constexpr float VarianForcesSpacing = 3.5f;
+static constexpr float GelbinPlaceDistance = 4.0f;
+
+static constexpr std::size_t VarianForcesRowSize = 6;
+static constexpr uint32 VarianForces[][VarianForcesRowSize] =
+{
+    { NPC_STORMWIND_GUARD, NPC_GILNEAN_ROYAL_GUARD, NPC_STORMWIND_GUARD, NPC_DARNASSUS_SENTINEL, NPC_GILNEAN_ROYAL_GUARD, NPC_STORMWIND_GUARD },
+    { NPC_GNOMEREGAN_TINKERER, NPC_ALLIANCE_PRIEST, NPC_KIRIN_TOR_BATTLE_MAGE_1, NPC_GILNEAN_DRUID, NPC_ALLIANCE_PRIEST, NPC_GNOMEREGAN_TINKERER }
+};
+
+// How long the cutscene after "Raze the Black City" may take before players are moved on without it having
+// said so. How long it is, is not known.
+static constexpr Seconds BlackCitySceneTimeout = 120s;
+
+// Where the leaders are when players come out of that cutscene. Jaina's place, from which she makes the
+// bridge of ice, is from a video of the retail scenario and was taken in game; the others' are guesses.
+Position const JainaBridgePosition  = { 1415.3f, 2137.7f, 21.8f, 4.78f };
+Position const VarianBridgePosition = { 1406.5f, 2146.0f, 21.5f, 4.78f };
+Position const GennBridgePosition   = { 1419.5f, 2147.5f, 21.5f, 4.78f };
+Position const GelbinBridgePosition = { 1412.0f, 2149.5f, 21.5f, 4.78f };
+
+// Varian's forces stand in rows behind them: where the middle of the first row is, and how far apart the
+// fighters of a row and the rows are
+Position const ForcesBridgePosition = { 1411.0f, 2153.0f, 21.5f, 4.78f };
+static constexpr float ForcesBridgeSpacing = 4.0f;
+static constexpr std::size_t ForcesBridgeRowSize = 6;
+
+// How long after the first player has come out of the cutscene Jaina makes the bridge, how long after
+// that the forces make for its far end, and how long after that they are put on the ledge before Tirion
+static constexpr Milliseconds JainaBridgeDelay = 6500ms;
+static constexpr Milliseconds ForcesCrossDelay = 3s;
+static constexpr Milliseconds ForcesLedgeDelay = 17s;
+
+// Where the leaders are on that ledge, from a video of the retail scenario and taken in game, and how far
+// apart they and the forces behind them are put
+Position const TirionLedgePosition = { 1495.8f, 1813.7f, 37.4f, 4.71f };
+static constexpr float TirionLedgeSpacing = 3.5f;
+
+// How often the script sees to it that Gul'dan holds Tirion
+static constexpr uint32 GuldanChannelCheckInterval = 1000;
+
+// How far and how fast Tirion falls into the pool, and how long after that he is gone
+static constexpr float TirionFallDistance = 25.0f;
+static constexpr float TirionFallSpeed = 18.0f;
+static constexpr Milliseconds TirionFallTime = 2s;
+
+// How far into "Krosus" he rises from the pool, breathes on Tirion, Tirion falls, and Krosus can be fought.
+// What is said before, between and after is spaced by the length of the lines.
+// His breath takes four and a half seconds to cast. He goes to the Alliance's ledge once he has spoken, and
+// can be fought when he is there.
+static constexpr Milliseconds KrosusEmergeDelay = 19s;
+static constexpr Milliseconds KrosusBreathDelay = 24s;
+static constexpr Milliseconds TirionFallDelay = 30s;
+static constexpr Milliseconds KrosusSentDelay = 56s;
+static constexpr Milliseconds KrosusWalkDelay = 4500ms;
+
+// The Argent Dawnbringer in the cage before the gate of the Black City, which Varian talks with (creature.guid)
+static constexpr ObjectGuid::LowType GateDawnbringerSpawnId = 14605060;
+
+// How far from a Legion Cage the Argent Dawnbringer inside it is at most
+static constexpr float LegionCageDistance = 3.0f;
+
+// How near to where the forces gather before the gate of the Black City Varian has to be for the talk
+// there to start
+static constexpr float VarianAtTheGateDistance = 14.0f;
+
+// How near to where the forces gather among the anchors Jaina has to be to tell them what to go for
+static constexpr float JainaAtAnchorsDistance = 15.0f;
+
+// How long into "Destroy the Portal" players get their second stack of "For the Alliance!": when the last
+// of the lines has been said
+static constexpr Seconds ForTheAllianceAtThePortalDelay = 24s;
+
+// How many of the Black City's 300 points earn the fourth stack of "For the Alliance!": half of them
+static constexpr uint32 ForTheAllianceBlackCityPoints = 150;
+
+// How near the portal a player has to be for the Mo'arg Painbringer to appear in it, which is a guess. The
+// anchors are up to 55 yards from the portal.
+static constexpr float PainbringerAppearDistance = 70.0f;
+
+// How long the Mo'arg Painbringer takes to appear: "Legion Invasion Spawn" stuns it for two seconds
+static constexpr Milliseconds PainbringerAppearTime = 2500ms;
+
+// How far around King Varian Wrynn the Mo'arg Painbringer is looked for
+static constexpr float PainbringerSearchDistance = 250.0f;
+
+// The same for Highlord Tirion Fordring, who hangs about 27 yards out from the ledge players arrive on
+static constexpr float TirionFoundDistance = 40.0f;
+
+// How close to Gul'dan a player dies
+static constexpr float GuldanDeathDistance = 5.0f;
+
+// How long after a bridge of ice of Jaina's appears it starts to form
+static constexpr Milliseconds BridgeFormDelay = 500ms;
+
+// "Stop Gul'dan". What Varian and Sylvanas say when Krosus has fallen is spaced by the length of the lines.
+// When they have said it the Horde's leaders, who are within this distance of Sylvanas, leave for the ridge.
+// Where that is is not known: they run this far back from the pool and are gone this long after they set off.
+static constexpr Milliseconds HordeLeavesDelay = 24s;
+static constexpr float HordeLeadersDistance = 30.0f;
+static constexpr float HordeLeaveDistance = 45.0f;
+static constexpr Milliseconds HordeGoneDelay = 7s;
+
+// Once Varian has sent everyone across, Jaina makes her second bridge of ice when the demons that Krosus's
+// Fel Storms brought to the ledge are dead. They are looked for this far around her.
+static constexpr Milliseconds AcrossTheChasmDelay = 13s;
+static constexpr float LedgeDemonDistance = 100.0f;
+
+// Where she makes it from, taken in game, and facing along it. She has to come this near to that place, is
+// given this many seconds to, and does not go there at all from farther away than this.
+Position const JainaSecondBridgePosition = { 1528.8f, 1805.6f, 37.3f, 5.07f };
+static constexpr float JainaSecondBridgeTolerance = 2.0f;
+static constexpr uint32 JainaSecondBridgeChecks = 15;
+static constexpr float JainaSecondBridgeMaxDistance = 150.0f;
+
+// Which way the Alliance faces where it gathers before Gul'dan: towards him. Varian speaks to him once a
+// player is this near to that place and Varian this near to it. When the player has waited this many
+// seconds for Varian, he and the forces are put there.
+static constexpr float GuldanGatherOrientation = 5.31f;
+static constexpr float GuldanConfrontDistance = 45.0f;
+static constexpr float VarianConfrontDistance = 15.0f;
+static constexpr uint32 VarianConfrontWait = 20;
+
+// One of the demons Gul'dan brings before him, and where it stands from where he does: so many yards ahead
+// of him, which is towards the Alliance, and so many to his left
+struct GuldanDemon
+{
+    uint32 Entry;
+    float Ahead;
+    float Side;
+};
+
+// The first row: Felguard Invaders with Felstalker Dreadhounds between them. That, the row behind it and the
+// Legion that comes after them are from a video of the retail scenario; how many there are of each is counted
+// from it as well as it shows, and where they stand is by eye.
+static constexpr GuldanDemon GuldanFirstRow[] =
+{
+    { NPC_FELGUARD_INVADER_TOMB,      12.0f, -20.0f }, { NPC_FELSTALKER_DREADHOUND_TOMB, 14.0f, -17.5f },
+    { NPC_FELGUARD_INVADER_TOMB,      12.0f, -15.0f }, { NPC_FELSTALKER_DREADHOUND_TOMB, 14.0f, -12.5f },
+    { NPC_FELGUARD_INVADER_TOMB,      12.0f, -10.0f }, { NPC_FELSTALKER_DREADHOUND_TOMB, 14.0f,  -7.5f },
+    { NPC_FELGUARD_INVADER_TOMB,      12.0f,  -5.0f }, { NPC_FELSTALKER_DREADHOUND_TOMB, 14.0f,  -2.5f },
+    { NPC_FELGUARD_INVADER_TOMB,      12.0f,   0.0f }, { NPC_FELSTALKER_DREADHOUND_TOMB, 14.0f,   2.5f },
+    { NPC_FELGUARD_INVADER_TOMB,      12.0f,   5.0f }, { NPC_FELSTALKER_DREADHOUND_TOMB, 14.0f,   7.5f },
+    { NPC_FELGUARD_INVADER_TOMB,      12.0f,  10.0f }, { NPC_FELSTALKER_DREADHOUND_TOMB, 14.0f,  12.5f },
+    { NPC_FELGUARD_INVADER_TOMB,      12.0f,  15.0f }, { NPC_FELSTALKER_DREADHOUND_TOMB, 14.0f,  17.5f },
+    { NPC_FELGUARD_INVADER_TOMB,      12.0f,  20.0f }
+};
+
+// The second row, behind Gul'dan: Wrathguard Dreadblades with a Mo'arg Spinebreaker at each end
+static constexpr GuldanDemon GuldanSecondRow[] =
+{
+    { NPC_MOARG_SPINEBREAKER,         -3.0f, -24.0f },
+    { NPC_WRATHGUARD_DREADBLADE_TOMB, -3.0f, -17.5f }, { NPC_WRATHGUARD_DREADBLADE_TOMB, -3.0f, -12.5f },
+    { NPC_WRATHGUARD_DREADBLADE_TOMB, -3.0f,  -7.5f }, { NPC_WRATHGUARD_DREADBLADE_TOMB, -3.0f,  -2.5f },
+    { NPC_WRATHGUARD_DREADBLADE_TOMB, -3.0f,   2.5f }, { NPC_WRATHGUARD_DREADBLADE_TOMB, -3.0f,   7.5f },
+    { NPC_WRATHGUARD_DREADBLADE_TOMB, -3.0f,  12.5f }, { NPC_WRATHGUARD_DREADBLADE_TOMB, -3.0f,  17.5f },
+    { NPC_MOARG_SPINEBREAKER,         -3.0f,  24.0f }
+};
+
+// The Legion, which is not fought. It stands to both sides of a way that is left open behind Gul'dan. What
+// comes first is a row of Felguard Legionnaires on each side with lords of the Legion behind them.
+static constexpr GuldanDemon GuldansLegionFirst[] =
+{
+    { NPC_FELGUARD_LEGIONNAIRE_1,    -9.0f, -31.0f }, { NPC_FELGUARD_LEGIONNAIRE_2,    -9.0f, -26.0f },
+    { NPC_FELGUARD_LEGIONNAIRE_3,    -9.0f, -21.0f }, { NPC_FELGUARD_LEGIONNAIRE_1,    -9.0f, -16.0f },
+    { NPC_FELGUARD_LEGIONNAIRE_2,    -9.0f, -11.0f }, { NPC_FELGUARD_LEGIONNAIRE_3,    -9.0f,  -6.0f },
+    { NPC_FELGUARD_LEGIONNAIRE_1,    -9.0f,   6.0f }, { NPC_FELGUARD_LEGIONNAIRE_2,    -9.0f,  11.0f },
+    { NPC_FELGUARD_LEGIONNAIRE_3,    -9.0f,  16.0f }, { NPC_FELGUARD_LEGIONNAIRE_1,    -9.0f,  21.0f },
+    { NPC_FELGUARD_LEGIONNAIRE_2,    -9.0f,  26.0f }, { NPC_FELGUARD_LEGIONNAIRE_3,    -9.0f,  31.0f },
+    { NPC_TICHONDRIUS_THE_DARKENER, -16.0f, -20.0f }, { NPC_IMP_MOTHER_FECUNDA,      -16.0f,   9.0f },
+    { NPC_FEL_COMMANDER_AZGALOR,    -20.0f,  20.0f }, { NPC_JAILER_ZERUS,            -15.0f,  31.0f }
+};
+
+// What comes when the second row has fallen: a row of Felguard Legionnaires on each side where that row
+// stood, and Brutallus on the way behind Gul'dan
+static constexpr GuldanDemon GuldansLegionSecond[] =
+{
+    { NPC_FELGUARD_LEGIONNAIRE_3,    -3.0f, -31.0f }, { NPC_FELGUARD_LEGIONNAIRE_1,    -3.0f, -26.0f },
+    { NPC_FELGUARD_LEGIONNAIRE_2,    -3.0f, -21.0f }, { NPC_FELGUARD_LEGIONNAIRE_3,    -3.0f, -16.0f },
+    { NPC_FELGUARD_LEGIONNAIRE_1,    -3.0f, -11.0f }, { NPC_FELGUARD_LEGIONNAIRE_2,    -3.0f,  -6.0f },
+    { NPC_FELGUARD_LEGIONNAIRE_3,    -3.0f,   6.0f }, { NPC_FELGUARD_LEGIONNAIRE_1,    -3.0f,  11.0f },
+    { NPC_FELGUARD_LEGIONNAIRE_2,    -3.0f,  16.0f }, { NPC_FELGUARD_LEGIONNAIRE_3,    -3.0f,  21.0f },
+    { NPC_FELGUARD_LEGIONNAIRE_1,    -3.0f,  26.0f }, { NPC_FELGUARD_LEGIONNAIRE_2,    -3.0f,  31.0f },
+    { NPC_BRUTALLUS,                 -9.0f,   0.0f }
+};
+
+// How far above Gul'dan the ground is looked for where his demons are put: the steps behind him rise
+static constexpr float GuldanGroundSearchHeight = 10.0f;
+
+// His demons appear in fel fire this long after they are there, because a client shows nothing at a creature
+// it does not know yet; the fire burns this long. A fallen demon lies this long.
+static constexpr Milliseconds GuldanDemonAppearDelay = 500ms;
+static constexpr uint32 GuldanDemonFireTime = 3000;
+static constexpr Milliseconds GuldanDemonCorpseTime = 60s;
+
+// How far a row that is sent at the Alliance runs if it meets nobody, and how many seconds a row is fought
+// before what follows it starts anyway
+static constexpr float GuldanRowAdvance = 34.0f;
+static constexpr uint32 GuldanRowTimeout = 120;
+
+// How far into what Varian and Gul'dan say the first two rows appear and the first is sent. The times, here
+// and of what follows a row, are those of a video of the retail scenario.
+static constexpr Milliseconds GuldanFirstRowsDelay = 22s;
+static constexpr Milliseconds GuldanChargeDelay = 28s;
+
+// How far the Legion's front line walks towards the Alliance when Gul'dan has said his last; the cinematic
+// starts while it is on its way
+static constexpr float LegionAdvanceDistance = 12.0f;
+
+// Where a player is taken when the cinematic is over: the deck of the Skyfire over Stormwind Harbor. The
+// place is where the spell after "Broken Shore Complete" (208514) teleports to. The client has that spell's
+// effect and not the spell itself, so the core does not know it and the script does what it would.
+WorldLocation const SkyfireDeckLocation(0, -8400.18f, 1383.11f, 135.12f, 2.36f);
+
+// How long after a player has come back into a scenario that has ended they are taken there
+static constexpr Seconds SkyfireReturnDelay = 2s;
+
+static void TakeToTheSkyfire(Player* player)
+{
+    player->TeleportTo(SkyfireDeckLocation);
+}
+
+// Which row of Gul'dan's demons is being fought
+enum GuldanFight
+{
+    GULDAN_FIGHT_NONE                   = 0,
+    GULDAN_FIGHT_FIRST_ROW              = 1,
+    GULDAN_FIGHT_SECOND_ROW             = 2
+};
+
+// How far from a Spire of Woe its Anchoring Crystals are at most, and the other way round. They circle it
+// about 15 yards out, and the spires stand more than 50 yards apart.
+static constexpr float SpireCrystalDistance = 30.0f;
+
+// How long an Anchoring Crystal takes to go round its spire, which is a guess, and how many points its
+// circle is made of. The core leaves out the point a crystal starts at, which shows the less the more there are.
+static constexpr float CrystalLapTime = 20.0f;
+static constexpr uint8 CrystalCircleSteps = 32;
+
+// The core ends a circle after one lap unless it is told how long the circling is to last
+static constexpr Milliseconds CrystalCirclingTime = 12h;
+
+// How long the arrows over the Anchoring Crystals stay if none of the crystals is destroyed before that. A
+// video of the retail scenario shows them from when Jaina speaks of the crystals, for about this long.
+static constexpr Seconds CrystalArrowTime = 60s;
+
+// A Spire of Woe fires a beam at the ground for this long, with a pause of this length between two beams;
+// both are guesses from a video of the retail scenario. A beam's target is there a moment before the beam,
+// because a client shows nothing at a creature it does not know yet.
+static constexpr Milliseconds SpireBeamTime = 3s;
+static constexpr Milliseconds SpireBeamPauseMin = 6s;
+static constexpr Milliseconds SpireBeamPauseMax = 10s;
+static constexpr Milliseconds SpireBeamAimTime = 500ms;
+
+// How far from its spire a beam comes down, and how wide the arc towards the landing is in which it does
+// when it has no one to fire at
+static constexpr float SpireBeamDistanceMin = 12.0f;
+static constexpr float SpireBeamDistanceMax = 40.0f;
+static constexpr float SpireBeamArc = 2.0f * float(M_PI) / 3.0f;
+
+// How far the creature at the top of a Spire of Woe is from the spire at most
+static constexpr float SpireTopDistance = 40.0f;
+
+// Where the Mo'arg Painbringer of "Destroy the Portal" goes when it has come out of the portal: in front of
+// King Varian Wrynn, which is where it was sniffed
+Position const PainbringerFightPosition = { 1137.1f, 2469.0f, 35.2f, 2.22f };
+
+// Where players are taken when the Black City has been razed: the edge of the city, facing the gap to the crevasse
+Position const BlackCityRazedPosition = { 1410.2959f, 2162.2405f, 21.252392f, 4.92f };
+
+// The scheduled tasks that can be called off
+enum BrokenShoreTaskGroups
+{
+    TASK_GROUP_BEACH                    = 1, // what the leaders say and do on the beach
+    TASK_GROUP_CRYSTALS                 = 2, // what they make of the Anchoring Crystals, which is late once a spire has fallen
+    TASK_GROUP_CRYSTAL_ARROWS           = 3, // the arrows over the Anchoring Crystals, which go when the first of them is destroyed
+    TASK_GROUP_COMMANDER                = 4, // how Dread Commander Arganoth arrives
+    TASK_GROUP_COMMANDER_SLAIN          = 5, // what the leaders say when he has fallen, which nothing calls off
+    TASK_GROUP_FIND_VARIAN              = 6, // the way over the hill to King Varian Wrynn, its cutscene and its Fel Meteors
+    TASK_GROUP_VARIAN_FOUND             = 7, // what is said when he is found, which nothing calls off
+    TASK_GROUP_DESTROY_THE_PORTAL       = 8, // what is said at the portal, and the Mo'arg Painbringer setting off
+    TASK_GROUP_RAZE_THE_BLACK_CITY      = 9, // what is said before the forces go into the Black City
+    TASK_GROUP_BLACK_CITY_SCENE         = 10, // the end of the cutscene after it, which nothing calls off
+    TASK_GROUP_TIRION                   = 11, // what is said before the pool, Tirion's fall and Krosus rising
+    TASK_GROUP_STOP_GULDAN              = 12  // what is said when Krosus has fallen and before Gul'dan, and Jaina's second bridge
+};
+
+// "The Battle for Broken Shore". The scenario itself is attached to the map by the `scenarios` table
+// and advances when its criteria receive the game events listed in broken_shore.h.
+// The stages are being filled in one at a time; those that are still stubs say what they need.
+class instance_broken_shore_scenario : public InstanceMapScript
+{
+public:
+    instance_broken_shore_scenario() : InstanceMapScript(BrokenShoreScriptName, MAP_BROKEN_SHORE_SCENARIO) { }
+
+    struct instance_broken_shore_scenario_InstanceMapScript : public InstanceScript
+    {
+        instance_broken_shore_scenario_InstanceMapScript(InstanceMap* map) : InstanceScript(map), _currentStep(nullptr), _checkTimer(0),
+            _spiresDestroyed(0), _forTheAllianceStacks(1), _allianceRallyPoint(RALLY_POINT_NONE), _blackCityPoints(0),
+            _allianceForcesCharging(false), _commanderArrived(false),
+            _varianCanBeFound(false)
+        {
+            SetHeaders(DataHeader);
+            LoadObjectData(creatureData, nullptr);
+
+            // Where players go when they release after dying; without one the core falls back to the
+            // default graveyard in Westfall.
+            // TODO: the Horde's locations.
+            SetEntranceLocation(WORLD_SAFE_LOC_ALLIANCE_BEACH);
+        }
+
+        // The core has no script hook for scenario step changes, so the current step is polled.
+        void Update(uint32 diff) override
+        {
+            _scheduler.Update(diff);
+
+            ResurrectReleasedPlayers();
+
+            InstanceScenario const* scenario = instance->GetInstanceScenario();
+            if (!scenario)
+                return;
+
+            ScenarioStepEntry const* step = scenario->GetStep();
+            if (step != _currentStep)
+            {
+                if (_currentStep)
+                    EndStage(BrokenShoreStages(_currentStep->OrderIndex));
+
+                _currentStep = step;
+                if (step)
+                    StartStage(BrokenShoreStages(step->OrderIndex));
+                else if (scenario->IsComplete())
+                    CompleteScenario();
+            }
+
+            if (!step)
+                return;
+
+            switch (step->OrderIndex)
+            {
+                case STAGE_THE_BROKEN_SHORE:
+                    UpdateTheBrokenShore(diff);
+                    break;
+                case STAGE_FIND_VARIAN:
+                    UpdateFindVarian(diff);
+                    break;
+                case STAGE_THE_HIGHLORD:
+                    UpdateTheHighlord(diff);
+                    break;
+                case STAGE_STOP_GULDAN:
+                    UpdateStopGuldan(diff);
+                    break;
+                default:
+                    break;
+            }
+        }
+
+        void OnUnitDeath(Unit* unit) override
+        {
+            Creature* creature = unit->ToCreature();
+            if (!creature)
+                return;
+
+            switch (creature->GetEntry())
+            {
+                case NPC_FELSTALKER_DREADHOUND:
+                case NPC_FELGUARD_LEGIONNAIRE_1:
+                case NPC_FELGUARD_LEGIONNAIRE_2:
+                case NPC_FELGUARD_LEGIONNAIRE_3:
+                    SendScenarioEvent(GAME_EVENT_BEACH_DEMON_SLAIN);
+                    break;
+                case NPC_FEL_LORD_KURDUZ:
+                case NPC_FEL_LORD_RAKKAN:
+                case NPC_FEL_LORD_ZARDAK:
+                    SendScenarioEvent(GAME_EVENT_FEL_LORD_SLAIN);
+                    break;
+                case NPC_ANCHORING_CRYSTAL:
+                    CrystalDestroyed(creature);
+                    break;
+                case NPC_DREAD_COMMANDER_ARGANOTH:
+                    SendScenarioEvent(GAME_EVENT_ARGANOTH_SLAIN);
+                    CommanderSlain();
+                    break;
+                case NPC_SHIELDED_ANCHOR:
+                    SendScenarioEvent(GAME_EVENT_ANCHOR_SHATTERED);
+                    break;
+                // The demons of the Black City, by how much health they have
+                case NPC_GRINNING_SHADOWSTALKER:
+                case NPC_FELFIRE_IMP:
+                case NPC_FIERY_TRICKSTER:
+                case NPC_SHADOWFLAME_IMP:
+                    SendScenarioEvent(GAME_EVENT_BLACK_CITY_1);
+                    AddBlackCityPoints(1);
+                    break;
+                case NPC_FELGUARD_INVADER:
+                case NPC_LIVING_FELBLAZE:
+                case NPC_BURNING_TERRORHOUND:
+                case NPC_WRATHGUARD_DREADBLADE:
+                    SendScenarioEvent(GAME_EVENT_BLACK_CITY_2);
+                    AddBlackCityPoints(2);
+                    break;
+                case NPC_BURNING_SENTRY:
+                case NPC_SOULBOUND_DESTRUCTOR:
+                case NPC_DARK_WORSHIPPER:
+                case NPC_SHADOWSWORN_HARBINGER:
+                    SendScenarioEvent(GAME_EVENT_BLACK_CITY_3);
+                    AddBlackCityPoints(5);
+                    break;
+                case NPC_INFERNAL_SIEGEBREAKER:
+                case NPC_MOTHER_VIRILA:
+                case NPC_MOARG_PAINBRINGER:
+                case NPC_FEL_LORD_DUKAZ:
+                case NPC_FEL_LORD_ZARNOZ:
+                case NPC_FEL_LORD_RAKAZ:
+                case NPC_MALIFICUS:
+                    SendScenarioEvent(GAME_EVENT_BLACK_CITY_4);
+                    AddBlackCityPoints(10);
+                    break;
+                case NPC_KROSUS:
+                    SendScenarioEvent(GAME_EVENT_KROSUS_SLAIN);
+                    break;
+                default:
+                    break;
+            }
+        }
+
+        uint32 GetData(uint32 type) const override
+        {
+            switch (type)
+            {
+                case DATA_ALLIANCE_FORCES_CHARGING:
+                    return _allianceForcesCharging ? 1 : 0;
+                case DATA_COMMANDER_ARRIVED:
+                    return _commanderArrived ? 1 : 0;
+                case DATA_ALLIANCE_RALLY_POINT:
+                    return _allianceRallyPoint;
+                default:
+                    return 0;
+            }
+        }
+
+        // A freed Argent Dawnbringer is worth a point of the Black City's. That is how a video of the retail
+        // scenario has it.
+        void SetData(uint32 type, uint32 /*data*/) override
+        {
+            if (type != DATA_DAWNBRINGER_FREED)
+                return;
+
+            SendScenarioEvent(GAME_EVENT_BLACK_CITY_1);
+            AddBlackCityPoints(1);
+        }
+
+        void SetGuidData(uint32 type, ObjectGuid data) override
+        {
+            Player* player = instance->GetPlayer(data);
+            if (!player)
+                return;
+
+            switch (type)
+            {
+                case DATA_PLAYER_LEFT_FIND_VARIAN_SCENE:
+                    LeaveFindVarianScene(player);
+                    break;
+                case DATA_PLAYER_LEFT_BLACK_CITY_SCENE:
+                    LeaveBlackCityScene(player);
+                    break;
+                default:
+                    break;
+            }
+        }
+
+        // An Unattended Cannon can neither strafe nor jump, as a video of the retail scenario shows. Its
+        // vehicle (4585) does not say so.
+        void OnCreatureCreate(Creature* creature) override
+        {
+            InstanceScript::OnCreatureCreate(creature);
+
+            if (creature->GetEntry() == NPC_UNATTENDED_CANNON)
+                creature->AddExtraUnitMovementFlag(MOVEMENTFLAG2_NO_STRAFE | MOVEMENTFLAG2_NO_JUMPING);
+
+            // Krosus fights nobody until Gul'dan sends him
+            if (creature->GetEntry() == NPC_KROSUS)
+            {
+                creature->SetImmuneToAll(true);
+                creature->SetReactState(REACT_PASSIVE);
+            }
+        }
+
+        void OnGameObjectCreate(GameObject* go) override
+        {
+            InstanceScript::OnGameObjectCreate(go);
+
+            switch (go->GetEntry())
+            {
+                // A fallen spire that is loaded again, as happens when players leave the scenario and come
+                // back, would stand
+                case GO_SPIRE_OF_WOE:
+                    _spireGUIDs.push_back(go->GetGUID());
+                    if (_fallenSpires.contains(go->GetSpawnId()))
+                        go->SetGoState(GO_STATE_DESTROYED);
+                    break;
+                // A bridge of ice is spawned as a closed door and opened a moment after it appears. The
+                // model's animation for a door that opens is the ice forming, and a client only plays it
+                // for a door it already has; an open door then shows the finished bridge.
+                case GO_ICE_BRIDGE:
+                    _scheduler.Schedule(BridgeFormDelay, [this, guid = go->GetGUID()](TaskContext /*context*/)
+                    {
+                        if (GameObject* bridge = instance->GetGameObject(guid))
+                            bridge->SetGoState(GO_STATE_ACTIVE);
+                    });
+                    break;
+                default:
+                    break;
+            }
+        }
+
+        // The core only passes a game event on to the scenario when a player is its source,
+        // and never for a player in GM mode.
+        void SendScenarioEvent(uint32 gameEventId)
+        {
+            for (MapReference const& ref : instance->GetPlayers())
+            {
+                Player* player = ref.GetSource();
+                if (!player || player->IsGameMaster())
+                    continue;
+
+                GameEvents::Trigger(gameEventId, player, nullptr);
+                return;
+            }
+        }
+
+        // A player who releases is taken to the graveyard of the stage, which is the entrance location,
+        // as a ghost. The scenario has no running back to a corpse: the player comes back to life there.
+        void ResurrectReleasedPlayers()
+        {
+            for (MapReference const& ref : instance->GetPlayers())
+            {
+                Player* player = ref.GetSource();
+                if (!player || !player->HasPlayerFlag(PLAYER_FLAGS_GHOST) || player->IsBeingTeleported())
+                    continue;
+
+                player->ResurrectPlayer(1.0f);
+                player->SpawnCorpseBones();
+            }
+        }
+
+        // The stages that wait for players to get somewhere look for them once a second
+        bool IsTimeToCheckPlayers(uint32 diff)
+        {
+            if (_checkTimer > diff)
+            {
+                _checkTimer -= diff;
+                return false;
+            }
+
+            _checkTimer = 1 * IN_MILLISECONDS;
+            return true;
+        }
+
+        // Sends the game event once a living player who is not in GM mode is close enough to the creature
+        void SendScenarioEventWhenFound(uint32 diff, uint32 creatureDataType, float distance, uint32 gameEventId)
+        {
+            if (!IsTimeToCheckPlayers(diff))
+                return;
+
+            Creature* creature = GetCreature(creatureDataType);
+            if (!creature)
+                return;
+
+            for (MapReference const& ref : instance->GetPlayers())
+            {
+                Player* player = ref.GetSource();
+                if (!player || player->IsGameMaster() || !player->IsAlive() || !player->IsWithinDist(creature, distance))
+                    continue;
+
+                GameEvents::Trigger(gameEventId, player, nullptr);
+                return;
+            }
+        }
+
+        // "For the Alliance!" is given at the start of every stage from the beach on to players who do not
+        // have it, or have fewer stacks than the scenario has got to. It lasts an hour and is lost on death.
+        // Videos of the retail scenario show one stack on the beach and five at the end. On retail someone
+        // casts it; they do not show who.
+        void GiveForTheAlliance()
+        {
+            instance->DoOnPlayers([this](Player* player)
+            {
+                if (!player->IsAlive())
+                    return;
+
+                Aura* aura = player->GetAura(SPELL_FOR_THE_ALLIANCE);
+                if (!aura)
+                    aura = player->AddAura(SPELL_FOR_THE_ALLIANCE, player);
+
+                if (aura && aura->GetStackAmount() < _forTheAllianceStacks)
+                    aura->SetStackAmount(_forTheAllianceStacks);
+            });
+        }
+
+        // The stacks of "For the Alliance!" the scenario has got to, as videos of the retail scenario show
+        // them: a second when the lines at the portal have been said, a third when the forces go into the
+        // Black City, a fourth halfway through it and a fifth when Krosus comes.
+        void RaiseForTheAlliance(uint8 stacks)
+        {
+            _forTheAllianceStacks = std::max(_forTheAllianceStacks, stacks);
+            GiveForTheAlliance();
+        }
+
+        // Keeps count of the Black City's points, which the scenario's criteria count for themselves
+        void AddBlackCityPoints(uint32 points)
+        {
+            _blackCityPoints += points;
+            if (_blackCityPoints >= ForTheAllianceBlackCityPoints && _blackCityPoints - points < ForTheAllianceBlackCityPoints)
+            {
+                RaiseForTheAlliance(4);
+                if (Creature* varian = GetCreature(DATA_KING_VARIAN_WRYNN))
+                    varian->AI()->Talk(SAY_VARIAN_HALFWAY_THERE);
+            }
+        }
+
+        // Has one of the creatures the script keeps track of say a line after a delay
+        void TalkLater(Milliseconds delay, uint32 taskGroup, uint32 creatureDataType, uint8 textGroup)
+        {
+            _scheduler.Schedule(delay, taskGroup, [this, creatureDataType, textGroup](TaskContext /*context*/)
+            {
+                if (Creature* creature = GetCreature(creatureDataType))
+                    creature->AI()->Talk(textGroup);
+            });
+        }
+
+        // Puts Jaina or Genn on the ground a few yards from somewhere, in the given direction from there, to
+        // stay. TODO: they should walk.
+        void PlaceLeader(uint32 creatureDataType, Position const& from, float angle, float orientation)
+        {
+            Creature* leader = GetCreature(creatureDataType);
+            if (!leader || !leader->IsAlive())
+                return;
+
+            float x = from.GetPositionX() + LeaderPlaceDistance * std::cos(angle);
+            float y = from.GetPositionY() + LeaderPlaceDistance * std::sin(angle);
+
+            // A creature that is moved to where nothing is loaded is put back where it spawned
+            instance->LoadGrid(x, y);
+
+            Position place(x, y, leader->GetMapHeight(x, y, MAX_HEIGHT), orientation);
+            leader->GetMotionMaster()->Clear();
+            leader->NearTeleportTo(place);
+            leader->SetHomePosition(place);
+        }
+
+        // The Anchoring Crystals that circle a Spire of Woe. A gameobject measures a distance from the edges
+        // of its model's box, which lets a search around a spire reach the crystals of the next one, so
+        // every crystal found is measured again from the spire's centre.
+        std::vector<Creature*> GetCrystals(GameObject const* spire) const
+        {
+            std::vector<Creature*> crystals;
+            spire->GetCreatureListWithEntryInGrid(crystals, NPC_ANCHORING_CRYSTAL, SpireCrystalDistance);
+            std::erase_if(crystals, [spire](Creature const* crystal) { return spire->GetExactDist2d(crystal) > SpireCrystalDistance; });
+            return crystals;
+        }
+
+        // Puts an arrow over every Anchoring Crystal, or takes the arrows away again
+        void ShowCrystalArrows(bool show)
+        {
+            for (ObjectGuid const& guid : _spireGUIDs)
+            {
+                GameObject* spire = instance->GetGameObject(guid);
+                if (!spire)
+                    continue;
+
+                for (Creature* crystal : GetCrystals(spire))
+                {
+                    if (!show)
+                        crystal->RemoveAurasDueToSpell(SPELL_GREEN_CAT_MARK_STATE);
+                    else if (crystal->IsAlive())
+                        crystal->AddAura(SPELL_GREEN_CAT_MARK_STATE, crystal);
+                }
+            }
+        }
+
+        // A Spire of Woe is held in place by the Anchoring Crystals that circle it and falls with the last
+        // of them: its model has an animation of that, which a client plays for a destroyed gameobject.
+        // A crystal without a spire counts as one, so that the stage can still be finished.
+        void CrystalDestroyed(Creature* crystal)
+        {
+            _scheduler.CancelGroup(TASK_GROUP_CRYSTAL_ARROWS);
+            ShowCrystalArrows(false);
+
+            if (GameObject* spire = crystal->FindNearestGameObject(GO_SPIRE_OF_WOE, SpireCrystalDistance))
+            {
+                for (Creature const* other : GetCrystals(spire))
+                    if (other != crystal && other->IsAlive())
+                        return;
+
+                DestroySpire(spire);
+            }
+
+            SendScenarioEvent(GAME_EVENT_SPIRE_OF_WOE_DESTROYED);
+            SpireDestroyed();
+        }
+
+        // What the leaders say when Dread Commander Arganoth has fallen, once he has had his last words,
+        // which take him five seconds
+        void CommanderSlain()
+        {
+            TalkLater(6s, TASK_GROUP_COMMANDER_SLAIN, DATA_LADY_JAINA_PROUDMOORE, SAY_JAINA_IS_EVERYONE_ALRIGHT);
+            TalkLater(7500ms, TASK_GROUP_COMMANDER_SLAIN, DATA_GENN_GREYMANE, SAY_GENN_SINGED_BUT_ALIVE);
+            TalkLater(13500ms, TASK_GROUP_COMMANDER_SLAIN, DATA_LADY_JAINA_PROUDMOORE, SAY_JAINA_MOURN_THEM_LATER);
+            TalkLater(18s, TASK_GROUP_COMMANDER_SLAIN, DATA_GENN_GREYMANE, SAY_GENN_AGREED);
+        }
+
+        void DestroySpire(GameObject* spire)
+        {
+            _fallenSpires.insert(spire->GetSpawnId());
+            spire->SetGoState(GO_STATE_DESTROYED);
+        }
+
+        // What the leaders say as the Spires of Woe fall
+        void SpireDestroyed()
+        {
+            _scheduler.CancelGroup(TASK_GROUP_CRYSTALS);
+
+            switch (++_spiresDestroyed)
+            {
+                case 1:
+                    TalkLater(1s, TASK_GROUP_BEACH, DATA_LADY_JAINA_PROUDMOORE, SAY_JAINA_IT_WORKED);
+                    TalkLater(3s, TASK_GROUP_BEACH, DATA_GENN_GREYMANE, SAY_GENN_ONE_DOWN);
+                    break;
+                case 2:
+                    TalkLater(1s, TASK_GROUP_BEACH, DATA_GENN_GREYMANE, SAY_GENN_ONE_MORE);
+                    break;
+                default:
+                    break;
+            }
+        }
+
+        void StartStage(BrokenShoreStages stage)
+        {
+            TC_LOG_DEBUG("scripts", "Broken Shore scenario: stage {} started (instance {})", uint32(stage), instance->GetInstanceId());
+
+            if (stage >= STAGE_STORM_THE_BEACH)
+                GiveForTheAlliance();
+
+            switch (stage)
+            {
+                case STAGE_THE_BROKEN_SHORE:
+                    StartTheBrokenShore();
+                    break;
+                case STAGE_STORM_THE_BEACH:
+                    StartStormTheBeach();
+                    break;
+                case STAGE_DEFEAT_THE_COMMANDER:
+                    StartDefeatTheCommander();
+                    break;
+                case STAGE_FIND_VARIAN:
+                    StartFindVarian();
+                    break;
+                case STAGE_DESTROY_THE_PORTAL:
+                    StartDestroyThePortal();
+                    break;
+                case STAGE_RAZE_THE_BLACK_CITY:
+                    StartRazeTheBlackCity();
+                    break;
+                case STAGE_THE_HIGHLORD:
+                    StartTheHighlord();
+                    break;
+                case STAGE_KROSUS:
+                    StartKrosus();
+                    break;
+                case STAGE_STOP_GULDAN:
+                    StartStopGuldan();
+                    break;
+                default:
+                    break;
+            }
+        }
+
+        void EndStage(BrokenShoreStages stage)
+        {
+            switch (stage)
+            {
+                // The Alliance's forces stay where they are. TODO: what they do in the stages that follow.
+                case STAGE_STORM_THE_BEACH:
+                    instance->SpawnGroupDespawn(SPAWN_GROUP_STORM_THE_BEACH, true);
+                    _scheduler.CancelGroup(TASK_GROUP_BEACH);
+                    _scheduler.CancelGroup(TASK_GROUP_CRYSTALS);
+                    _scheduler.CancelGroup(TASK_GROUP_CRYSTAL_ARROWS);
+                    _allianceForcesCharging = false;
+
+                    // A spire that still stands, which takes a GM skipping the stage, falls with the rest
+                    for (ObjectGuid const& guid : _spireGUIDs)
+                        if (GameObject* spire = instance->GetGameObject(guid))
+                            if (spire->GetGoState() == GO_STATE_READY)
+                                DestroySpire(spire);
+                    break;
+                // His death ends the stage, so only respawning is stopped and his corpse stays
+                case STAGE_DEFEAT_THE_COMMANDER:
+                    instance->SetSpawnGroupInactive(SPAWN_GROUP_DEFEAT_THE_COMMANDER);
+                    _scheduler.CancelGroup(TASK_GROUP_COMMANDER);
+                    break;
+                case STAGE_FIND_VARIAN:
+                    _scheduler.CancelGroup(TASK_GROUP_FIND_VARIAN);
+                    StopFelMeteors();
+                    VarianFound();
+                    break;
+                // The forces fall back from the anchors
+                case STAGE_DESTROY_THE_PORTAL:
+                    instance->SpawnGroupDespawn(SPAWN_GROUP_DESTROY_THE_PORTAL, true);
+                    _scheduler.CancelGroup(TASK_GROUP_DESTROY_THE_PORTAL);
+                    _allianceForcesCharging = true;
+                    _allianceRallyPoint = RALLY_POINT_PORTAL_DESTROYED;
+                    break;
+                case STAGE_RAZE_THE_BLACK_CITY:
+                    instance->SpawnGroupDespawn(SPAWN_GROUP_RAZE_THE_BLACK_CITY, true);
+                    _scheduler.CancelGroup(TASK_GROUP_RAZE_THE_BLACK_CITY);
+                    _allianceRallyPoint = RALLY_POINT_NONE;
+                    break;
+                // As with the commander, his death ends the stage; his script takes his corpse away. What
+                // is left of the talk before him, which takes a GM skipping the stage, is called off.
+                case STAGE_KROSUS:
+                    _scheduler.CancelGroup(TASK_GROUP_TIRION);
+                    instance->SpawnGroupDespawn(SPAWN_GROUP_THE_HIGHLORD, true);
+                    instance->SetSpawnGroupInactive(SPAWN_GROUP_KROSUS);
+                    break;
+                // The same goes for the Mo'arg Spinebreaker, and Gul'dan stays as well
+                case STAGE_STOP_GULDAN:
+                    _scheduler.CancelGroup(TASK_GROUP_STOP_GULDAN);
+                    instance->SetSpawnGroupInactive(SPAWN_GROUP_STOP_GULDAN);
+                    break;
+                default:
+                    break;
+            }
+        }
+
+        // "Travel to the Broken Shore." Needs GAME_EVENT_ARRIVED_AT_BROKEN_SHORE.
+        // TODO: the faction ship and its arrival; players currently land straight on the beach.
+        void StartTheBrokenShore() { }
+
+        // Until there is a ship to arrive on, a player being on the map counts as having arrived
+        void UpdateTheBrokenShore(uint32 diff)
+        {
+            if (IsTimeToCheckPlayers(diff))
+                SendScenarioEvent(GAME_EVENT_ARRIVED_AT_BROKEN_SHORE);
+        }
+
+        // "Destroy all demons and structures on the beach." Needs 33 GAME_EVENT_BEACH_DEMON_SLAIN,
+        // 3 GAME_EVENT_FEL_LORD_SLAIN and 3 GAME_EVENT_SPIRE_OF_WOE_DESTROYED, sent from OnUnitDeath.
+        // Jaina and Genn greet the players and then charge the spires with the forces they landed with.
+        // When they say what is a guess at retail's pacing.
+        // TODO: the Alliance's cannons, and the demons' abilities.
+        // The beach demons respawn in place of the reinforcements that should keep arriving.
+        void StartStormTheBeach()
+        {
+            instance->SpawnGroupSpawn(SPAWN_GROUP_SPIRES_OF_WOE, true);
+            instance->SpawnGroupSpawn(SPAWN_GROUP_STORM_THE_BEACH, true);
+            instance->SpawnGroupSpawn(SPAWN_GROUP_ALLIANCE_LEADERS, true);
+            instance->SpawnGroupSpawn(SPAWN_GROUP_ALLIANCE_LANDING_FORCE, true);
+
+            TalkLater(2s, TASK_GROUP_BEACH, DATA_LADY_JAINA_PROUDMOORE, SAY_JAINA_REINFORCEMENTS);
+            TalkLater(5s, TASK_GROUP_BEACH, DATA_GENN_GREYMANE, SAY_GENN_JUST_IN_TIME);
+            TalkLater(11s, TASK_GROUP_BEACH, DATA_LADY_JAINA_PROUDMOORE, SAY_JAINA_NOW_OR_NEVER);
+            TalkLater(14s, TASK_GROUP_BEACH, DATA_GENN_GREYMANE, SAY_GENN_CHARGE);
+            _scheduler.Schedule(22s, TASK_GROUP_BEACH, [this](TaskContext /*context*/)
+            {
+                _allianceForcesCharging = true;
+            });
+
+            // By then they are among the spires
+            TalkLater(36s, TASK_GROUP_CRYSTALS, DATA_LADY_JAINA_PROUDMOORE, SAY_JAINA_CRYSTALS);
+            TalkLater(43s, TASK_GROUP_CRYSTALS, DATA_GENN_GREYMANE, SAY_GENN_HOPE_YOU_ARE_RIGHT);
+
+            // As Jaina speaks of the crystals, arrows point them out for a while
+            _scheduler.Schedule(36s, TASK_GROUP_CRYSTAL_ARROWS, [this](TaskContext /*context*/)
+            {
+                ShowCrystalArrows(true);
+            });
+            _scheduler.Schedule(36s + CrystalArrowTime, TASK_GROUP_CRYSTAL_ARROWS, [this](TaskContext /*context*/)
+            {
+                ShowCrystalArrows(false);
+            });
+        }
+
+        // "Slay Dread Commander Arganoth." Needs GAME_EVENT_ARGANOTH_SLAIN, sent from OnUnitDeath.
+        // He is heard before he is seen: he is there from the start, unseen, and crashes down on the beach
+        // when he has said his piece, which takes him ten seconds. Genn has an answer to it, and with what
+        // Jaina says next he can be fought and the Alliance's forces go for him. That is how a video of the
+        // retail scenario has it; how long the pauses are is a guess.
+        // TODO: Fel Commander Azgalor for the Horde.
+        void StartDefeatTheCommander()
+        {
+            instance->SpawnGroupSpawn(SPAWN_GROUP_DEFEAT_THE_COMMANDER, true);
+
+            TalkLater(2s, TASK_GROUP_COMMANDER, DATA_DREAD_COMMANDER_ARGANOTH, SAY_ARGANOTH_ARRIVES);
+            _scheduler.Schedule(12500ms, TASK_GROUP_COMMANDER, [this](TaskContext /*context*/)
+            {
+                if (Creature* arganoth = GetCreature(DATA_DREAD_COMMANDER_ARGANOTH))
+                    arganoth->AI()->DoAction(ACTION_ARGANOTH_CRASH_DOWN);
+            });
+            TalkLater(15500ms, TASK_GROUP_COMMANDER, DATA_GENN_GREYMANE, SAY_GENN_ENOUGH_OF_YOUR_CHATTER);
+            TalkLater(19s, TASK_GROUP_COMMANDER, DATA_LADY_JAINA_PROUDMOORE, SAY_JAINA_FOCUS_ON_THE_COMMANDER);
+            _scheduler.Schedule(19s, TASK_GROUP_COMMANDER, [this](TaskContext /*context*/)
+            {
+                _commanderArrived = true;
+                _allianceForcesCharging = true;
+                if (Creature* arganoth = GetCreature(DATA_DREAD_COMMANDER_ARGANOTH))
+                    arganoth->AI()->DoAction(ACTION_ARGANOTH_FIGHT);
+            });
+        }
+
+        // "Locate King Varian Wrynn." Needs GAME_EVENT_VARIAN_FOUND, sent when a player reaches him once the
+        // stage's cutscene has been seen: players can ride all the way to him before it starts, which does
+        // not count, and it leaves them on the hilltop between the beach and him. He stays where he is
+        // afterwards, because the next stage opens with him.
+        // The cutscene, what it asks for and where it leaves players are Blizzard's. That it only counts
+        // afterwards, what is said outside the cutscene, and that Fel Meteors come down on the way from the
+        // hilltop, is from a video of the retail scenario; when the cutscene starts is a guess. The player in
+        // that video skips the cutscene, as every other of the scenario. When the meteors start on retail is
+        // not known for certain; here it is with the cutscene, so that a player who skips it finds them.
+        // TODO: Genn and Jaina leading the way over the hill (they are put on the hilltop while the cutscene
+        // plays, and at Varian's side when he is found), the forces fighting at Varian's side and the
+        // Horde's "Find The Others".
+        void StartFindVarian()
+        {
+            instance->SpawnGroupSpawn(SPAWN_GROUP_FIND_VARIAN, true);
+
+            // By then the leaders have said their piece over the fallen commander
+            TalkLater(20500ms, TASK_GROUP_FIND_VARIAN, DATA_GENN_GREYMANE, SAY_GENN_AROUND_THIS_HILL);
+
+            _scheduler.Schedule(FindVarianSceneDelay, TASK_GROUP_FIND_VARIAN, [this](TaskContext context)
+            {
+                // It waits for someone to see it
+                if (instance->GetPlayers().empty())
+                {
+                    context.Repeat(5s);
+                    return;
+                }
+
+                PlayFindVarianScene();
+            });
+        }
+
+        void PlayFindVarianScene()
+        {
+            // A player who skips the cutscene finds the Fel Meteors on the way already
+            StartFelMeteors();
+
+            instance->DoOnPlayers([](Player* player)
+            {
+                player->CastSpell(player, SPELL_STAGE_2_SCENE, true);
+            });
+
+            _scheduler.Schedule(FindVarianSceneTimeout, TASK_GROUP_FIND_VARIAN, [this](TaskContext /*context*/)
+            {
+                instance->DoOnPlayers([this](Player* player)
+                {
+                    player->RemoveAurasDueToSpell(SPELL_STAGE_2_SCENE);
+                    LeaveFindVarianScene(player);
+                });
+            });
+        }
+
+        // The cutscene is over for the player, who is taken to the hilltop. With the first of them the
+        // leaders are there too, and Varian can be found.
+        void LeaveFindVarianScene(Player* player)
+        {
+            if (!_playersOnTheHilltop.insert(player->GetGUID()).second)
+                return;
+
+            if (!_varianCanBeFound)
+            {
+                _varianCanBeFound = true;
+                PutLeadersOnTheHilltop();
+                TalkLater(2s, TASK_GROUP_FIND_VARIAN, DATA_LADY_JAINA_PROUDMOORE, SAY_JAINA_VARIAN);
+                TalkLater(3200ms, TASK_GROUP_FIND_VARIAN, DATA_GENN_GREYMANE, SAY_GENN_LETS_GO);
+            }
+
+            player->CastSpell(player, SPELL_STAGE_2_TELEPORT, true);
+        }
+
+        // Jaina and Genn stand in front of where players arrive, to either side of the way to Varian's
+        // forces, which is where the cutscene had players look
+        void PutLeadersOnTheHilltop()
+        {
+            SpellTargetPosition const* hilltop = sSpellMgr->GetSpellTargetPosition(SPELL_STAGE_2_TELEPORT, EFFECT_0);
+            SpellTargetPosition const* view = sSpellMgr->GetSpellTargetPosition(SPELL_STAGE_2_FAR_SIGHT, EFFECT_0);
+            if (!hilltop || !view)
+                return;
+
+            float direction = hilltop->GetAbsoluteAngle(view);
+            PlaceLeader(DATA_LADY_JAINA_PROUDMOORE, *hilltop, direction + LeaderPlaceAngle, direction);
+            PlaceLeader(DATA_GENN_GREYMANE, *hilltop, direction - LeaderPlaceAngle, direction);
+        }
+
+        // The way a player takes from the hilltop to King Varian Wrynn: its corners, the hilltop first, from
+        // the map's navigation mesh. Where the mesh has no way, the rest is a straight line.
+        std::vector<Position> GetWayToVarian(Creature const* varian)
+        {
+            std::vector<Position> way;
+
+            SpellTargetPosition const* hilltop = sSpellMgr->GetSpellTargetPosition(SPELL_STAGE_2_TELEPORT, EFFECT_0);
+            if (!hilltop)
+                return way;
+
+            // The mesh is loaded with the map
+            instance->LoadGrid(hilltop->GetPositionX(), hilltop->GetPositionY());
+            instance->LoadGrid(varian->GetPositionX(), varian->GetPositionY());
+
+            way.push_back(hilltop->GetPosition());
+            for (uint8 part = 0; part < WayToVarianParts; ++part)
+            {
+                Position from = way.back();
+
+                PathGenerator path(varian);
+                path.SetUseStraightPath(true);
+                path.CalculatePath(from.GetPositionX(), from.GetPositionY(), from.GetPositionZ(), varian->GetPositionX(), varian->GetPositionY(), varian->GetPositionZ());
+
+                uint32 type = path.GetPathType();
+                Movement::PointsArray const& corners = path.GetPath();
+                if (!(type & (PATHFIND_NORMAL | PATHFIND_INCOMPLETE)) || (type & (PATHFIND_SHORTCUT | PATHFIND_NOPATH | PATHFIND_NOT_USING_PATH | PATHFIND_SHORT)) || corners.size() < 2)
+                    break;
+
+                for (std::size_t i = 1; i < corners.size(); ++i)
+                    way.emplace_back(corners[i].x, corners[i].y, corners[i].z);
+
+                if (!(type & PATHFIND_INCOMPLETE))
+                    return way;
+
+                // A part that leads nowhere is the last
+                if (way.back().GetExactDist2d(from) < 1.0f)
+                    break;
+            }
+
+            way.push_back(varian->GetPosition());
+            return way;
+        }
+
+        // Fel Meteors come down on the way from the hilltop to Varian until he is found. The stalkers that
+        // send them are put in the air above the way.
+        void StartFelMeteors()
+        {
+            Creature* varian = GetCreature(DATA_KING_VARIAN_WRYNN);
+            if (!varian || !_felMeteorStalkers.empty())
+                return;
+
+            SummonVariansForces();
+
+            std::vector<Position> way = GetWayToVarian(varian);
+
+            float length = 0.0f;
+            for (std::size_t i = 1; i < way.size(); ++i)
+                length += way[i - 1].GetExactDist2d(way[i]);
+
+            // How far along the way the part at hand starts, and how far along it the next stalker goes
+            float start = 0.0f;
+            float next = FelMeteorHilltopDistance;
+            for (std::size_t i = 1; i < way.size(); ++i)
+            {
+                float part = way[i - 1].GetExactDist2d(way[i]);
+                for (; part > 0.0f && next <= start + part && next <= length - FelMeteorVarianDistance; next += FelMeteorSpacing)
+                {
+                    float along = (next - start) / part;
+                    SummonFelMeteorStalker(varian,
+                        way[i - 1].GetPositionX() + along * (way[i].GetPositionX() - way[i - 1].GetPositionX()),
+                        way[i - 1].GetPositionY() + along * (way[i].GetPositionY() - way[i - 1].GetPositionY()));
+                }
+
+                start += part;
+            }
+
+        }
+
+        void SummonFelMeteorStalker(Creature const* varian, float x, float y)
+        {
+            TempSummon* stalker = instance->SummonCreature(NPC_FEL_METEOR_STALKER, { x, y, varian->GetMapHeight(x, y, MAX_HEIGHT) + FelMeteorHeight });
+            if (!stalker)
+                return;
+
+            // It is of level 1, and would miss players for theirs
+            stalker->SetLevel(uint8(sWorld->getIntConfig(CONFIG_MAX_PLAYER_LEVEL)));
+
+            _felMeteorStalkers.push_back(stalker->GetGUID());
+            _scheduler.Schedule(randtime(0ms, FelMeteorPeriod), TASK_GROUP_FIND_VARIAN, [this, guid = stalker->GetGUID()](TaskContext context)
+            {
+                Creature* stalker = instance->GetCreature(guid);
+                if (!stalker)
+                    return;
+
+                // Nobody is there to see it
+                if (!instance->GetPlayers().empty())
+                    SendFelMeteor(stalker);
+
+                context.Repeat(FelMeteorPeriod);
+            });
+        }
+
+        // The stalker sends a Fel Meteor down to somewhere on the ground below it: first what the meteor
+        // looks like on its way, then what it does where it lands
+        void SendFelMeteor(Creature* stalker)
+        {
+            float angle = frand(0.0f, 2.0f * float(M_PI));
+            float distance = FelMeteorSpread * std::sqrt(frand(0.0f, 1.0f));
+            float x = stalker->GetPositionX() + distance * std::cos(angle);
+            float y = stalker->GetPositionY() + distance * std::sin(angle);
+            Position place(x, y, stalker->GetMapHeight(x, y, MAX_HEIGHT));
+
+            Milliseconds flight = Milliseconds(int64(stalker->GetExactDist(place) / FelMeteorSpeed * float(IN_MILLISECONDS)));
+            _scheduler.Schedule(FelMeteorLaunchDelay, TASK_GROUP_FIND_VARIAN, [this, guid = stalker->GetGUID(), place, flight](TaskContext /*context*/)
+            {
+                Creature* stalker = instance->GetCreature(guid);
+                if (!stalker)
+                    return;
+
+                stalker->SendPlaySpellVisual(place, SPELL_VISUAL_FEL_METEOR, 0, 0, FelMeteorSpeed);
+                _scheduler.Schedule(flight, TASK_GROUP_FIND_VARIAN, [this, guid, place](TaskContext /*context*/)
+                {
+                    if (Creature* stalker = instance->GetCreature(guid))
+                        stalker->CastSpell(place, SPELL_FEL_METEOR, true);
+                });
+            });
+        }
+
+        void StopFelMeteors()
+        {
+            for (ObjectGuid const& guid : _felMeteorStalkers)
+                if (Creature* stalker = instance->GetCreature(guid))
+                    stalker->DespawnOrUnsummon();
+
+            _felMeteorStalkers.clear();
+        }
+
+        // Gelbin Mekkatorque and the forces that are with Varian. They are put there when the way to him
+        // opens, and stay for the rest of the scenario.
+        void SummonVariansForces()
+        {
+            Creature* varian = GetCreature(DATA_KING_VARIAN_WRYNN);
+            if (!varian || !_variansForces.empty())
+                return;
+
+            float behind = varian->GetOrientation() + float(M_PI);
+            float aside = varian->GetOrientation() - float(M_PI) / 2.0f;
+
+            SummonAtVarian(varian, NPC_GELBIN_MEKKATORQUE, GelbinPlaceDistance * std::cos(aside), GelbinPlaceDistance * std::sin(aside));
+
+            for (std::size_t row = 0; row < std::size(VarianForces); ++row)
+            {
+                float back = VarianForcesRowDistance + float(row) * VarianForcesRowSpacing;
+                for (std::size_t i = 0; i < VarianForcesRowSize; ++i)
+                {
+                    float side = (float(i) - float(VarianForcesRowSize - 1) / 2.0f) * VarianForcesSpacing;
+                    SummonAtVarian(varian, VarianForces[row][i],
+                        back * std::cos(behind) + side * std::cos(aside),
+                        back * std::sin(behind) + side * std::sin(aside));
+                }
+            }
+        }
+
+        void SummonAtVarian(Creature const* varian, uint32 entry, float offsetX, float offsetY)
+        {
+            float x = varian->GetPositionX() + offsetX;
+            float y = varian->GetPositionY() + offsetY;
+            instance->LoadGrid(x, y);
+
+            Position place(x, y, varian->GetMapHeight(x, y, varian->GetPositionZ() + 10.0f), varian->GetOrientation());
+            if (TempSummon* fighter = instance->SummonCreature(entry, place))
+            {
+                fighter->SetHomePosition(place);
+                _variansForces.push_back(fighter->GetGUID());
+            }
+        }
+
+        // Jaina and Genn stand in front of Varian, to either side, facing him, and he greets them
+        void VarianFound()
+        {
+            if (Creature* varian = GetCreature(DATA_KING_VARIAN_WRYNN))
+            {
+                float jaina = varian->GetOrientation() + LeaderPlaceAngle;
+                float genn = varian->GetOrientation() - LeaderPlaceAngle;
+                PlaceLeader(DATA_LADY_JAINA_PROUDMOORE, *varian, jaina, Position::NormalizeOrientation(jaina + float(M_PI)));
+                PlaceLeader(DATA_GENN_GREYMANE, *varian, genn, Position::NormalizeOrientation(genn + float(M_PI)));
+            }
+
+            TalkLater(1s, TASK_GROUP_VARIAN_FOUND, DATA_KING_VARIAN_WRYNN, SAY_VARIAN_GOOD_TO_SEE_YOU_SAFE);
+            TalkLater(5s, TASK_GROUP_VARIAN_FOUND, DATA_GENN_GREYMANE, SAY_GENN_AND_YOU);
+        }
+
+        void UpdateFindVarian(uint32 diff)
+        {
+            if (_varianCanBeFound)
+                SendScenarioEventWhenFound(diff, DATA_KING_VARIAN_WRYNN, VarianFoundDistance, GAME_EVENT_VARIAN_FOUND);
+        }
+
+        // "Destroy the demon portal to stop reinforcements." Needs 4 GAME_EVENT_ANCHOR_SHATTERED,
+        // sent from OnUnitDeath.
+        // Each Shielded Anchor has an Eredar Chaos Guard that shields it, which the guard's script sees to.
+        // A Mo'arg Painbringer appears in the portal when players come near and makes for Varian. That it
+        // appears there and comes forth is how a video of the retail scenario has it; what makes it appear
+        // is a guess. The lines are the next four of the scenario's; that the first and third
+        // are Varian's, and when they are said, is a guess.
+        // When Varian has them form up, the leaders and the forces at his camp advance on the anchors, and
+        // Jaina says her last line when she is among them. They fall back when the stage ends. That is how
+        // videos of the retail scenario have it.
+        // TODO: that another Mo'arg Painbringer follows when the first has died.
+        void StartDestroyThePortal()
+        {
+            instance->SpawnGroupSpawn(SPAWN_GROUP_DESTROY_THE_PORTAL, true);
+
+            // They are there already unless a GM skipped the stage before
+            SummonVariansForces();
+            _allianceForcesCharging = false;
+            _allianceRallyPoint = RALLY_POINT_NONE;
+
+            // Players who release from here on go to the graveyard at Varian's camp. Until he was found it
+            // was still the one on the beach: his camp is where the way under the Fel Meteors leads.
+            SetEntranceLocation(WORLD_SAFE_LOC_ALLIANCE_PORTAL);
+
+            // By then Varian has greeted Jaina and Genn
+            TalkLater(8s, TASK_GROUP_DESTROY_THE_PORTAL, DATA_KING_VARIAN_WRYNN, SAY_VARIAN_TAKE_DOWN_THIS_PORTAL);
+            TalkLater(10500ms, TASK_GROUP_DESTROY_THE_PORTAL, DATA_LADY_JAINA_PROUDMOORE, SAY_JAINA_CRYSTALS_ARE_THE_KEY);
+            TalkLater(15500ms, TASK_GROUP_DESTROY_THE_PORTAL, DATA_KING_VARIAN_WRYNN, SAY_VARIAN_FORM_UP);
+            _scheduler.Schedule(15500ms, TASK_GROUP_DESTROY_THE_PORTAL, [this](TaskContext /*context*/)
+            {
+                _allianceForcesCharging = true;
+                _allianceRallyPoint = RALLY_POINT_ANCHORS;
+            });
+            _scheduler.Schedule(16500ms, TASK_GROUP_DESTROY_THE_PORTAL, [this](TaskContext context)
+            {
+                BrokenShoreRallyPoint const& anchors = AllianceRallyPoints[RALLY_POINT_ANCHORS];
+                Creature* jaina = GetCreature(DATA_LADY_JAINA_PROUDMOORE);
+                if (jaina && jaina->IsAlive() && (jaina->IsInCombat() || jaina->GetExactDist2d(anchors.X, anchors.Y) <= JainaAtAnchorsDistance))
+                    jaina->AI()->Talk(SAY_JAINA_FOCUS_ON_THE_CRYSTALS);
+                else
+                    context.Repeat(1s);
+            });
+
+            _scheduler.Schedule(ForTheAllianceAtThePortalDelay, TASK_GROUP_DESTROY_THE_PORTAL, [this](TaskContext /*context*/)
+            {
+                RaiseForTheAlliance(2);
+            });
+
+            _scheduler.Schedule(0s, TASK_GROUP_DESTROY_THE_PORTAL, [this](TaskContext context)
+            {
+                if (!UpdatePainbringer())
+                    context.Repeat(1s);
+            });
+        }
+
+        // The Mo'arg Painbringer is spawned at the portal and is not seen until a player is near it. Then it
+        // appears, runs to where Varian is and stays there. Returns whether it has appeared.
+        bool UpdatePainbringer()
+        {
+            Creature* varian = GetCreature(DATA_KING_VARIAN_WRYNN);
+            if (!varian)
+                return false;
+
+            Creature* painbringer = varian->FindNearestCreature(NPC_MOARG_PAINBRINGER_PORTAL, PainbringerSearchDistance);
+            if (!painbringer)
+                return false;
+
+            bool playerNear = false;
+            for (MapReference const& ref : instance->GetPlayers())
+                if (Player const* player = ref.GetSource())
+                    if (player->IsAlive() && painbringer->IsWithinDist(player, PainbringerAppearDistance))
+                        playerNear = true;
+
+            if (!playerNear)
+            {
+                painbringer->SetVisible(false);
+                return false;
+            }
+
+            painbringer->SetVisible(true);
+            painbringer->CastSpell(painbringer, SPELL_LEGION_INVASION_SPAWN, true);
+
+            ObjectGuid guid = painbringer->GetGUID();
+            _scheduler.Schedule(PainbringerAppearTime, TASK_GROUP_DESTROY_THE_PORTAL, [this, guid](TaskContext /*context*/)
+            {
+                Creature* painbringer = instance->GetCreature(guid);
+                if (!painbringer || !painbringer->IsAlive() || painbringer->IsInCombat())
+                    return;
+
+                painbringer->SetWalk(false);
+                painbringer->SetHomePosition(PainbringerFightPosition);
+                painbringer->GetMotionMaster()->MovePoint(0, PainbringerFightPosition);
+            });
+            return true;
+        }
+
+        // "Assault the demon city." A progress bar: 300 points from GAME_EVENT_BLACK_CITY_1 to _4,
+        // worth 1, 2, 5 and 10 points each and sent from OnUnitDeath. The city's demons respawn,
+        // because killing each of them once does not fill the bar. The Unattended Cannons that players
+        // can fight from are spawned with them and need no scripting.
+        // The leaders talk where the forces fell back to when the portal was destroyed. With Varian's last
+        // line there the forces go to the city's gate, where an Argent Dawnbringer is caged. Varian talks
+        // with it, and then the forces go into the city and players get their third stack of "For the
+        // Alliance!". That is how videos of the retail scenario have it. The lines are the scenario's next;
+        // who says those that have a man's voice, and when, is a guess.
+        // TODO: the city's Anchoring Crystals.
+        void StartRazeTheBlackCity()
+        {
+            instance->SpawnGroupSpawn(SPAWN_GROUP_RAZE_THE_BLACK_CITY, true);
+
+            _blackCityPoints = 0;
+
+            TalkLater(8s, TASK_GROUP_RAZE_THE_BLACK_CITY, DATA_KING_VARIAN_WRYNN, SAY_VARIAN_HEAL_THE_WOUNDED);
+            TalkLater(12s, TASK_GROUP_RAZE_THE_BLACK_CITY, DATA_LADY_JAINA_PROUDMOORE, SAY_JAINA_WHAT_HAPPENED_HERE);
+            TalkLater(14500ms, TASK_GROUP_RAZE_THE_BLACK_CITY, DATA_GELBIN_MEKKATORQUE, SAY_GELBIN_IT_HAPPENED_IN_SECONDS);
+            TalkLater(26s, TASK_GROUP_RAZE_THE_BLACK_CITY, DATA_KING_VARIAN_WRYNN, SAY_VARIAN_WITH_ME_ALLIANCE);
+            _scheduler.Schedule(26s, TASK_GROUP_RAZE_THE_BLACK_CITY, [this](TaskContext /*context*/)
+            {
+                _allianceForcesCharging = true;
+                _allianceRallyPoint = RALLY_POINT_BLACK_CITY_GATE;
+            });
+            _scheduler.Schedule(27s, TASK_GROUP_RAZE_THE_BLACK_CITY, [this](TaskContext context)
+            {
+                BrokenShoreRallyPoint const& gate = AllianceRallyPoints[RALLY_POINT_BLACK_CITY_GATE];
+                Creature* varian = GetCreature(DATA_KING_VARIAN_WRYNN);
+                if (varian && varian->IsAlive() && varian->GetExactDist2d(gate.X, gate.Y) <= VarianAtTheGateDistance)
+                    TalkAtTheGate();
+                else
+                    context.Repeat(1s);
+            });
+
+            // Players who release from here on go to the graveyard at the edge of the city
+            SetEntranceLocation(WORLD_SAFE_LOC_ALLIANCE_CITY);
+        }
+
+        void TalkAtTheGate()
+        {
+            TalkLater(2s, TASK_GROUP_RAZE_THE_BLACK_CITY, DATA_KING_VARIAN_WRYNN, SAY_VARIAN_WHERE_IS_TIRION);
+            _scheduler.Schedule(7s, TASK_GROUP_RAZE_THE_BLACK_CITY, [this](TaskContext /*context*/)
+            {
+                auto bounds = instance->GetCreatureBySpawnIdStore().equal_range(GateDawnbringerSpawnId);
+                if (bounds.first != bounds.second && bounds.first->second->IsAlive())
+                    bounds.first->second->AI()->Talk(SAY_DAWNBRINGER_FELFIRE_EVERYWHERE);
+            });
+            TalkLater(12s, TASK_GROUP_RAZE_THE_BLACK_CITY, DATA_KING_VARIAN_WRYNN, SAY_VARIAN_SAVE_YOUR_STRENGTH);
+            TalkLater(15500ms, TASK_GROUP_RAZE_THE_BLACK_CITY, DATA_LADY_JAINA_PROUDMOORE, SAY_JAINA_SURVIVORS);
+            _scheduler.Schedule(17s, TASK_GROUP_RAZE_THE_BLACK_CITY, [this](TaskContext /*context*/)
+            {
+                RaiseForTheAlliance(3);
+                _allianceRallyPoint = RALLY_POINT_BLACK_CITY;
+            });
+        }
+
+        // "Get to Tirion." Needs GAME_EVENT_TIRION_FOUND, sent when a player reaches the ledge he hangs
+        // in front of. He stays where he is until the next stage starts.
+        // Players start the stage together at the edge of the city, where a bridge of ice forms across the
+        // gap to the crevasse.
+        // A cutscene plays first, "Stage 3 Scene", in which Jaina finds Tirion across the chasm. Each player
+        // is taken to the edge of the city when it is over for them, where the leaders and Varian's forces
+        // are by then. That is how videos of the retail scenario have it. Gul'dan holds Tirion over the
+        // pool, and the Horde's leaders watch from their own ledge.
+        // TODO: the demons on the way from the city, and the way the forces take, who are put on the ledge
+        // before Tirion once they have reached the far end of the bridge.
+        void StartTheHighlord()
+        {
+            instance->SpawnGroupSpawn(SPAWN_GROUP_THE_HIGHLORD, true);
+            instance->SpawnGroupSpawn(SPAWN_GROUP_HORDE_LEADERS, true);
+
+            // Players who release from here on go to the graveyard at the crevasse
+            SetEntranceLocation(WORLD_SAFE_LOC_ALLIANCE_CREVASSE);
+
+            _playersAtTheCityEdge.clear();
+            instance->DoOnPlayers([](Player* player)
+            {
+                player->CastSpell(player, SPELL_STAGE_3_SCENE, true);
+            });
+
+            PlaceForcesAtTheBridge();
+
+            _scheduler.Schedule(BlackCitySceneTimeout, TASK_GROUP_BLACK_CITY_SCENE, [this](TaskContext /*context*/)
+            {
+                instance->DoOnPlayers([this](Player* player)
+                {
+                    player->RemoveAurasDueToSpell(SPELL_STAGE_3_SCENE);
+                    LeaveBlackCityScene(player);
+                });
+            });
+        }
+
+        // Puts the leaders and those of Varian's forces that still live at the edge of the city, to stay
+        void PlaceForcesAtTheBridge()
+        {
+            _allianceRallyPoint = RALLY_POINT_NONE;
+
+            PlaceAt(GetCreature(DATA_LADY_JAINA_PROUDMOORE), JainaBridgePosition);
+            PlaceAt(GetCreature(DATA_KING_VARIAN_WRYNN), VarianBridgePosition);
+            PlaceAt(GetCreature(DATA_GENN_GREYMANE), GennBridgePosition);
+            PlaceAt(GetCreature(DATA_GELBIN_MEKKATORQUE), GelbinBridgePosition);
+
+            PlaceForcesInRows(ForcesBridgePosition, ForcesBridgeSpacing, 1.0f);
+        }
+
+        // Puts them on the ledge before the pool that Tirion hangs over, where they gather
+        void PlaceForcesOnTheLedge()
+        {
+            PlaceForcesBehindTheLeaders(TirionLedgePosition);
+
+            _allianceRallyPoint = RALLY_POINT_TIRION;
+        }
+
+        // Puts the leaders in a row that runs from north to south, with its middle at the given place, and
+        // those of Varian's forces that still live in rows to the west of them
+        void PlaceForcesBehindTheLeaders(Position const& where)
+        {
+            static constexpr uint32 Leaders[] = { DATA_KING_VARIAN_WRYNN, DATA_LADY_JAINA_PROUDMOORE, DATA_GENN_GREYMANE, DATA_GELBIN_MEKKATORQUE };
+            for (std::size_t i = 0; i < std::size(Leaders); ++i)
+            {
+                float side = (float(i) - float(std::size(Leaders) - 1) / 2.0f) * TirionLedgeSpacing;
+                PlaceAt(GetCreature(Leaders[i]), Position(where.GetPositionX() + side, where.GetPositionY(),
+                    where.GetPositionZ(), where.GetOrientation()));
+            }
+
+            Position rows(where.GetPositionX(), where.GetPositionY() + TirionLedgeSpacing, where.GetPositionZ(), where.GetOrientation());
+            PlaceForcesInRows(rows, TirionLedgeSpacing, 1.0f);
+        }
+
+        // Puts those of Varian's forces that still live in rows that run from east to west. The first row's
+        // middle is at the given place, and each further one is further north (1) or south (-1) of it.
+        void PlaceForcesInRows(Position const& first, float spacing, float direction)
+        {
+            std::size_t placed = 0;
+            for (ObjectGuid const& guid : _variansForces)
+            {
+                Creature* fighter = instance->GetCreature(guid);
+                if (!fighter || fighter->GetEntry() == NPC_GELBIN_MEKKATORQUE)
+                    continue;
+
+                float side = (float(placed % ForcesBridgeRowSize) - float(ForcesBridgeRowSize - 1) / 2.0f) * spacing;
+                float back = float(placed / ForcesBridgeRowSize) * spacing * direction;
+                if (PlaceAt(fighter, Position(first.GetPositionX() + side, first.GetPositionY() + back,
+                    first.GetPositionZ(), first.GetOrientation())))
+                    ++placed;
+            }
+        }
+
+        // Puts a living creature on the ground at a place, to stay. Returns whether it did.
+        bool PlaceAt(Creature* creature, Position const& where)
+        {
+            if (!creature || !creature->IsAlive())
+                return false;
+
+            // A creature that is moved to where nothing is loaded is put back where it spawned
+            instance->LoadGrid(where.GetPositionX(), where.GetPositionY());
+
+            Position place(where.GetPositionX(), where.GetPositionY(),
+                creature->GetMapHeight(where.GetPositionX(), where.GetPositionY(), where.GetPositionZ() + 5.0f), where.GetOrientation());
+            creature->CombatStop(true);
+            creature->GetMotionMaster()->Clear();
+            creature->NearTeleportTo(place);
+            creature->SetHomePosition(place);
+            return true;
+        }
+
+        // The cutscene is over for the player, who is taken to the edge of the city. The first one to get
+        // there has Gelbin ask how to get across, and Jaina make the bridge of ice.
+        void LeaveBlackCityScene(Player* player)
+        {
+            if (!_playersAtTheCityEdge.insert(player->GetGUID()).second)
+                return;
+
+            player->ExitVehicle();
+            player->NearTeleportTo(BlackCityRazedPosition);
+
+            if (_playersAtTheCityEdge.size() > 1)
+                return;
+
+            TalkLater(2s, TASK_GROUP_BLACK_CITY_SCENE, DATA_GELBIN_MEKKATORQUE, SAY_GELBIN_HOW_TO_GET_ACROSS);
+            TalkLater(5s, TASK_GROUP_BLACK_CITY_SCENE, DATA_LADY_JAINA_PROUDMOORE, SAY_JAINA_IVE_GOT_THIS);
+            _scheduler.Schedule(JainaBridgeDelay, TASK_GROUP_BLACK_CITY_SCENE, [this](TaskContext /*context*/)
+            {
+                if (Creature* jaina = GetCreature(DATA_LADY_JAINA_PROUDMOORE))
+                    jaina->CastSpell(jaina, SPELL_DUMMY_CONE_OF_COLD, false);
+
+                instance->SpawnGroupSpawn(SPAWN_GROUP_BRIDGE_TO_THE_HIGHLORD, true);
+            });
+
+            _scheduler.Schedule(JainaBridgeDelay + ForcesCrossDelay, TASK_GROUP_BLACK_CITY_SCENE, [this](TaskContext /*context*/)
+            {
+                _allianceRallyPoint = RALLY_POINT_BRIDGE;
+            });
+
+            _scheduler.Schedule(JainaBridgeDelay + ForcesCrossDelay + ForcesLedgeDelay, TASK_GROUP_BLACK_CITY_SCENE, [this](TaskContext /*context*/)
+            {
+                PlaceForcesOnTheLedge();
+            });
+        }
+
+        void UpdateTheHighlord(uint32 diff)
+        {
+            SendScenarioEventWhenFound(diff, DATA_HIGHLORD_TIRION_FORDRING, TirionFoundDistance, GAME_EVENT_TIRION_FOUND);
+
+            if (_guldanChannelTimer > diff)
+            {
+                _guldanChannelTimer -= diff;
+                return;
+            }
+
+            _guldanChannelTimer = GuldanChannelCheckInterval;
+            HoldTirion();
+        }
+
+        // Gul'dan holds Tirion over the pool. They are there once someone is near enough for the map to
+        // have them, which is when this starts.
+        void HoldTirion()
+        {
+            Creature* guldan = GetCreature(DATA_GULDAN);
+            Creature* tirion = GetCreature(DATA_HIGHLORD_TIRION_FORDRING);
+            if (!guldan || !tirion)
+                return;
+
+            if (!guldan->HasUnitState(UNIT_STATE_CASTING))
+                guldan->CastSpell(tirion, SPELL_GULDAN_CORRUPTION_BEAM, TRIGGERED_FULL_MASK);
+        }
+
+        // Gul'dan lets go of Tirion, who falls into the pool and is gone
+        void DropTirion()
+        {
+            if (Creature* guldan = GetCreature(DATA_GULDAN))
+                guldan->InterruptNonMeleeSpells(false);
+
+            Creature* tirion = GetCreature(DATA_HIGHLORD_TIRION_FORDRING);
+            if (!tirion)
+                return;
+
+            tirion->GetMotionMaster()->MovePoint(0, tirion->GetPositionX(), tirion->GetPositionY(), tirion->GetPositionZ() - TirionFallDistance,
+                false, {}, TirionFallSpeed);
+            tirion->DespawnOrUnsummon(TirionFallTime);
+        }
+
+        // "Kill Krosus." Needs GAME_EVENT_KROSUS_SLAIN, sent from OnUnitDeath.
+        // The stage starts with what is said before the pool: Krosus rises from it and breathes on Tirion,
+        // whom Gul'dan drops into it, and Gul'dan mocks the leaders of both factions and sends Krosus at
+        // them. The lines are Blizzard's and in their order; who says them, and what Krosus does, is from
+        // videos of the retail scenario.
+        // TODO: Krosus's abilities and what is said while he is fought.
+        void StartKrosus()
+        {
+            RaiseForTheAlliance(5);
+
+            TalkLater(1s, TASK_GROUP_TIRION, DATA_KING_VARIAN_WRYNN, SAY_VARIAN_TIRION);
+            TalkLater(3s, TASK_GROUP_TIRION, DATA_LADY_SYLVANAS_WINDRUNNER, SAY_SYLVANAS_YOU_WILL_PAY);
+            TalkLater(6500ms, TASK_GROUP_TIRION, DATA_HIGHLORD_TIRION_FORDRING, SAY_TIRION_STAY_BACK);
+            TalkLater(12500ms, TASK_GROUP_TIRION, DATA_GULDAN, SAY_GULDAN_YOU_FOOL);
+            _scheduler.Schedule(KrosusEmergeDelay, TASK_GROUP_TIRION, [this](TaskContext /*context*/)
+            {
+                instance->SpawnGroupSpawn(SPAWN_GROUP_KROSUS, true);
+                if (Creature* krosus = GetCreature(DATA_KROSUS))
+                    krosus->CastSpell(krosus, SPELL_KROSUS_EMERGE, true);
+            });
+
+            TalkLater(26s, TASK_GROUP_TIRION, DATA_GULDAN, SAY_GULDAN_DESTROY_HIM);
+            _scheduler.Schedule(KrosusBreathDelay, TASK_GROUP_TIRION, [this](TaskContext /*context*/)
+            {
+                Creature* krosus = GetCreature(DATA_KROSUS);
+                Creature* tirion = GetCreature(DATA_HIGHLORD_TIRION_FORDRING);
+                if (krosus && tirion)
+                    krosus->CastSpell(tirion, SPELL_FEL_BREATH, false);
+            });
+            TalkLater(28s, TASK_GROUP_TIRION, DATA_HIGHLORD_TIRION_FORDRING, SAY_TIRION_THE_LIGHT_WILL);
+            _scheduler.Schedule(TirionFallDelay, TASK_GROUP_TIRION, [this](TaskContext /*context*/)
+            {
+                DropTirion();
+            });
+
+            TalkLater(31s, TASK_GROUP_TIRION, DATA_THRALL, SAY_THRALL_FORDRING);
+            TalkLater(32s, TASK_GROUP_TIRION, DATA_LADY_JAINA_PROUDMOORE, SAY_JAINA_NO);
+            TalkLater(34s, TASK_GROUP_TIRION, DATA_GULDAN, SAY_GULDAN_FALL_TO_ASH);
+            TalkLater(43500ms, TASK_GROUP_TIRION, DATA_KING_VARIAN_WRYNN, SAY_VARIAN_NEVER_GIVE_IN);
+            TalkLater(47s, TASK_GROUP_TIRION, DATA_LADY_SYLVANAS_WINDRUNNER, SAY_SYLVANAS_TOGETHER);
+            TalkLater(51500ms, TASK_GROUP_TIRION, DATA_KING_VARIAN_WRYNN, SAY_VARIAN_TOGETHER_FOR_AZEROTH);
+            TalkLater(54s, TASK_GROUP_TIRION, DATA_GULDAN, SAY_GULDAN_DESTROY_THEM);
+            _scheduler.Schedule(KrosusSentDelay, TASK_GROUP_TIRION, [this](TaskContext /*context*/)
+            {
+                instance->SpawnGroupDespawn(SPAWN_GROUP_THE_HIGHLORD, true);
+            });
+
+            TalkLater(KrosusSentDelay + 2s, TASK_GROUP_TIRION, DATA_KROSUS, SAY_KROSUS_YOU_WILL_KNOW_FEAR);
+            _scheduler.Schedule(KrosusSentDelay + KrosusWalkDelay, TASK_GROUP_TIRION, [this](TaskContext context)
+            {
+                // He is not there while nobody is near enough for the map to have him
+                Creature* krosus = GetCreature(DATA_KROSUS);
+                if (!krosus)
+                {
+                    context.Repeat(1s);
+                    return;
+                }
+
+                // The rest is his own script's
+                if (krosus->IsAlive())
+                    krosus->AI()->DoAction(ACTION_KROSUS_ADVANCE);
+            });
+        }
+
+        // "Stop Gul'dan from summoning the Legion." Needs GAME_EVENT_GULDAN_CONFRONTED, which is sent when
+        // Gul'dan has said his last. It is the last stage of the scenario.
+        // Varian and Sylvanas talk across the pool, and the Horde's leaders leave for the ridge. Jaina makes
+        // a bridge of ice from the ledge where Krosus was fought to the slope below the height that Gul'dan
+        // stands on; the Alliance crosses it and gathers before him, and Varian and he have their words.
+        // Gul'dan brings two rows of demons before him, which are fought one after the other, and then the
+        // Legion, which is not. The lines are Blizzard's; who says them, and when, is from a video of the
+        // retail scenario, and so is what Gul'dan brings.
+        // TODO: the Horde on the ridge, the cinematic and the return to Stormwind.
+        void StartStopGuldan()
+        {
+            // Gul'dan stands in another grid than the pool, which nothing has loaded while players are there
+            BrokenShoreRallyPoint const& gather = AllianceRallyPoints[RALLY_POINT_GULDAN];
+            instance->LoadGrid(gather.X, gather.Y);
+            instance->SpawnGroupSpawn(SPAWN_GROUP_STOP_GULDAN, true);
+
+            // Players who release from here on go to the graveyard before the tomb
+            SetEntranceLocation(WORLD_SAFE_LOC_ALLIANCE_TOMB);
+
+            _guldanConfronted = false;
+            _varianConfrontWait = 0;
+            _guldanFight = GULDAN_FIGHT_NONE;
+            for (GuidVector* demons : { &_guldanFirstRow, &_guldanSecondRow, &_guldansLegion })
+            {
+                for (ObjectGuid const& guid : *demons)
+                    if (Creature* demon = instance->GetCreature(guid))
+                        demon->DespawnOrUnsummon();
+
+                demons->clear();
+            }
+
+            TalkLater(2s, TASK_GROUP_STOP_GULDAN, DATA_KING_VARIAN_WRYNN, SAY_VARIAN_BIGGER_THEY_ARE);
+            TalkLater(5s, TASK_GROUP_STOP_GULDAN, DATA_LADY_SYLVANAS_WINDRUNNER, SAY_SYLVANAS_NO_TIME_TO_GLOAT);
+            TalkLater(11500ms, TASK_GROUP_STOP_GULDAN, DATA_KING_VARIAN_WRYNN, SAY_VARIAN_ACROSS_THE_CHASM);
+            TalkLater(14s, TASK_GROUP_STOP_GULDAN, DATA_LADY_SYLVANAS_WINDRUNNER, SAY_SYLVANAS_TAKE_THE_RIDGE);
+            TalkLater(17500ms, TASK_GROUP_STOP_GULDAN, DATA_KING_VARIAN_WRYNN, SAY_VARIAN_SYLVANAS_THANK_YOU);
+            TalkLater(20s, TASK_GROUP_STOP_GULDAN, DATA_LADY_SYLVANAS_WINDRUNNER, SAY_SYLVANAS_GOOD_LUCK_VARIAN);
+            TalkLater(22s, TASK_GROUP_STOP_GULDAN, DATA_KING_VARIAN_WRYNN, SAY_VARIAN_AND_YOU);
+            _scheduler.Schedule(HordeLeavesDelay, TASK_GROUP_STOP_GULDAN, [this](TaskContext /*context*/)
+            {
+                HordeLeaves();
+            });
+
+            _scheduler.Schedule(AcrossTheChasmDelay, TASK_GROUP_STOP_GULDAN, [this](TaskContext context)
+            {
+                if (IsLedgeClear())
+                    SendJainaToMakeTheSecondBridge();
+                else
+                    context.Repeat(1s);
+            });
+        }
+
+        // The Horde's leaders run off, away from the pool, and are gone
+        void HordeLeaves()
+        {
+            Creature* sylvanas = GetCreature(DATA_LADY_SYLVANAS_WINDRUNNER);
+            if (!sylvanas)
+                return;
+
+            std::vector<Creature*> leaders = { sylvanas };
+            for (uint32 entry : { NPC_THRALL, NPC_BAINE_BLOODHOOF, NPC_VOLJIN })
+                if (Creature* leader = sylvanas->FindNearestCreature(entry, HordeLeadersDistance))
+                    leaders.push_back(leader);
+
+            for (Creature* leader : leaders)
+            {
+                leader->SetWalk(false);
+                leader->GetMotionMaster()->MovePoint(0, leader->GetPositionX() - HordeLeaveDistance, leader->GetPositionY(), leader->GetPositionZ());
+            }
+
+            _scheduler.Schedule(HordeGoneDelay, [this](TaskContext /*context*/)
+            {
+                instance->SpawnGroupDespawn(SPAWN_GROUP_HORDE_LEADERS, true);
+            });
+        }
+
+        // Whether the demons that Krosus's Fel Storms brought to the ledge before the pool are all dead
+        bool IsLedgeClear()
+        {
+            Creature* jaina = GetCreature(DATA_LADY_JAINA_PROUDMOORE);
+            if (!jaina)
+                return true;
+
+            for (uint32 entry : { NPC_BURNING_TERRORHOUND, NPC_LIVING_FELBLAZE, NPC_BURNING_SENTRY })
+                if (jaina->FindNearestCreature(entry, LedgeDemonDistance))
+                    return false;
+
+            return true;
+        }
+
+        // Jaina runs to where the bridge starts and makes it, as she made the first. The forces stay where
+        // they are until it is there, and cross it then. Where she is not there to make it, which takes a GM
+        // skipping stages, it forms by itself.
+        void SendJainaToMakeTheSecondBridge()
+        {
+            _allianceRallyPoint = RALLY_POINT_NONE;
+
+            Creature* jaina = GetCreature(DATA_LADY_JAINA_PROUDMOORE);
+            if (jaina && jaina->IsAlive() && jaina->GetExactDist2d(JainaSecondBridgePosition) <= JainaSecondBridgeMaxDistance)
+            {
+                jaina->SetWalk(false);
+                jaina->GetMotionMaster()->MovePoint(0, JainaSecondBridgePosition, true, JainaSecondBridgePosition.GetOrientation());
+            }
+
+            _scheduler.Schedule(1s, TASK_GROUP_STOP_GULDAN, [this](TaskContext context)
+            {
+                Creature* jaina = GetCreature(DATA_LADY_JAINA_PROUDMOORE);
+                bool there = jaina && jaina->IsAlive() && jaina->GetExactDist2d(JainaSecondBridgePosition) <= JainaSecondBridgeTolerance;
+                if (!there && jaina && jaina->IsAlive() && jaina->isMoving() && context.GetRepeatCounter() < JainaSecondBridgeChecks)
+                {
+                    context.Repeat(1s);
+                    return;
+                }
+
+                if (there)
+                {
+                    jaina->SetFacingTo(JainaSecondBridgePosition.GetOrientation());
+                    jaina->CastSpell(jaina, SPELL_DUMMY_CONE_OF_COLD, false);
+                }
+
+                instance->SpawnGroupSpawn(SPAWN_GROUP_BRIDGE_TO_GULDAN, true);
+                _scheduler.Schedule(ForcesCrossDelay, TASK_GROUP_STOP_GULDAN, [this](TaskContext /*context*/)
+                {
+                    _allianceRallyPoint = RALLY_POINT_GULDAN;
+                });
+            });
+        }
+
+        void UpdateStopGuldan(uint32 diff)
+        {
+            if (!IsTimeToCheckPlayers(diff))
+                return;
+
+            Creature* guldan = GetCreature(DATA_GULDAN);
+            BrokenShoreRallyPoint const& gather = AllianceRallyPoints[RALLY_POINT_GULDAN];
+
+            bool playerHasCome = false;
+            for (MapReference const& ref : instance->GetPlayers())
+            {
+                Player* player = ref.GetSource();
+                if (!player || player->IsGameMaster() || !player->IsAlive())
+                    continue;
+
+                // Nobody gets to Gul'dan: a player who comes that close to him dies
+                if (guldan && player->GetExactDist(guldan) <= GuldanDeathDistance)
+                    Unit::Kill(guldan, player);
+                else if (player->GetExactDist2d(gather.X, gather.Y) <= GuldanConfrontDistance)
+                    playerHasCome = true;
+            }
+
+            UpdateGuldanFight();
+
+            if (!playerHasCome || _guldanConfronted || _allianceRallyPoint != RALLY_POINT_GULDAN)
+                return;
+
+            Creature* varian = GetCreature(DATA_KING_VARIAN_WRYNN);
+            if (varian && varian->IsAlive() && varian->GetExactDist2d(gather.X, gather.Y) > VarianConfrontDistance)
+            {
+                if (++_varianConfrontWait < VarianConfrontWait)
+                    return;
+
+                PlaceForcesBehindTheLeaders(Position(gather.X, gather.Y, gather.Z, GuldanGatherOrientation));
+            }
+
+            ConfrontGuldan();
+        }
+
+        // Varian and Gul'dan have their words. Gul'dan brings two rows of demons before him, Varian has his
+        // forces charge, and the first row comes at them.
+        void ConfrontGuldan()
+        {
+            _guldanConfronted = true;
+
+            Creature* guldan = GetCreature(DATA_GULDAN);
+            Creature* varian = GetCreature(DATA_KING_VARIAN_WRYNN);
+            if (guldan && varian)
+                varian->SetFacingToObject(guldan);
+
+            TalkLater(1s, TASK_GROUP_STOP_GULDAN, DATA_KING_VARIAN_WRYNN, SAY_VARIAN_NOWHERE_TO_RUN);
+            TalkLater(10s, TASK_GROUP_STOP_GULDAN, DATA_GULDAN, SAY_GULDAN_WITNESS_THE_MIGHT);
+            _scheduler.Schedule(GuldanFirstRowsDelay, TASK_GROUP_STOP_GULDAN, [this](TaskContext /*context*/)
+            {
+                SummonGuldansDemons(GuldanFirstRow, _guldanFirstRow);
+                SummonGuldansDemons(GuldanSecondRow, _guldanSecondRow);
+            });
+
+            TalkLater(25s, TASK_GROUP_STOP_GULDAN, DATA_KING_VARIAN_WRYNN, SAY_VARIAN_HOLD_STEADY);
+            _scheduler.Schedule(GuldanChargeDelay, TASK_GROUP_STOP_GULDAN, [this](TaskContext /*context*/)
+            {
+                SendGuldansDemons(_guldanFirstRow);
+                _guldanFight = GULDAN_FIGHT_FIRST_ROW;
+                _guldanFightTime = 0;
+            });
+        }
+
+        // A place before Gul'dan, or behind him: so many yards ahead of him and so many to his left
+        Position GetPlaceBeforeGuldan(Creature const* guldan, float ahead, float side) const
+        {
+            float orientation = guldan->GetOrientation();
+            float x = guldan->GetPositionX() + ahead * std::cos(orientation) - side * std::sin(orientation);
+            float y = guldan->GetPositionY() + ahead * std::sin(orientation) + side * std::cos(orientation);
+            return Position(x, y, guldan->GetMapHeight(x, y, guldan->GetPositionZ() + GuldanGroundSearchHeight), orientation);
+        }
+
+        // Gul'dan brings demons before him, in fel fire. Nothing can fight them, and they fight nothing,
+        // until they are sent. The fire is a stand-in: a video of the retail scenario shows a wall of fel
+        // fire along a row that appears; which spell that is is not known.
+        void SummonGuldansDemons(std::span<GuldanDemon const> demons, GuidVector& guids)
+        {
+            Creature* guldan = GetCreature(DATA_GULDAN);
+            if (!guldan)
+                return;
+
+            GuidVector appeared;
+            for (GuldanDemon const& demon : demons)
+            {
+                Creature* creature = guldan->SummonCreature(demon.Entry, GetPlaceBeforeGuldan(guldan, demon.Ahead, demon.Side),
+                    TEMPSUMMON_CORPSE_TIMED_DESPAWN, GuldanDemonCorpseTime);
+                if (!creature)
+                    continue;
+
+                creature->SetImmuneToAll(true);
+                creature->SetReactState(REACT_PASSIVE);
+                appeared.push_back(creature->GetGUID());
+            }
+
+            guids.insert(guids.end(), appeared.begin(), appeared.end());
+            _scheduler.Schedule(GuldanDemonAppearDelay, TASK_GROUP_STOP_GULDAN, [this, appeared](TaskContext /*context*/)
+            {
+                for (ObjectGuid const& guid : appeared)
+                {
+                    Creature* creature = instance->GetCreature(guid);
+                    if (!creature)
+                        continue;
+
+                    creature->CastSpell(creature, SPELL_LEGION_INVASION_SPAWN, true);
+                    creature->SendPlaySpellVisualKit(SPELL_VISUAL_KIT_SPIRE_OF_WOE_FIRE, 0, GuldanDemonFireTime);
+                }
+            });
+        }
+
+        // A row of Gul'dan's demons comes at the Alliance, abreast, and fights whom it meets
+        void SendGuldansDemons(GuidVector const& guids)
+        {
+            for (ObjectGuid const& guid : guids)
+            {
+                Creature* demon = instance->GetCreature(guid);
+                if (!demon || !demon->IsAlive())
+                    continue;
+
+                demon->SetImmuneToAll(false);
+                demon->SetReactState(REACT_AGGRESSIVE);
+                demon->SetWalk(false);
+
+                float x = demon->GetPositionX() + GuldanRowAdvance * std::cos(demon->GetOrientation());
+                float y = demon->GetPositionY() + GuldanRowAdvance * std::sin(demon->GetOrientation());
+                demon->GetMotionMaster()->MovePoint(0, x, y, demon->GetMapHeight(x, y, demon->GetPositionZ() + GuldanGroundSearchHeight));
+            }
+        }
+
+        bool HaveAllFallen(GuidVector const& guids) const
+        {
+            for (ObjectGuid const& guid : guids)
+                if (Creature const* demon = instance->GetCreature(guid))
+                    if (demon->IsAlive())
+                        return false;
+
+            return true;
+        }
+
+        // Called every second. When the row that is fought has fallen, what follows it starts.
+        void UpdateGuldanFight()
+        {
+            switch (_guldanFight)
+            {
+                case GULDAN_FIGHT_FIRST_ROW:
+                    if (HaveAllFallen(_guldanFirstRow) || ++_guldanFightTime >= GuldanRowTimeout)
+                        FirstRowFallen();
+                    break;
+                case GULDAN_FIGHT_SECOND_ROW:
+                    if (HaveAllFallen(_guldanSecondRow) || ++_guldanFightTime >= GuldanRowTimeout)
+                        SecondRowFallen();
+                    break;
+                default:
+                    break;
+            }
+        }
+
+        // Varian and Gul'dan have more words, the first of the Legion appears behind the second row, and
+        // that row comes at the Alliance
+        void FirstRowFallen()
+        {
+            _guldanFight = GULDAN_FIGHT_NONE;
+
+            TalkLater(2s, TASK_GROUP_STOP_GULDAN, DATA_KING_VARIAN_WRYNN, SAY_VARIAN_WE_WILL_NEVER_FALL);
+            TalkLater(15s, TASK_GROUP_STOP_GULDAN, DATA_GULDAN, SAY_GULDAN_LEGION_IS_ENDLESS);
+            _scheduler.Schedule(18s, TASK_GROUP_STOP_GULDAN, [this](TaskContext /*context*/)
+            {
+                SummonGuldansDemons(GuldansLegionFirst, _guldansLegion);
+            });
+
+            _scheduler.Schedule(25s, TASK_GROUP_STOP_GULDAN, [this](TaskContext /*context*/)
+            {
+                SendGuldansDemons(_guldanSecondRow);
+                _guldanFight = GULDAN_FIGHT_SECOND_ROW;
+                _guldanFightTime = 0;
+            });
+        }
+
+        // Varian speaks once more and the rest of the Legion appears. Three of its lords speak in turn, and
+        // then Gul'dan, which ends the stage and the scenario.
+        void SecondRowFallen()
+        {
+            _guldanFight = GULDAN_FIGHT_NONE;
+
+            TalkLater(2s, TASK_GROUP_STOP_GULDAN, DATA_KING_VARIAN_WRYNN, SAY_VARIAN_CUT_YOU_DOWN);
+            _scheduler.Schedule(5s, TASK_GROUP_STOP_GULDAN, [this](TaskContext /*context*/)
+            {
+                _guldansFrontLine = _guldansLegion.size();
+                SummonGuldansDemons(GuldansLegionSecond, _guldansLegion);
+            });
+
+            LegionLordTalksLater(9s, NPC_BRUTALLUS);
+            LegionLordTalksLater(16s, NPC_TICHONDRIUS_THE_DARKENER);
+            LegionLordTalksLater(23s, NPC_FEL_COMMANDER_AZGALOR);
+            TalkLater(30s, TASK_GROUP_STOP_GULDAN, DATA_GULDAN, SAY_GULDAN_DO_YOU_SEE_NOW);
+            TalkLater(37s, TASK_GROUP_STOP_GULDAN, DATA_GULDAN, SAY_GULDAN_NOW_YOU_WILL_FALL);
+            _scheduler.Schedule(38500ms, TASK_GROUP_STOP_GULDAN, [this](TaskContext /*context*/)
+            {
+                LegionAdvances();
+            });
+
+            _scheduler.Schedule(41500ms, TASK_GROUP_STOP_GULDAN, [this](TaskContext /*context*/)
+            {
+                SendScenarioEvent(GAME_EVENT_GULDAN_CONFRONTED);
+            });
+        }
+
+        // The front line of the Legion, the Felguard Legionnaires that came last, starts for the Alliance
+        // at a walk
+        void LegionAdvances()
+        {
+            for (std::size_t i = _guldansFrontLine; i < _guldansLegion.size(); ++i)
+            {
+                Creature* demon = instance->GetCreature(_guldansLegion[i]);
+                if (!demon || demon->GetEntry() == NPC_BRUTALLUS)
+                    continue;
+
+                float x = demon->GetPositionX() + LegionAdvanceDistance * std::cos(demon->GetOrientation());
+                float y = demon->GetPositionY() + LegionAdvanceDistance * std::sin(demon->GetOrientation());
+                demon->SetWalk(true);
+                demon->GetMotionMaster()->MovePoint(0, x, y, demon->GetMapHeight(x, y, demon->GetPositionZ() + GuldanGroundSearchHeight));
+            }
+        }
+
+        void LegionLordTalksLater(Milliseconds delay, uint32 entry)
+        {
+            _scheduler.Schedule(delay, TASK_GROUP_STOP_GULDAN, [this, entry](TaskContext /*context*/)
+            {
+                for (ObjectGuid const& guid : _guldansLegion)
+                {
+                    Creature* lord = instance->GetCreature(guid);
+                    if (!lord || lord->GetEntry() != entry)
+                        continue;
+
+                    lord->AI()->Talk(SAY_LEGION_LORD_RETURNS);
+                    return;
+                }
+            });
+        }
+
+        // The scenario ends for each player as Blizzard's spell for it has it end: with the credit for the
+        // quest and the cinematic of Varian's fall, which can be skipped. When the cinematic is over for a
+        // player, they are taken to the Skyfire (player_broken_shore_finale). The spell does nothing for the
+        // dead, so they are raised first.
+        void CompleteScenario()
+        {
+            _scenarioCompleted = true;
+
+            instance->DoOnPlayers([](Player* player)
+            {
+                if (!player->IsAlive())
+                {
+                    player->ResurrectPlayer(1.0f);
+                    player->SpawnCorpseBones();
+                }
+
+                player->CastSpell(player, SPELL_BROKEN_SHORE_COMPLETE, true);
+            });
+        }
+
+        // A player who comes back when the scenario has ended, as one does who left the game during the
+        // cinematic, is taken to the Skyfire as well
+        void OnPlayerEnter(Player* player) override
+        {
+            if (!_scenarioCompleted)
+                return;
+
+            _scheduler.Schedule(SkyfireReturnDelay, [this, guid = player->GetGUID()](TaskContext /*context*/)
+            {
+                if (Player* returned = ObjectAccessor::GetPlayer(instance, guid))
+                    TakeToTheSkyfire(returned);
+            });
+        }
+
+    private:
+        ScenarioStepEntry const* _currentStep;
+        uint32 _checkTimer;
+        TaskScheduler _scheduler;
+        uint8 _spiresDestroyed;
+        uint8 _forTheAllianceStacks;
+        uint8 _allianceRallyPoint;
+        uint32 _blackCityPoints;
+        bool _allianceForcesCharging;
+        bool _commanderArrived;
+        bool _varianCanBeFound;
+        GuidUnorderedSet _playersOnTheHilltop;
+        GuidUnorderedSet _playersAtTheCityEdge;
+        uint32 _guldanChannelTimer = 0;
+        bool _guldanConfronted = false;
+        uint32 _varianConfrontWait = 0;
+        GuldanFight _guldanFight = GULDAN_FIGHT_NONE;
+        uint32 _guldanFightTime = 0;
+        GuidVector _guldanFirstRow;
+        GuidVector _guldanSecondRow;
+        GuidVector _guldansLegion;
+        std::size_t _guldansFrontLine = 0;
+        bool _scenarioCompleted = false;
+        GuidVector _felMeteorStalkers;
+        GuidVector _variansForces;
+        GuidVector _spireGUIDs;
+        std::unordered_set<ObjectGuid::LowType> _fallenSpires;
+    };
+
+    InstanceScript* GetInstanceScript(InstanceMap* map) const override
+    {
+        return new instance_broken_shore_scenario_InstanceMapScript(map);
+    }
+};
+
+// 108920 - Captain Angelica
+struct npc_captain_angelica_broken_shore : public ScriptedAI
+{
+    npc_captain_angelica_broken_shore(Creature* creature) : ScriptedAI(creature) { }
+
+    // Her gossip menu has a single option, shown while the quest is in the log
+    bool OnGossipSelect(Player* player, uint32 /*menuId*/, uint32 /*gossipListId*/) override
+    {
+        CloseGossipMenuFor(player);
+        if (player->GetQuestStatus(QUEST_THE_BATTLE_FOR_BROKEN_SHORE) != QUEST_STATUS_INCOMPLETE)
+            return true;
+
+        // TODO: the ship ride to the Broken Shore; for now players are placed on the beach.
+        player->KilledMonsterCredit(NPC_CAPTAIN_ANGELICA);
+        player->TeleportTo(sWorldSafeLocsStore.AssertEntry(WORLD_SAFE_LOC_ALLIANCE_BEACH));
+        return true;
+    }
+};
+
+// 91704 - Anchoring Crystal
+// Circles the Spire of Woe it is spawned at, at the distance and height it is spawned at, and does nothing
+// else. It floats (CREATURE_STATIC_FLAG_FLOATING), which makes the circle a level one. For a creature on the
+// ground the core looks up the ground under every point of the circle, finds none where that is more than
+// half a yard above the height it is given, and sends the creature down through the beach.
+struct npc_broken_shore_anchoring_crystal : public NullCreatureAI
+{
+    npc_broken_shore_anchoring_crystal(Creature* creature) : NullCreatureAI(creature), _radius(0.0f) { }
+
+    // The circling is started here and not when the crystal appears, because its spire may appear after it,
+    // and started again when something has stopped it
+    void UpdateAI(uint32 /*diff*/) override
+    {
+        if (me->GetMotionMaster()->GetCurrentMovementGeneratorType() == EFFECT_MOTION_TYPE
+            || me->HasUnitState(UNIT_STATE_ROOT | UNIT_STATE_STUNNED | UNIT_STATE_CONFUSED | UNIT_STATE_FLEEING))
+            return;
+
+        if (!_radius)
+        {
+            GameObject* spire = me->FindNearestGameObject(GO_SPIRE_OF_WOE, SpireCrystalDistance);
+            if (!spire)
+                return;
+
+            _circleCentre.Relocate(spire->GetPositionX(), spire->GetPositionY(), me->GetPositionZ());
+            _radius = me->GetExactDist2d(spire);
+        }
+
+        me->GetMotionMaster()->MoveCirclePath(_circleCentre.GetPositionX(), _circleCentre.GetPositionY(), _circleCentre.GetPositionZ(), _radius, false,
+            CrystalCircleSteps, CrystalCirclingTime, 2.0f * float(M_PI) * _radius / CrystalLapTime);
+    }
+
+private:
+    Position _circleCentre;
+    float _radius;
+};
+
+// 97624 - Spire of Woe
+// The creature at the top of a Spire of Woe, which itself is a gameobject. It fires the spire's beam at the
+// ground under one of those who storm the beach, or towards the landing when none of them is near.
+// TODO: on retail the end of a beam wanders about on the ground and leaves fire there, which burns those
+// who stand in it; here it stays where it is and is for show.
+struct npc_broken_shore_spire_of_woe : public NullCreatureAI
+{
+    npc_broken_shore_spire_of_woe(Creature* creature) : NullCreatureAI(creature) { }
+
+    void JustAppeared() override
+    {
+        _scheduler.Schedule(randtime(SpireBeamPauseMin, SpireBeamPauseMax), [this](TaskContext context)
+        {
+            GameObject const* spire = GetSpire();
+            if (spire && spire->GetGoState() == GO_STATE_READY)
+                Fire(spire);
+
+            context.Repeat(SpireBeamAimTime + SpireBeamTime + randtime(SpireBeamPauseMin, SpireBeamPauseMax));
+        });
+
+        // A spire that has fallen fires no more
+        _scheduler.Schedule(500ms, [this](TaskContext context)
+        {
+            GameObject const* spire = GetSpire();
+            if (!spire || spire->GetGoState() == GO_STATE_READY)
+            {
+                context.Repeat();
+                return;
+            }
+
+            if (Creature* target = ObjectAccessor::GetCreature(*me, _targetGUID))
+                target->DespawnOrUnsummon();
+
+            me->DespawnOrUnsummon();
+        });
+    }
+
+    void UpdateAI(uint32 diff) override
+    {
+        _scheduler.Update(diff);
+    }
+
+private:
+    GameObject* GetSpire() const
+    {
+        return me->FindNearestGameObject(GO_SPIRE_OF_WOE, SpireTopDistance);
+    }
+
+    void Fire(GameObject const* spire)
+    {
+        TempSummon* target = me->SummonCreature(NPC_SPIRE_OF_WOE_BEAM_TARGET, GetGround(spire), TEMPSUMMON_TIMED_DESPAWN, SpireBeamAimTime + SpireBeamTime);
+        if (!target)
+            return;
+
+        _targetGUID = target->GetGUID();
+        _scheduler.Schedule(SpireBeamAimTime, [this](TaskContext /*context*/)
+        {
+            Creature* target = ObjectAccessor::GetCreature(*me, _targetGUID);
+            if (!target)
+                return;
+
+            target->SendPlaySpellVisualKit(SPELL_VISUAL_KIT_SPIRE_OF_WOE_FIRE, 0, uint32(SpireBeamTime.count()));
+            DoCastAOE(SPELL_FEL_BEAM);
+        });
+    }
+
+    // Where the next beam comes down
+    Position GetGround(GameObject const* spire) const
+    {
+        Map::PlayerList const& players = me->GetMap()->GetPlayers();
+        if (!players.empty())
+        {
+            // Those who storm the beach are the players and whoever is on their side
+            std::vector<Unit*> units;
+            Trinity::AnyFriendlyUnitInObjectRangeCheck check(me, players.begin()->GetSource(), SpireTopDistance + SpireBeamDistanceMax);
+            Trinity::UnitListSearcher<Trinity::AnyFriendlyUnitInObjectRangeCheck> searcher(me, units, check);
+            Cell::VisitAllObjects(me, searcher, SpireTopDistance + SpireBeamDistanceMax);
+            std::erase_if(units, [spire](Unit const* unit)
+            {
+                float distance = spire->GetExactDist2d(unit);
+                return distance < SpireBeamDistanceMin || distance > SpireBeamDistanceMax;
+            });
+
+            if (!units.empty())
+                return Trinity::Containers::SelectRandomContainerElement(units)->GetPosition();
+        }
+
+        WorldSafeLocsEntry const* landing = sWorldSafeLocsStore.AssertEntry(WORLD_SAFE_LOC_ALLIANCE_BEACH);
+        float angle = spire->GetAbsoluteAngle(landing->Loc.X, landing->Loc.Y) + frand(-SpireBeamArc / 2.0f, SpireBeamArc / 2.0f);
+        float distance = frand(SpireBeamDistanceMin, SpireBeamDistanceMax);
+        float x = spire->GetPositionX() + distance * std::cos(angle);
+        float y = spire->GetPositionY() + distance * std::sin(angle);
+        return { x, y, me->GetMapHeight(x, y, me->GetPositionZ()) };
+    }
+
+    TaskScheduler _scheduler;
+    ObjectGuid _targetGUID;
+};
+
+// 192664 - Before We're Overrun: Fel Beam
+// The spell takes every creature around its caster that its conditions let through. A Spire of Woe only
+// fires at the target it has summoned, and not at that of the next spire.
+class spell_broken_shore_fel_beam : public SpellScript
+{
+    void FilterTargets(std::list<WorldObject*>& targets)
+    {
+        Unit const* caster = GetCaster();
+        if (caster->GetEntry() != NPC_SPIRE_OF_WOE)
+            return;
+
+        targets.remove_if([caster](WorldObject const* target)
+        {
+            Creature const* creature = target->ToCreature();
+            return !creature || !creature->IsSummon() || creature->ToTempSummon()->GetSummonerGUID() != caster->GetGUID();
+        });
+    }
+
+    void Register() override
+    {
+        OnObjectAreaTargetSelect += SpellObjectAreaTargetSelectFn(spell_broken_shore_fel_beam::FilterTargets, EFFECT_0, TARGET_UNIT_SRC_AREA_ENTRY);
+    }
+};
+
+// 90525 - Eredar Chaos Guard
+// Stands at a Shielded Anchor and channels "Chaos Shield" on it, which nothing harms meanwhile. Once it is
+// in combat it drops the channel and fights, and takes the channel up again if it gets out of combat.
+struct npc_broken_shore_eredar_chaos_guard : public ScriptedAI
+{
+    npc_broken_shore_eredar_chaos_guard(Creature* creature) : ScriptedAI(creature), _shieldTimer(0) { }
+
+    void JustEngagedWith(Unit* /*who*/) override
+    {
+        me->InterruptNonMeleeSpells(false);
+    }
+
+    void UpdateAI(uint32 diff) override
+    {
+        if (UpdateVictim())
+            return;
+
+        if (_shieldTimer > diff)
+            _shieldTimer -= diff;
+        else
+        {
+            _shieldTimer = 1 * IN_MILLISECONDS;
+            ShieldAnchor();
+        }
+    }
+
+private:
+    void ShieldAnchor()
+    {
+        if (me->HasUnitState(UNIT_STATE_CASTING))
+            return;
+
+        Creature* anchor = me->FindNearestCreature(NPC_SHIELDED_ANCHOR, ChaosGuardAnchorDistance);
+        if (anchor && !anchor->HasAura(SPELL_CHAOS_SHIELD))
+            DoCast(anchor, SPELL_CHAOS_SHIELD);
+    }
+
+    uint32 _shieldTimer;
+};
+
+// A demon that casts one spell at what it fights, now and then. When it does is a guess.
+struct npc_broken_shore_casting_demon : public ScriptedAI
+{
+    npc_broken_shore_casting_demon(Creature* creature, uint32 spell) : ScriptedAI(creature), _spell(spell), _castTimer(0) { }
+
+    void JustEngagedWith(Unit* /*who*/) override
+    {
+        _castTimer = urand(4 * IN_MILLISECONDS, 8 * IN_MILLISECONDS);
+    }
+
+    void UpdateAI(uint32 diff) override
+    {
+        if (!UpdateVictim())
+            return;
+
+        if (_castTimer > diff)
+        {
+            _castTimer -= diff;
+            return;
+        }
+
+        if (me->HasUnitState(UNIT_STATE_CASTING))
+            return;
+
+        DoCastVictim(_spell);
+        _castTimer = urand(12 * IN_MILLISECONDS, 18 * IN_MILLISECONDS);
+    }
+
+private:
+    uint32 _spell;
+    uint32 _castTimer;
+};
+
+// 94190 - Burning Sentry
+// In the Black City, and on the Alliance's ledge with a Fel Storm of Krosus's. That it casts Fel Eruption is
+// from a video of the retail scenario.
+struct npc_broken_shore_burning_sentry : public npc_broken_shore_casting_demon
+{
+    npc_broken_shore_burning_sentry(Creature* creature) : npc_broken_shore_casting_demon(creature, SPELL_FEL_ERUPTION) { }
+};
+
+// 94189 - Living Felblaze
+// In the Black City, and on the Alliance's ledge with a Fel Storm of Krosus's. That it casts Mass
+// Incineration is from a video of the retail scenario.
+struct npc_broken_shore_living_felblaze : public npc_broken_shore_casting_demon
+{
+    npc_broken_shore_living_felblaze(Creature* creature) : npc_broken_shore_casting_demon(creature, SPELL_MASS_INCINERATION) { }
+};
+
+// 240535 - Legion Cage
+// Holds an Argent Dawnbringer. A player who opens it frees the Dawnbringer, once, which then joins the
+// Alliance's forces.
+struct go_broken_shore_legion_cage : public GameObjectAI
+{
+    go_broken_shore_legion_cage(GameObject* go) : GameObjectAI(go) { }
+
+    bool OnGossipHello(Player* /*player*/) override
+    {
+        std::vector<Creature*> dawnbringers;
+        me->GetCreatureListWithEntryInGrid(dawnbringers, NPC_ARGENT_DAWNBRINGER, LegionCageDistance);
+        for (Creature* dawnbringer : dawnbringers)
+        {
+            // Those that lie dead near the cage at the gate are of the same kind
+            if (!dawnbringer->IsAlive() || dawnbringer->GetStandState() == UNIT_STAND_STATE_DEAD)
+                continue;
+
+            dawnbringer->AI()->DoAction(ACTION_DAWNBRINGER_FREED);
+            me->SetFlag(GO_FLAG_NOT_SELECTABLE);
+            if (InstanceScript* instance = me->GetInstanceScript())
+                instance->SetData(DATA_DAWNBRINGER_FREED, 1);
+
+            break;
+        }
+
+        return false;
+    }
+};
+
+// 199036 - Fel Meteor
+// What lands where a stalker above the way to King Varian Wrynn has sent a meteor. The spell takes whatever
+// is around; whom Blizzard has it take is not known, and here it is players, but for those who are watching
+// the stage's cutscene: they may have ridden on towards Varian before it started. Its own 146,249 damage
+// leaves a player at full health standing, while a video of the retail scenario shows a hit to be the end of
+// one, so it costs a player more health than the player has.
+class spell_broken_shore_fel_meteor : public SpellScript
+{
+    void FilterTargets(std::list<WorldObject*>& targets)
+    {
+        targets.remove_if([](WorldObject const* target)
+        {
+            Player const* player = target->ToPlayer();
+            return !player || player->HasAura(SPELL_STAGE_2_SCENE);
+        });
+    }
+
+    void HandleDamage(SpellEffIndex /*effIndex*/)
+    {
+        if (Player const* player = GetHitPlayer())
+            SetHitDamage(std::max(GetHitDamage(), int32(player->CountPctFromMaxHealth(FelMeteorDamagePct))));
+    }
+
+    void Register() override
+    {
+        OnObjectAreaTargetSelect += SpellObjectAreaTargetSelectFn(spell_broken_shore_fel_meteor::FilterTargets, EFFECT_0, TARGET_UNIT_DEST_AREA_ENTRY);
+        OnEffectHitTarget += SpellEffectFn(spell_broken_shore_fel_meteor::HandleDamage, EFFECT_0, SPELL_EFFECT_SCHOOL_DAMAGE);
+    }
+};
+
+// 1356 - Broken Shore Scenario - Alliance - Stage 2
+// The cutscene of "Find Varian", which "Stage 2 Scene" (218626) plays: from the hill behind the beach the
+// leaders see Varian's forces beset at the demons' portal. As it starts it asks for a look at them, and
+// before it ends for the player to be taken to that hill.
+class scene_broken_shore_alliance_stage_2 : public SceneScript
+{
+public:
+    scene_broken_shore_alliance_stage_2() : SceneScript("scene_broken_shore_alliance_stage_2") { }
+
+    void OnSceneTriggerEvent(Player* player, uint32 /*sceneInstanceID*/, SceneTemplate const* /*sceneTemplate*/, std::string const& triggerName) override
+    {
+        if (triggerName == "farsight")
+            player->CastSpell(player, SPELL_STAGE_2_FAR_SIGHT, true);
+        else if (triggerName == "teleport")
+            Leave(player);
+    }
+
+    // A cutscene that ends without having asked is over all the same
+    void OnSceneComplete(Player* player, uint32 /*sceneInstanceID*/, SceneTemplate const* /*sceneTemplate*/) override
+    {
+        Leave(player);
+    }
+
+    void OnSceneCancel(Player* player, uint32 /*sceneInstanceID*/, SceneTemplate const* /*sceneTemplate*/) override
+    {
+        Leave(player);
+    }
+
+private:
+    static void Leave(Player* player)
+    {
+        // The look at Varian's forces ends with the cutscene
+        player->RemoveAurasDueToSpell(SPELL_STAGE_2_FAR_SIGHT);
+        player->RemoveDynObject(SPELL_STAGE_2_FAR_SIGHT);
+
+        if (player->GetMapId() != MAP_BROKEN_SHORE_SCENARIO)
+            return;
+
+        if (InstanceScript* instance = player->GetInstanceScript())
+            instance->SetGuidData(DATA_PLAYER_LEFT_FIND_VARIAN_SCENE, player->GetGUID());
+    }
+};
+
+// 1373 - the cutscene that "Stage 3 Scene" (181926) plays when the Black City has been razed. The player is
+// taken to the edge of the city when it asks for that ("port") or when it ends, however it ends.
+class scene_broken_shore_alliance_stage_3 : public SceneScript
+{
+public:
+    scene_broken_shore_alliance_stage_3() : SceneScript("scene_broken_shore_alliance_stage_3") { }
+
+    void OnSceneTriggerEvent(Player* player, uint32 /*sceneInstanceID*/, SceneTemplate const* /*sceneTemplate*/, std::string const& triggerName) override
+    {
+        if (triggerName == "port")
+            Leave(player);
+    }
+
+    void OnSceneComplete(Player* player, uint32 /*sceneInstanceID*/, SceneTemplate const* /*sceneTemplate*/) override
+    {
+        Leave(player);
+    }
+
+    void OnSceneCancel(Player* player, uint32 /*sceneInstanceID*/, SceneTemplate const* /*sceneTemplate*/) override
+    {
+        Leave(player);
+    }
+
+private:
+    static void Leave(Player* player)
+    {
+        if (player->GetMapId() != MAP_BROKEN_SHORE_SCENARIO)
+            return;
+
+        if (InstanceScript* instance = player->GetInstanceScript())
+            instance->SetGuidData(DATA_PLAYER_LEFT_BLACK_CITY_SCENE, player->GetGUID());
+    }
+};
+
+// When the cinematic that ends the scenario is over for a player, or the player has skipped it, they are
+// taken out of the scenario to the Skyfire over Stormwind Harbor
+class player_broken_shore_finale : public PlayerScript
+{
+public:
+    player_broken_shore_finale() : PlayerScript("player_broken_shore_finale") { }
+
+    void OnMovieComplete(Player* player, uint32 movieId) override
+    {
+        if (movieId == MOVIE_BROKEN_SHORE_ALLIANCE && player->GetMapId() == MAP_BROKEN_SHORE_SCENARIO)
+            TakeToTheSkyfire(player);
+    }
+};
+
+void AddSC_scenario_broken_shore()
+{
+    new instance_broken_shore_scenario();
+    new player_broken_shore_finale();
+    new scene_broken_shore_alliance_stage_2();
+    new scene_broken_shore_alliance_stage_3();
+    RegisterCreatureAI(npc_captain_angelica_broken_shore);
+    RegisterBrokenShoreCreatureAI(npc_broken_shore_anchoring_crystal);
+    RegisterBrokenShoreCreatureAI(npc_broken_shore_spire_of_woe);
+    RegisterBrokenShoreCreatureAI(npc_broken_shore_eredar_chaos_guard);
+    RegisterBrokenShoreCreatureAI(npc_broken_shore_burning_sentry);
+    RegisterBrokenShoreCreatureAI(npc_broken_shore_living_felblaze);
+    RegisterGameObjectAIWithFactory(go_broken_shore_legion_cage, GetBrokenShoreAI);
+    RegisterSpellScript(spell_broken_shore_fel_beam);
+    RegisterSpellScript(spell_broken_shore_fel_meteor);
+}
