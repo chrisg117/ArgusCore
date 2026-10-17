@@ -45,34 +45,39 @@ Wowhead and retail videos. No code or data is taken from leaked cores.
 Upstream knows only the Warlords garrison; every class hall request was
 unhandled. The fork adds the class hall as its own `ClassHall` class
 (`src/server/game/ClassHall/`) with its own tables, one piece at a time, each
-tested in game.
+tested in game. All engine work is on the `engine` branch; the pieces built
+before 2026-10-17 had branches of their own, kept as `archive/` tags.
 
-| Piece | Branch | What it covers | Status |
-|-------|--------|----------------|--------|
-| Foundation | `engine/class-hall-foundation` | The hall and its storage, created by its spell, reported to the client | In `dev` |
-| Talents | `engine/class-hall-talents` | Research with its timer, swapping, talent spells, the client's condition checks | In `dev` |
-| Followers | `engine/class-hall-followers` | Champions and troops: gaining, active and inactive, dismissing, troop kinds | In `dev` |
-| Shipments | `engine/class-hall-shipments` | Troop orders: the order window, ordering, collecting at the container, the hall report | In `dev` |
-| Missions | `engine/class-hall-missions` | The mission table, which missions are offered, starting, the success roll, rewards | In `dev` |
-| Follower growth | `engine/class-hall-follower-growth` | Follower experience, levels, quality, item level and equipment | In `dev` |
-| Mission extras | `engine/class-hall-mission-extras` | Every ability in the chance, cost and duration from threats and abilities, troop vitality, Lethal, heals | In `dev` |
-| Mission rewards | `engine/class-hall-mission-rewards` | The bonus roll, single-mission items, remembering and reviving troops | In `dev` |
+| Piece | Archived as | What it covers | Status |
+|-------|-------------|----------------|--------|
+| Foundation | `archive/engine/class-hall-foundation` | The hall and its storage, created by its spell, reported to the client | In `dev` |
+| Talents | `archive/engine/class-hall-talents` | Research with its timer, swapping, talent spells, the client's condition checks | In `dev` |
+| Followers | `archive/engine/class-hall-followers` | Champions and troops: gaining, active and inactive, dismissing, troop kinds | In `dev` |
+| Shipments | `archive/engine/class-hall-shipments` | Troop orders: the order window, ordering, collecting at the container, the hall report | In `dev` |
+| Missions | `archive/engine/class-hall-missions` | The mission table, which missions are offered, starting, the success roll, rewards | In `dev` |
+| Follower growth | `archive/engine/class-hall-follower-growth` | Follower experience, levels, quality, item level and equipment | In `dev` |
+| Mission extras | `archive/engine/class-hall-mission-extras` | Every ability in the chance, cost and duration from threats and abilities, troop vitality, Lethal, heals | In `dev` |
+| Mission rewards | `archive/engine/class-hall-mission-rewards` | The bonus roll, single-mission items, remembering and reviving troops | In `dev` |
 
 ### Other engine fixes
 
 | Fix | Where |
 |-----|-------|
-| Quest completed bits were all written to the first block | `engine/quest-completed-bit`, in `dev` |
-| Scenario criteria fed by game events could never complete | `feature/broken-shore-scenario` |
-| Conversations whose actors are not world objects failed to start | `feature/priest-artifact-weapon` |
+| Quest completed bits were all written to the first block | `engine`, in `dev` |
+| Scenario criteria fed by game events could never complete | `engine`, in `dev` |
+| Conversations whose actors are not world objects failed to start | `engine`, in `dev` |
 
-### Content (in progress)
+### Content
 
-| Branch | What | Status |
-|--------|------|--------|
-| `feature/broken-shore-scenario` | The Legion intro scenario, Alliance side, every stage scripted against a retail recording | Playable start to end; polish parked |
-| `feature/priest-artifact-weapon` | The shadow priest artifact: opening quests, the "Blade in Twilight" scenario, the Dalaran turn-in, the way into Netherlight Temple | Playable; polish parked |
-| `feature/priest-class-hall` | Priest class hall content on top of the engine pieces | Not started |
+All content is on `dev`; work in progress goes on a short-lived `topic/` branch
+only while two sessions work at once (see `docs/BRANCHING.md`).
+
+| Content | What | Status |
+|---------|------|--------|
+| Broken Shore scenario | The Legion intro scenario, Alliance side, every stage scripted against a retail recording | Playable start to end; polish parked |
+| Shadow priest artifact | The opening quests, the "Blade in Twilight" scenario, the Dalaran turn-in, the way into Netherlight Temple | Playable; polish parked |
+| Priest class hall | Content on top of the engine pieces | Started: the mission table |
+| Emerald Nightmare | On `feature/emerald-nightmare` | Being designed |
 
 Local only: a Docker setup for running a server (`Dockerfile`,
 `docker-compose.yml`) and `.scenario` GM commands for stepping through
