@@ -30,6 +30,7 @@ ClassHall::ClassHall(Player* owner) : _owner(owner), _siteLevel(nullptr), _talen
 }
 
 bool ClassHall::LoadFromDB(PreparedQueryResult classHall, PreparedQueryResult talents, PreparedQueryResult followers, PreparedQueryResult equipment,
+    PreparedQueryResult temporaryAbilities, PreparedQueryResult expiredTroops,
     PreparedQueryResult shipments,
     PreparedQueryResult missions)
 {
@@ -48,7 +49,7 @@ bool ClassHall::LoadFromDB(PreparedQueryResult classHall, PreparedQueryResult ta
     }
 
     _talents.LoadFromDB(std::move(talents));
-    _followers.LoadFromDB(std::move(followers), std::move(equipment));
+    _followers.LoadFromDB(std::move(followers), std::move(equipment), std::move(temporaryAbilities), std::move(expiredTroops));
     _followers.SetActivationsRemaining(fields[1].GetUInt32());
     _shipments.LoadFromDB(std::move(shipments));
     _missions.LoadFromDB(std::move(missions));

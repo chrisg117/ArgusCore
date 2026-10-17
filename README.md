@@ -56,7 +56,7 @@ tested in game.
 | Missions | `engine/class-hall-missions` | The mission table, which missions are offered, starting, the success roll, rewards | In `dev` |
 | Follower growth | `engine/class-hall-follower-growth` | Follower experience, levels, quality, item level and equipment | In `dev` |
 | Mission extras | `engine/class-hall-mission-extras` | Every ability in the chance, cost and duration from threats and abilities, troop vitality, Lethal, heals | In `dev` |
-| Mission rewards | `engine/class-hall-mission-rewards` | The bonus roll, items brought back, Head Wound and Broken Gear, single-mission items, reviving troops | Next |
+| Mission rewards | `engine/class-hall-mission-rewards` | The bonus roll, single-mission items, remembering and reviving troops | In `dev` |
 
 ### Other engine fixes
 
@@ -80,9 +80,8 @@ scenarios.
 
 ### Roadmap
 
-1. Class hall missions: the rewards piece above.
-2. Priest class hall content: recruiters, research, the mission table, troops.
-3. Broken Shore polish, after deciding between retail tuning and solo scaling.
+1. Priest class hall content: recruiters, research, troops (the mission table is in place).
+2. Broken Shore polish, after deciding between retail tuning and solo scaling.
 
 ## Requirements
 

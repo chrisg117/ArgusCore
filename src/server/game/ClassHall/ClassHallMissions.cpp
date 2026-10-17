@@ -63,6 +63,7 @@ enum AbilityAction : uint8
     ABILITY_ACTION_TROOP_VITALITY               = 28,   // a random troop on the mission recovers vitality, or takes less damage
     ABILITY_ACTION_NO_BONUS_LOOT                = 29,   // a threat's: the chance stops at 100
     ABILITY_ACTION_SUCCESS_CHANCE_MIXED_TROOPS  = 33,   // a flat bonus when the team's troops are of two class specs
+    ABILITY_ACTION_REVIVE_TROOP                 = 35,   // a chance that an expired troop comes back, with a vitality
     ABILITY_ACTION_MISSION_COST                 = 39,   // the mission's cost in a currency times a value
     ABILITY_ACTION_SUCCESS_CHANCE_ALONE         = 41    // a flat bonus when no other champion is on the team
 };
@@ -116,8 +117,8 @@ void ClassHallMissions::LoadFromDB(PreparedQueryResult missions)
     {
         do
         {
-            //               0     1          2          3              4                5      6
-            // SELECT missionId, dbId, offerTime, startTime, successChance, missionDuration, state FROM character_class_hall_mission WHERE guid = ?
+            //               0     1          2          3              4                5         6      7
+            // SELECT missionId, dbId, offerTime, startTime, successChance, missionDuration, bonusWon, state FROM character_class_hall_mission WHERE guid = ?
             Field* fields = missions->Fetch();
             uint32 missionId = fields[0].GetUInt32();
             uint64 dbId = fields[1].GetUInt64();
@@ -140,7 +141,8 @@ void ClassHallMissions::LoadFromDB(PreparedQueryResult missions)
             // a mission started before its duration was kept has its own
             if (uint32 missionDuration = fields[5].GetUInt32())
                 mission.PacketInfo.MissionDuration = Seconds(missionDuration);
-            mission.PacketInfo.MissionState = fields[6].GetUInt8();
+            mission.BonusWon = fields[6].GetUInt8() != 0;
+            mission.PacketInfo.MissionState = fields[7].GetUInt8();
         } while (missions->NextRow());
     }
 
@@ -195,6 +197,7 @@ void ClassHallMissions::SaveToDB(CharacterDatabaseTransaction trans) const
         stmt->setInt64(index++, mission.PacketInfo.MissionState == CLASS_HALL_MISSION_STATE_OFFERED ? time_t(0) : time_t(mission.PacketInfo.StartTime));
         stmt->setInt32(index++, int32(mission.PacketInfo.SuccessChance));
         stmt->setUInt32(index++, mission.PacketInfo.MissionState == CLASS_HALL_MISSION_STATE_OFFERED ? 0 : uint32(Seconds(mission.PacketInfo.MissionDuration).count()));
+        stmt->setUInt8(index++, uint8(mission.BonusWon));
         stmt->setUInt8(index++, uint8(mission.PacketInfo.MissionState));
         trans->Append(stmt);
     }
@@ -216,7 +219,10 @@ void ClassHallMissions::BuildInfo(WorldPackets::Garrison::GarrisonInfo& info) co
         if (std::vector<WorldPackets::Garrison::GarrisonMissionReward> const* missionRewards = sGarrisonMgr.GetClassHallMissionRewards(missionId))
             rewards = *missionRewards;
 
-        info.MissionOvermaxRewards.emplace_back();
+        std::vector<WorldPackets::Garrison::GarrisonMissionReward>& overmaxRewards = info.MissionOvermaxRewards.emplace_back();
+        if (std::vector<WorldPackets::Garrison::GarrisonMissionReward> const* missionOvermaxRewards = sGarrisonMgr.GetClassHallMissionOvermaxRewards(missionId))
+            overmaxRewards = *missionOvermaxRewards;
+
         info.CanStartMission.push_back(true);
     }
 }
@@ -704,12 +710,24 @@ void ClassHallMissions::CompleteMission(ObjectGuid npcGuid, uint32 garrMissionId
         }
     }
 
+    // the champions' temporary abilities were for this mission; the champions of a failed one are sent whole
+    // when they are freed below
+    for (ClassHallFollowers::Follower const* follower : team)
+        if (!follower->IsTroop())
+            followers.RemoveTemporaryAbilities(follower->PacketInfo.DbID, completeMissionResult.Succeeded);
+
     // a successful mission waits for its chest to be opened, with its followers still on it: the client's
     // report on it shows them. The client takes every completed mission for a successful one, so a
     // failed mission goes back on offer, as one never started, and its followers come back at once.
     if (completeMissionResult.Succeeded)
     {
         mission.PacketInfo.MissionState = CLASS_HALL_MISSION_STATE_COMPLETED;
+
+        // the chance over 100 is the chance of the bonus rewards, as the client shows it; the 7.3.5
+        // client learns of the result only from the complete reply it drops, so it is not told and shows the
+        // bonus as failed
+        if (sGarrisonMgr.GetClassHallMissionOvermaxRewards(garrMissionId))
+            mission.BonusWon = roll_chance_i(std::clamp(int32(mission.PacketInfo.SuccessChance) - 100, 0, 100));
 
         // an expired troop stays on the mission until the chest is opened
         for (auto const& [dbId, vitality] : troops)
@@ -770,10 +788,16 @@ void ClassHallMissions::BonusRoll(ObjectGuid npcGuid, uint32 garrMissionId)
         return;
     }
 
-    GiveRewards(garrMissionId);
+    if (std::vector<WorldPackets::Garrison::GarrisonMissionReward> const* rewards = sGarrisonMgr.GetClassHallMissionRewards(garrMissionId))
+        GiveRewards(*rewards);
+
+    if (itr->second.BonusWon)
+        if (std::vector<WorldPackets::Garrison::GarrisonMissionReward> const* overmaxRewards = sGarrisonMgr.GetClassHallMissionOvermaxRewards(garrMissionId))
+            GiveRewards(*overmaxRewards);
 
     ClassHallFollowers& followers = _classHall->GetFollowers();
     std::vector<uint64> expired;
+    std::vector<GarrAbilityEntry const*> abilities;
     for (auto const& [dbId, follower] : followers.GetAllFollowers())
     {
         if (follower.PacketInfo.CurrentMissionID != garrMissionId)
@@ -782,22 +806,27 @@ void ClassHallMissions::BonusRoll(ObjectGuid npcGuid, uint32 garrMissionId)
         followers.SetFollowerMission(dbId, 0);
         if (follower.IsExpired())
             expired.push_back(dbId);
+
+        abilities.insert(abilities.end(), follower.PacketInfo.AbilityID.begin(), follower.PacketInfo.AbilityID.end());
     }
 
     for (uint64 dbId : expired)
         followers.RemoveExpiredTroop(dbId, true);
 
+    // a revive brings back the troop that expired last, the ones of this mission included
+    for (GarrAbilityEntry const* ability : abilities)
+        for (GarrAbilityEffectEntry const* effect : sGarrAbilityEffectStore)
+            if (effect->GarrAbilityID == ability->ID && effect->AbilityAction == ABILITY_ACTION_REVIVE_TROOP
+                && roll_chance_f(effect->ActionValueFlat))
+                followers.ReviveExpiredTroop(uint32(effect->CombatWeightMax));
+
     _missions.erase(itr);
     _owner->SendDirectMessage(bonusRollResult.Write());
 }
 
-void ClassHallMissions::GiveRewards(uint32 garrMissionId)
+void ClassHallMissions::GiveRewards(std::vector<WorldPackets::Garrison::GarrisonMissionReward> const& rewards)
 {
-    std::vector<WorldPackets::Garrison::GarrisonMissionReward> const* rewards = sGarrisonMgr.GetClassHallMissionRewards(garrMissionId);
-    if (!rewards)
-        return;
-
-    for (WorldPackets::Garrison::GarrisonMissionReward const& reward : *rewards)
+    for (WorldPackets::Garrison::GarrisonMissionReward const& reward : rewards)
     {
         // an item that does not fit in the bags is mailed
         if (reward.ItemID && reward.ItemQuantity)
@@ -837,6 +866,9 @@ void ClassHallMissions::SendAddMission(Mission const& mission) const
     addMissionResult.Mission = mission.PacketInfo;
     if (std::vector<WorldPackets::Garrison::GarrisonMissionReward> const* rewards = sGarrisonMgr.GetClassHallMissionRewards(mission.Entry->ID))
         addMissionResult.Rewards = *rewards;
+
+    if (std::vector<WorldPackets::Garrison::GarrisonMissionReward> const* overmaxRewards = sGarrisonMgr.GetClassHallMissionOvermaxRewards(mission.Entry->ID))
+        addMissionResult.OvermaxRewards = *overmaxRewards;
 
     addMissionResult.CanStart = true;
     _owner->SendDirectMessage(addMissionResult.Write());
