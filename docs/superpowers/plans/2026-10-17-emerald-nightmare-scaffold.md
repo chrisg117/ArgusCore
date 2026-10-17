@@ -81,7 +81,7 @@ All checked 2026-10-17 on the host and in the client's DB2 files; details are in
 - [ ] **Step 4: SQL.** In the update file, `DELETE FROM instance_template WHERE map = 1520;` and then `INSERT INTO instance_template (map, parent, script) VALUES (1520, 0, 'instance_emerald_nightmare');`, with a comment naming the raid.
 - [ ] **Step 5: Build.** Run `~/emerald-nightmare/build.sh`. Expected: build OK, and no warnings in the two new files or the loader.
 - [ ] **Step 6: Boot.** Run `~/emerald-nightmare/boot_check.sh`. Expected: `READY`, the new SQL file listed under "updates applied", DBErrors growth equal to the baseline, and no new Server.log lines. In particular there must be no "script … not found" for `instance_emerald_nightmare`.
-- [ ] **Step 7: In game (user).** Gairy runs `.go instance 1520`, then `.instance stats`, then `.instance getbossstate 0`. Expected: she arrives at the raid entrance, the stats name `instance_emerald_nightmare` for map 1520, and boss 0 reports state `NOT_STARTED` (0), not an error. Ledger the instance id.
+- [ ] **Step 7: In game (user).** With `.gm on` (GM mode skips the level 110 and raid-group entry checks), Gairy runs `.go instance emerald_nightmare` (the command matches script names, not map ids), then `.instance stats`, then `.instance getbossstate 0`. Expected: she arrives at the raid entrance, the stats name `instance_emerald_nightmare` for map 1520, and boss 0 reports state `NOT_STARTED` (0), not an error. Ledger the instance id.
 - [ ] **Step 8: Commit and push.** `git add` the four files, then `git commit` with `feat(scripts,sql): Emerald Nightmare instance script and instance template`, then `git push origin dev`.
 
 ### Task 2: Entrance portal and exit trigger
@@ -97,7 +97,7 @@ This is a second SQL file because the triggers are a separate logical change fro
 
 - [ ] **Step 1: Measure the spots (user).**
   - Gairy runs `.go xyz 3588.28 6483.40 177.97 1220`. She turns around, walks into the middle of the portal's visual and runs `.gps`.
-  - She then runs `.go instance 1520`, turns around, steps 6 yards back from where she arrived, and runs `.gps`. If the raid shows an exit portal visual there, she stands in its middle instead.
+  - She then runs `.go instance emerald_nightmare`, turns around, steps 6 yards back from where she arrived, and runs `.gps`. If the raid shows an exit portal visual there, she stands in its middle instead.
   - Ledger both positions. If no portal visual is visible in Val'sharah, stop and tell the user (see the spec's risks).
 - [ ] **Step 2: Check the distances.** Compute the 2D distance from 5687 to the entrance spot, and from 5533 to the exit spot. Expected: each is more than 6 (radius 4 + 2). If not, move the trigger along the line away from the arrival point until it is, and ledger the change.
 - [ ] **Step 3: SQL.** For each trigger, write `DELETE`s, then `INSERT`s, into the four tables, copying template 110's rows:

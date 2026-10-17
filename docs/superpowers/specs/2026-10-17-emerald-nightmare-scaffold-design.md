@@ -42,7 +42,7 @@ World database:
 
 - No `instance_template` row for 1520. Without it the instance never
   creates an `InstanceScript` (`InstanceMap::CreateInstanceData`), and
-  `ObjectMgr::GetGoBackTrigger` cannot find the way out.
+  `.go instance` cannot find the raid by name.
 - No creature, gameobject or areatrigger spawns on map 1520.
 - The boss templates exist but are unsniffed (faction 35, no script):
   Nythendra 102672, Il'gynoth 105393, Elerethe Renferal 106087, Ursoc
@@ -235,8 +235,13 @@ that no other session is mid-change there.
    knows the bosses.
 4. **Walk out.** Walking into the exit trigger puts Gairy back in
    Val'sharah at 5687.
-5. **GM teleport still works.** `.go instance 1520` takes Gairy to the
-   raid. It still did before this change, through trigger `-27`.
+5. **GM teleport works.** `.go instance emerald_nightmare` takes Gairy to
+   the raid through trigger `-27`. The command matches instance script
+   names, not map ids, so it only finds the raid once `instance_template`
+   exists. Its "Could not find exit portal" line is expected: every Legion
+   map has no corpse map in the client data, and
+   `ObjectMgr::GetGoBackTrigger` gives up on such maps (corrected
+   2026-10-17, during Task 1).
 
 Afterwards Gairy is left as she was: the raid lock from the test is
 removed (`.instance unbind all`) unless the user wants to keep it.
