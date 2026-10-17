@@ -80,6 +80,15 @@ WorldPacket const* AreaTriggerRePath::Write()
 {
     _worldPacket << TriggerGUID;
 
+    // 7.3.5 sends a spline straight after the GUID, with no optional bits
+    // (the layout with them is from later builds), so the client dropped
+    // every spline re-path and never showed area triggers moving.
+    if (AreaTriggerSpline && !AreaTriggerOrbit)
+    {
+        _worldPacket << *AreaTriggerSpline;
+        return &_worldPacket;
+    }
+
     _worldPacket << OptionalInit(AreaTriggerSpline);
     _worldPacket << OptionalInit(AreaTriggerOrbit);
     _worldPacket.FlushBits();
