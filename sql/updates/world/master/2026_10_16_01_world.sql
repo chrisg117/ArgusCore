@@ -2,7 +2,8 @@
 -- client's display 40446), has no object in the database, so it is given one; it stands in the main circle,
 -- where and facing as placed by hand in the game. Over it, the Command Map (102589), which the client's data
 -- has for the priest's order hall, opens the class hall missions: it is not seen, only clicked, as in a
--- screenshot of the table on Wowhead. Of its two looks it keeps the one that can be pointed at.
+-- screenshot of the table on Wowhead. Of its two looks it keeps the one that can be pointed at, made eight
+-- times its size so that it covers the table (it is under a yard across).
 DELETE FROM `gameobject_template` WHERE `entry`=1512001;
 INSERT INTO `gameobject_template` (`entry`, `type`, `displayId`, `name`, `size`, `VerifiedBuild`) VALUES
 (1512001, 5, 40446, 'Command Map', 1, 0);
@@ -16,7 +17,7 @@ DELETE FROM `gameobject` WHERE `guid`=15120003;
 INSERT INTO `gameobject` (`guid`, `id`, `map`, `zoneId`, `areaId`, `spawnDifficulties`, `phaseUseFlags`, `PhaseId`, `PhaseGroup`, `terrainSwapMap`, `position_x`, `position_y`, `position_z`, `orientation`, `rotation0`, `rotation1`, `rotation2`, `rotation3`, `spawntimesecs`, `animprogress`, `state`, `ScriptName`, `StringId`, `VerifiedBuild`) VALUES
 (15120003, 1512001, 1512, 0, 0, '0', 0, 0, 0, -1, 1334.86, 1344.27, 177.138, 3.01315, 0, 0, 0.997941, 0.064138, 300, 255, 1, '', NULL, 0); -- Command Map
 
-UPDATE `creature_template` SET `npcflag`=137438953472 WHERE `entry`=102589;
+UPDATE `creature_template` SET `npcflag`=137438953472, `scale`=8 WHERE `entry`=102589;
 
 DELETE FROM `creature` WHERE `guid`=15120004;
 INSERT INTO `creature` (`guid`, `id`, `map`, `zoneId`, `areaId`, `spawnDifficulties`, `phaseUseFlags`, `PhaseId`, `PhaseGroup`, `terrainSwapMap`, `modelid`, `equipment_id`, `position_x`, `position_y`, `position_z`, `orientation`, `spawntimesecs`, `wander_distance`, `currentwaypoint`, `curHealthPct`, `MovementType`, `npcflag`, `unit_flags`, `unit_flags2`, `unit_flags3`, `ScriptName`, `StringId`, `VerifiedBuild`) VALUES
