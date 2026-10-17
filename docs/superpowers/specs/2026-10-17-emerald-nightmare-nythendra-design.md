@@ -341,3 +341,16 @@ and not a bug.
 - **Boundary shape.** A circle may not fit the room; see "Measured inputs".
 - **Template values.** Unsniffed rows can have more wrong values than faction
   (melee timer, speed, flags). They are found in the test and fixed in data.
+
+## Amendment after the spell-data dump (Task 1, 2026-10-17)
+
+The client's spell data already does more than the design assumed. Heart of
+the Swarm (203552) carries its own periodic energize (+5 energy per second
+for its 20 s), Burst of Corruption (203646) carries the 25% stacking effect,
+Rot ticks through 203097, and the Volatile Rot detonation is 204470. So the
+script does not ramp energy or add a Burst stacking aura script. Still
+scripted: the -50 energy per breath, the Infested Ground pools on Rot expiry
+and on Volatile Rot detonation. Infested Ground itself is spell 203044
+(create-properties id 5887), which has no row in the world database yet; the
+SQL adds it. Details: `nythendra-task1-spell-findings.md` in the session
+notes folder.
