@@ -2,7 +2,7 @@
 
 Date: 2026-10-16
 Branch: `engine/class-hall-mission-rewards`, stacked on `engine/class-hall-mission-extras`
-Status: draft, awaiting review
+Status: built and tested in game on 2026-10-16 and 2026-10-17; landed in `dev`
 Builds on: `2026-10-14-class-hall-missions-design.md`,
 `2026-10-16-class-hall-mission-extras-design.md`
 
@@ -253,6 +253,44 @@ refuses other classes' troops):
 - **How many expired troops retail remembers**: not known; 10 chosen.
 - **Items brought back, Pain Suppression, Combustion**: left out until a
   source gives their items or chances.
+
+## What the tests showed
+
+Tested in game with a priest, hand-planted champions, troops, missions
+and bonus reward rows, a test add-on that read the client's own mission
+and follower data, and the packet log.
+
+- **No signal for a won bonus.** The 7.3.5 client hears of it only in the
+  complete reply it drops: none of 13 variants of the mission message
+  (states 2 to 6, every flag bit) set it. A won bonus's rewards arrive
+  with the chest, and the client shows the bonus as failed (a red X).
+  That belongs with the dropped complete reply (issue #1).
+- **The bonus roll:** two missions at 200% gave their bonus every time,
+  one at 100% and one without bonus rows gave none, a failed one went
+  back on offer with its bonus listed. An offered mission's bonus item
+  is shown in the client. Bad bonus rows are skipped with one error at
+  load and the mission's rewards still load.
+- **Several temporary abilities on one champion:** the client allows it
+  (it asks to confirm and sends the cast for a champion that holds one),
+  so the server does too; the same one twice is refused and the item
+  kept. A temporary ability counts in the chance shown and stored, is
+  used up on success and on failure, and stays over a relog.
+- **The key of the expired troops** is the character and a position, not
+  the time and kind the design gave: two troops of one kind expiring in
+  the same second would have failed the save.
+- **Reviving:** four Acolytes used up on four missions were recorded and
+  one came back, at 1 vitality, its record removed; with the Acolytes at
+  their limit a revive added nothing, said nothing and kept the records;
+  with no records it did nothing. A revive is silent when refused.
+- **A character dump** keeps the expired troops and the temporary
+  abilities (moved to the copy's follower ids), and erasing the copy
+  removes them. Loading a dump can fail on the realm-first achievements
+  the core keeps for erased characters, when the copy gets an id they
+  hold; that is upstream behaviour.
+- **The final review** found no critical or important issue; four minor
+  ones (a duplicate follower update on failure, a revive of 0 vitality,
+  an include, a wrong description of the client) were fixed before
+  landing.
 
 ## What comes next
 
