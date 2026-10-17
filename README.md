@@ -77,7 +77,7 @@ only while two sessions work at once (see `docs/BRANCHING.md`).
 | Broken Shore scenario | The Legion intro scenario, Alliance side, every stage scripted against a retail recording | Playable start to end; polish parked |
 | Shadow priest artifact | The opening quests, the "Blade in Twilight" scenario, the Dalaran turn-in, the way into Netherlight Temple | Playable; polish parked |
 | Priest class hall | Content on top of the engine pieces | Started: the mission table |
-| Emerald Nightmare | The raid, starting with its scaffold | Being designed |
+| Emerald Nightmare | The raid: enterable through its Val'sharah portal, with an exit, a meeting stone and an instance script for all seven encounters | Scaffold done; no bosses yet (Nythendra next) |
 
 Local only: a Docker setup for running a server (`Dockerfile`,
 `docker-compose.yml`) and `.scenario` GM commands for stepping through
