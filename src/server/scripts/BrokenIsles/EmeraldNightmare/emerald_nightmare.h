@@ -35,6 +35,10 @@ enum ENDataTypes
     DATA_DRAGONS_OF_NIGHTMARE,
     DATA_CENARIUS,
     DATA_XAVIUS,
+
+    // Extra data, after the encounters
+    DATA_EYE_OF_ILGYNOTH,
+    DATA_ILGYNOTH_FORCEFIELD,
 };
 
 enum ENCreatureIds
@@ -53,12 +57,21 @@ enum ENCreatureIds
 
     // Nythendra
     NPC_CORRUPTED_VERMIN            = 111005,
+
+    // Il'gynoth
+    NPC_EYE_OF_ILGYNOTH             = 105906,
+    NPC_DOMINATOR_TENTACLE          = 105304,
+    NPC_DEATHGLARE_TENTACLE         = 105322,
+    NPC_CORRUPTOR_TENTACLE          = 105383,
+    NPC_NIGHTMARE_HORROR            = 105591,
+    NPC_NIGHTMARE_ICHOR             = 105721,
 };
 
 enum ENGameObjectIds
 {
     GO_NYTHENDRA_ROOT_WALL          = 254985, // NightmareBoss1DungeonDoor, the widest of the 16
-    GO_NYTHENDRA_EXIT_ROOT_WALL     = 254987  // NightmareBoss1DungeonDoor, the way on to Il'gynoth
+    GO_NYTHENDRA_EXIT_ROOT_WALL     = 254987, // NightmareBoss1DungeonDoor, the way on to Il'gynoth
+    GO_EYE_OF_ILGYNOTH_FORCEFIELD   = 251555  // a thin collision wall at the hollow mouth
 };
 
 template <class AI, class T>

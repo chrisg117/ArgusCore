@@ -35,6 +35,7 @@ void AddSC_instance_black_rook_hold();
 // Emerald Nightmare
 void AddSC_instance_emerald_nightmare();
 void AddSC_boss_nythendra();
+void AddSC_boss_ilgynoth();
 
 // Broken Shore scenario
 void AddSC_broken_shore_alliance_forces();
@@ -69,6 +70,7 @@ void AddBrokenIslesScripts()
     // Emerald Nightmare
     AddSC_instance_emerald_nightmare();
     AddSC_boss_nythendra();
+    AddSC_boss_ilgynoth();
 
     // Broken Shore scenario
     AddSC_broken_shore_alliance_forces();

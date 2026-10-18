@@ -26,7 +26,12 @@
 // reaches the entrance, where the root wall stands (1842.2, 1387.2).
 BossBoundaryData const boundaries =
 {
-    { DATA_NYTHENDRA, new CircleBoundary(Position(1881.5f, 1311.0f, 369.5f), 90.0f) }
+    { DATA_NYTHENDRA, new CircleBoundary(Position(1881.5f, 1311.0f, 369.5f), 90.0f) },
+    // Il'gynoth: the four room-edge readings fit no single circle (triples of
+    // them give 65-87 yd), so the centre is their centroid and the radius reaches
+    // the farthest reading (88.4 yd) plus a margin. The check is 3D, so the
+    // centre carries the floor height.
+    { DATA_ILGYNOTH, new CircleBoundary(Position(-12837.2f, 12314.2f, -248.0f), 95.0f) }
 };
 
 // A root wall grows across the entrance while Nythendra is fought; the one
@@ -48,7 +53,14 @@ ObjectData const creatureData[] =
     { BOSS_URSOC,               DATA_URSOC              },
     { BOSS_CENARIUS,            DATA_CENARIUS           },
     { BOSS_XAVIUS,              DATA_XAVIUS             },
+    { NPC_EYE_OF_ILGYNOTH,      DATA_EYE_OF_ILGYNOTH    },
     { 0,                        0                       }  // END
+};
+
+ObjectData const gameObjectData[] =
+{
+    { GO_EYE_OF_ILGYNOTH_FORCEFIELD,    DATA_ILGYNOTH_FORCEFIELD    },
+    { 0,                                0                           }  // END
 };
 
 DungeonEncounterData const encounters[] =
@@ -73,10 +85,19 @@ class instance_emerald_nightmare : public InstanceMapScript
             {
                 SetHeaders(DataHeader);
                 SetBossNumber(EncounterCount);
-                LoadObjectData(creatureData, nullptr);
+                LoadObjectData(creatureData, gameObjectData);
                 LoadDoorData(doorData);
                 LoadBossBoundaries(boundaries);
                 LoadDungeonEncounterData(encounters);
+            }
+
+            void OnGameObjectCreate(GameObject* go) override
+            {
+                InstanceScript::OnGameObjectCreate(go);
+
+                // Once Il'gynoth is dead the hollow stays open.
+                if (go->GetEntry() == GO_EYE_OF_ILGYNOTH_FORCEFIELD && GetBossState(DATA_ILGYNOTH) == DONE)
+                    HandleGameObject(ObjectGuid::Empty, true, go);
             }
         };
 
