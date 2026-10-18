@@ -62,7 +62,12 @@ enum NythendraTalks
 {
     TALK_INFESTED_BREATH    = 0, // raid boss emote, broadcast 106119
     TALK_ROT                = 1, // raid boss whisper to the target, broadcast 105376
-    TALK_VOLATILE_ROT       = 2  // raid boss whisper to the target, broadcast 105969
+    TALK_VOLATILE_ROT       = 2, // raid boss whisper to the target, broadcast 105969
+    TALK_AGGRO              = 3, // yells with voice lines from here on
+    TALK_DEATH              = 4,
+    TALK_BREATH_YELL        = 5,
+    TALK_SWARM_YELL         = 6,
+    TALK_VOLATILE_ROT_YELL  = 7
 };
 
 enum NythendraPhases
@@ -77,12 +82,14 @@ enum NythendraMisc
     VOLATILE_ROTS_PER_PHASE         = 3,
     POOLS_ON_ROT_EXPIRE             = 3,
     POOLS_ON_VOLATILE_ROT_EXPIRE    = 5,
+    ROT_TARGETS_MIN                 = 2,
+    ROT_TARGETS_MAX                 = 4,
     VERMIN_COUNT                    = 40,
     BURSTS_PER_VERMIN               = 3
 };
 
 float const VerminSpreadRadius  = 45.0f; // around her spawn, inside the 90 yard boundary
-float const PoolPullSpeed       = 12.0f; // yards a second towards her in Phase 2
+float const PoolPullSpeed       = 3.3f;  // yards a second towards her in Phase 2 (retail Normal video: 2-3, a little quicker in game)
 
 // Drops Infested Ground pools around a point. The boss casts them so they are
 // hers: Unit::GetAreaTriggers finds them again in Phase 2.
@@ -99,7 +106,7 @@ static void SpawnInfestedGround(Unit* caster, Position const& center, uint32 cou
 // 102672 - Nythendra
 struct boss_nythendra : public BossAI
 {
-    boss_nythendra(Creature* creature) : BossAI(creature, DATA_NYTHENDRA), _rotTargets(1), _volatileRotCount(0) { }
+    boss_nythendra(Creature* creature) : BossAI(creature, DATA_NYTHENDRA), _volatileRotCount(0) { }
 
     void JustAppeared() override
     {
@@ -111,6 +118,7 @@ struct boss_nythendra : public BossAI
     {
         BossAI::JustEngagedWith(who);
         instance->SendEncounterUnit(ENCOUNTER_FRAME_ENGAGE, me, 1);
+        Talk(TALK_AGGRO);
         StartPhaseOne(false);
 
         // DBM: 10 min on Normal and Raid Finder, 8 min above. On the scheduler
@@ -128,7 +136,6 @@ struct boss_nythendra : public BossAI
     // Swarm is later than the one on the pull.
     void StartPhaseOne(bool afterSwarm)
     {
-        _rotTargets = 1;
         _volatileRotCount = 0;
         events.Reset();
         events.SetPhase(PHASE_ONE);
@@ -222,6 +229,7 @@ struct boss_nythendra : public BossAI
     void JustDied(Unit* /*killer*/) override
     {
         instance->SendEncounterUnit(ENCOUNTER_FRAME_DISENGAGE, me);
+        Talk(TALK_DEATH);
         CleanUp();
         _JustDied();
     }
@@ -243,10 +251,9 @@ struct boss_nythendra : public BossAI
         if (spell->Id != SPELL_INFESTED_BREATH)
             return;
 
-        // Each breath costs 50 energy; Rot reaches a second raider after the first.
+        // Each breath costs 50 energy.
         int32 energy = std::max<int32>(me->GetPower(POWER_ENERGY) - ENERGY_PER_BREATH, 0);
         me->SetPower(POWER_ENERGY, energy);
-        _rotTargets = 2;
 
         // DBM: 36-42 s from one breath's start to the next; this is the cast's end.
         if (energy > 0)
@@ -276,8 +283,9 @@ struct boss_nythendra : public BossAI
             {
                 case EVENT_ROT:
                 {
+                    // Retail Normal kills: 2 to 4 raiders a wave, from the pull on.
                     std::list<Unit*> targets;
-                    SelectTargetList(targets, _rotTargets, SelectTargetMethod::Random, 0, 0.0f, true, false, -int32(SPELL_ROT));
+                    SelectTargetList(targets, urand(ROT_TARGETS_MIN, ROT_TARGETS_MAX), SelectTargetMethod::Random, 0, 0.0f, true, false, -int32(SPELL_ROT));
                     if (targets.empty())
                         if (Unit* victim = me->GetVictim())
                             targets.push_back(victim); // solo: the tank is the only raider
@@ -294,6 +302,7 @@ struct boss_nythendra : public BossAI
                 case EVENT_VOLATILE_ROT:
                     if (Unit* victim = me->GetVictim())
                     {
+                        Talk(TALK_VOLATILE_ROT_YELL);
                         Talk(TALK_VOLATILE_ROT, victim);
                         DoCast(victim, SPELL_VOLATILE_ROT, true);
                     }
@@ -310,6 +319,7 @@ struct boss_nythendra : public BossAI
                     if (Unit* target = SelectTarget(SelectTargetMethod::Random, 0, 0.0f, true))
                     {
                         Talk(TALK_INFESTED_BREATH);
+                        Talk(TALK_BREATH_YELL);
                         // She breathes the way she faced when the cast began and does not
                         // turn after the target; UpdateAI frees her once the channel ends.
                         me->SetFacingToObject(target);
@@ -334,6 +344,7 @@ struct boss_nythendra : public BossAI
                     me->GetMotionMaster()->Clear();
                     me->GetMotionMaster()->MoveIdle();
                     me->SetControlled(true, UNIT_STATE_ROOT);
+                    Talk(TALK_SWARM_YELL);
                     SpellCastResult result = DoCastSelf(SPELL_HEART_OF_THE_SWARM);
                     if (result != SPELL_CAST_OK)
                         TC_LOG_ERROR("scripts", "boss_nythendra: Heart of the Swarm failed to cast (result {})", uint32(result));
@@ -390,7 +401,6 @@ struct boss_nythendra : public BossAI
     }
 
 private:
-    uint32 _rotTargets;
     uint32 _volatileRotCount;
     std::unordered_map<ObjectGuid, uint32> _swelling; // vermin -> bursts left
 };
