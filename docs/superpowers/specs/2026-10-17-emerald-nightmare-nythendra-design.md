@@ -83,13 +83,27 @@ Also added: the retail cast markers DBM keys on, 203095 (Rot, once per
 wave) and 202968 (Infested Breath, at its start), both instant dummies cast
 before the real spell.
 
-3. **Rot ramp** (1 target, 2 after the first breath), the vermin count
-   (40), the first swell (10 s) and swell rate (1/s), the pool pull-in
-   speed (12 yd/s) and the pool radius (5 yd) are not timed by DBM and are
-   **still open**. The Heart of the Swarm pose (lying flat) comes from the
-   spell's client visual, not the script; the retail Normal tank-POV video
-   (youtube.com/watch?v=dAj2s59iwss, about 1:55-2:08) shows her lying flat,
-   and the user is to compare it with the in-game pose.
+3. **Not timed by DBM, settled from video** (2026-10-18). Source: the
+   retail Normal tank-POV kill, youtube.com/watch?v=dAj2s59iwss, whose
+   chat carries timestamps and DBM's "Rot on A, B" lines (one line per
+   wave, every target); the user checked other kills for Rot.
+
+   | Item | Was | Now | Evidence |
+   |---|---|---|---|
+   | Rot targets | 1, 2 after the first breath, back to 1 each phase | 2-4 at random every wave, from the pull on | Video: never 1, no step at the breath; 2-4 a wave. The user saw 4 before the first breath in other kills. |
+   | Pool pull-in speed | 12 yd/s | 3.3 yd/s | Video: pools still 10-20 yd out late in the channel and gathered at her only as it ends; one tracked pool moved about 2-3 yd/s. 3 yd/s tested a little slow in game, raised 10%. |
+   | Vermin count | 40 | 40, unchanged | Tank POV shows 12-15 at once in part of the room; consistent, not countable. They appear as the 3.7 s cast ends, as scripted. |
+   | First swell, swell rate | 10 s, 1 a second | unchanged | Not visible at this quality; DBM prints nothing for them. Kept at the user's call. |
+   | Pool radius | 5 yd (create properties 5887) | unchanged | No isolated pool in a measurable view; nothing says it is off. |
+   | Heart of the Swarm pose | | not scripted | The video shows her lying flat; in game the pose comes from the spell's client visual. |
+
+   Also added: her yells with voice lines (creature_text groups 3-7,
+   broadcast text 105002/105004 and 109011-109017, sound kits
+   58664-58671): aggro, death, two breath lines and two Volatile Rot lines
+   picked at random, and Heart of the Swarm, each at the moment the video
+   shows. Her other three lines (105001, 105003, 105005, probably slay or
+   wipe lines) are left out: the video shows no trigger for them, and no
+   yell when a raider dies.
 
 ## What exists today
 
