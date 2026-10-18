@@ -31,11 +31,17 @@ It is derived from the [TrinityCore](https://github.com/TrinityCore/TrinityCore)
 
 ## What this fork adds
 
-The default branch, `dev`, is upstream's `main` plus everything below: the
-engine work, which is built on the `engine` branch and merged in piece by
-piece, and all content, which is built on `dev` itself. How the branches relate is in
-[docs/BRANCHING.md](docs/BRANCHING.md); every engine piece has a design and a
-plan in [docs/superpowers](docs/superpowers).
+The fork has two working branches besides `main` (upstream's code, untouched):
+
+- **`engine`**: changes to the core server code and the database schema, and
+  nothing else, kept clean enough to offer upstream. It is merged into `dev`
+  piece by piece.
+- **`dev`**: the default branch and what the server runs: upstream's `main`
+  plus the engine work, all content (scripts and world data), the Docker setup
+  and the docs.
+
+The full rules are in [docs/BRANCHING.md](docs/BRANCHING.md); every engine
+piece has a design and a plan in [docs/superpowers](docs/superpowers).
 
 Sources: client DB2 data, Blizzard's UI source, TrinityCore, WowPacketParser,
 Wowhead and retail videos. No code or data is taken from leaked cores.
