@@ -22,12 +22,16 @@ lock. Solo testing is done with GM commands (user decision, 2026-10-17).
   stacks), Mythic (Infested Mind) and Raid Finder are later pieces
   (user, 2026-10-17).
 - One spec per boss, content straight on `dev` (user, 2026-10-17).
-- No doors in v1 (user, 2026-10-17). Her room is guarded by a boss
-  boundary only. The 16 `NightmareBoss1DungeonDoor` templates
-  (254984-254999, display 32552, invisible) are not spawned: the client
-  data has no rows for map 1520 and Wowhead shows no pins for them, so
-  their positions are unknown. If retail turns out to have an
-  encounter-closed barrier, a later patch adds `DoorData` for it.
+- Doors (user, 2026-10-18; replaces "no doors in v1"). Two
+  `NightmareBoss1DungeonDoor` root walls (display 32552 is the
+  `7du_nightmare_rootwall01.m2` root wall, not invisible as first noted),
+  placed at the user's `.gps` and faced along the line from the room centre:
+  254985 (guid 1520001) across the entrance, closed while the encounter is
+  in progress; 254987 (guid 1520002) on the way to Il'gynoth, closed until
+  she is dead. Both not selectable (flags 48). Tested in game: the entrance
+  wall rises on the pull and drops on a reset; the back wall drops on the kill.
+- Graveyard (2026-10-18): WorldSafeLocs 5533 at the raid entrance is linked
+  to zone 8026, so a death in the raid no longer sends you to Westfall.
 - Her spawn position and the boundary are measured in game by the user
   (user, 2026-10-17); see "Measured inputs".
 - No leak-derived source (LegionCore and similar) is used. Mechanics come
