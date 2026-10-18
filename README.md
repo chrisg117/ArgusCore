@@ -42,31 +42,30 @@ Wowhead and retail videos. No code or data is taken from leaked cores.
 
 ### Legion class halls (engine)
 
-Upstream knows only the Warlords garrison; every class hall request was
-unhandled. The fork adds the class hall as its own `ClassHall` class
-(`src/server/game/ClassHall/`) with its own tables, one piece at a time, each
-tested in game. All engine work is on the `engine` branch; the pieces built
-before 2026-10-17 had branches of their own, kept as `archive/` tags.
+Upstream handles only the Warlords garrison. The fork adds the class hall as
+its own `ClassHall` class (`src/server/game/ClassHall/`, with its own tables),
+built on `engine` one piece at a time and tested in game. All eight pieces are
+in `dev`.
 
-| Piece | Archived as | What it covers | Status |
-|-------|-------------|----------------|--------|
-| Foundation | `archive/engine/class-hall-foundation` | The hall and its storage, created by its spell, reported to the client | In `dev` |
-| Talents | `archive/engine/class-hall-talents` | Research with its timer, swapping, talent spells, the client's condition checks | In `dev` |
-| Followers | `archive/engine/class-hall-followers` | Champions and troops: gaining, active and inactive, dismissing, troop kinds | In `dev` |
-| Shipments | `archive/engine/class-hall-shipments` | Troop orders: the order window, ordering, collecting at the container, the hall report | In `dev` |
-| Missions | `archive/engine/class-hall-missions` | The mission table, which missions are offered, starting, the success roll, rewards | In `dev` |
-| Follower growth | `archive/engine/class-hall-follower-growth` | Follower experience, levels, quality, item level and equipment | In `dev` |
-| Mission extras | `archive/engine/class-hall-mission-extras` | Every ability in the chance, cost and duration from threats and abilities, troop vitality, Lethal, heals | In `dev` |
-| Mission rewards | `archive/engine/class-hall-mission-rewards` | The bonus roll, single-mission items, remembering and reviving troops | In `dev` |
+| Piece | What it covers |
+|-------|----------------|
+| Foundation | The hall and its storage, created by its spell |
+| Talents | Research, swapping, talent spells |
+| Followers | Champions and troops: gaining, activating, dismissing |
+| Shipments | Troop orders and collecting them |
+| Missions | The mission table: offering, starting, the success roll, rewards |
+| Follower growth | Experience, levels, quality, item level, equipment |
+| Mission extras | Abilities and threats in the chance, cost and duration; troop vitality |
+| Mission rewards | The bonus roll, single-mission items, reviving troops |
 
 ### Other engine fixes
 
-| Fix | Where |
-|-----|-------|
-| Quest completed bits were all written to the first block | `engine`, in `dev` |
-| Scenario criteria fed by game events could never complete | `engine`, in `dev` |
-| Conversations whose actors are not world objects failed to start | `engine`, in `dev` |
-| Area trigger re-paths went out in the wrong packet for 7.3.5 (`SMSG_AREA_TRIGGER_RE_SHAPE`) | `engine`, in `dev` |
+All on `engine` and in `dev`:
+
+- Quest completed bits were all written to the first block.
+- Scenario criteria fed by game events could never complete.
+- Conversations whose actors are not world objects failed to start.
+- Area trigger re-paths went out in the wrong packet for 7.3.5.
 
 ### Content
 
