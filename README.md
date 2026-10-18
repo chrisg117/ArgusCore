@@ -101,18 +101,6 @@ is measured from retail kill videos.
 | Il'gynoth | Design spec written | |
 | Elerethe Renferal, Ursoc, Dragons of Nightmare, Cenarius, Xavius | Not started | |
 
-**Nythendra** in detail:
-
-- **Phase 1:** Rot on 2-4 raiders a wave. Volatile Rot on the tank, three a phase. Two Infested Breaths, each costing 50 energy, each a cone that holds the direction it started in.
-- **Infested Ground:** pools where a Rot or Volatile Rot expires and along each breath. They hurt to stand in and stay down until Phase 2.
-- **Phase 2, Heart of the Swarm:** she lies down for a 20 s channel. Every pool crawls back into her, and Corrupted Vermin cover the room. From 10 s on, one vermin a second swells and bursts with Burst of Corruption, and each hit stacks. When the channel ends she stands up with full energy.
-- **Retail cast markers:** she casts the dummy spells DBM listens for, so the addon's bars restart on time. She enrages after 10 minutes on Normal.
-- **Voiced yells:** her lines from the client's broadcast texts play with their sound: on the pull, on each breath, on each Volatile Rot, on Heart of the Swarm and on her death.
-- **Root walls:**
-  - one grows across the entrance while she is fought;
-  - one bars the way on to Il'gynoth until she is dead.
-- **Reset:** a boundary resets her if she is pulled out of her room.
-
 Local only: a Docker setup for running a server (`Dockerfile`,
 `docker-compose.yml`) and `.scenario` GM commands for stepping through
 scenarios.
