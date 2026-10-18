@@ -274,6 +274,14 @@ struct boss_ilgynoth : public BossAI
         // Passive: the heart never picks a victim to melee or turn to, yet still evades
         // when its threat list runs empty.
         me->SetReactState(REACT_PASSIVE);
+        // Like a raid boss: a stun or an interrupt would cancel the long cast and
+        // the encounter could not end.
+        for (Mechanics mechanic : { MECHANIC_STUN, MECHANIC_FEAR, MECHANIC_CHARM, MECHANIC_KNOCKOUT, MECHANIC_SAPPED,
+            MECHANIC_DISORIENTED, MECHANIC_BANISH, MECHANIC_SILENCE, MECHANIC_INTERRUPT, MECHANIC_POLYMORPH, MECHANIC_HORROR })
+        {
+            me->ApplySpellImmune(0, IMMUNITY_MECHANIC, mechanic, false);
+            me->ApplySpellImmune(0, IMMUNITY_MECHANIC, mechanic, true);
+        }
         me->SetUnitFlag(UNIT_FLAG_UNINTERACTIBLE);
     }
 
@@ -477,6 +485,17 @@ struct boss_ilgynoth : public BossAI
         StartOutsidePhase(true);
     }
 
+    // Fallback if the long cast is lost anyway (an effect the immunities do not cover):
+    // cast it again. The remaining time restarts, which is better than a soft lock.
+    void OnSpellFailed(SpellInfo const* spell) override
+    {
+        if (!_heartPhase || !me->IsAlive())
+            return;
+
+        if (spell->Id == SPELL_DARK_RECONSTITUTION || spell->Id == SPELL_FINAL_TORPOR)
+            DoCastSelf(spell->Id);
+    }
+
     void DamageTaken(Unit* /*attacker*/, uint32& damage, DamageEffectType /*damageType*/, SpellInfo const* /*spellInfo*/) override
     {
         if (_lowHealthSaid)
@@ -523,6 +542,7 @@ struct boss_ilgynoth : public BossAI
             return;
         _evading = true;
 
+        _heartPhase = false; // so the interrupted cast is not cast again
         me->InterruptNonMeleeSpells(false);
         CleanUp(); // despawns the Eye with the other summons
         SetForcefield(false);
@@ -1077,8 +1097,12 @@ class spell_ilgynoth_cursed_blood : public SpellScript
         _chosen = true;
         targets.remove_if([](WorldObject* target) { return !target->IsPlayer() || !IsInsideChamber(*target); });
 
-        size_t const count = targets.size();
-        size_t const cap = count <= 1 ? 1 : std::clamp<size_t>(count / 5, 2, 6);
+        // The cap follows the raid's size (GMs count), not who stands inside.
+        size_t raid = 0;
+        for (MapReference const& ref : GetCaster()->GetMap()->GetPlayers())
+            if (ref.GetSource())
+                ++raid;
+        size_t const cap = raid <= 1 ? 1 : std::clamp<size_t>(raid / 5, 2, 6);
         if (targets.size() > cap)
             Trinity::Containers::RandomResize(targets, cap);
 
@@ -1109,7 +1133,7 @@ class spell_ilgynoth_cursed_blood_aura : public AuraScript
         if (GetTargetApplication()->GetRemoveMode() != AURA_REMOVE_BY_EXPIRE)
             return;
 
-        GetTarget()->CastSpell(GetTarget(), SPELL_CURSED_BLOOD_BURST, CastSpellExtraArgs(TRIGGERED_FULL_MASK));
+        GetTarget()->CastSpell(GetTarget(), SPELL_CURSED_BLOOD_BURST, CastSpellExtraArgs(TRIGGERED_FULL_MASK).SetOriginalCaster(GetCasterGUID()));
     }
 
     void Register() override
