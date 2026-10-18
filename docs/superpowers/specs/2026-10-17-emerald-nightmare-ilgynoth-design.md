@@ -505,3 +505,26 @@ Timings more than a few seconds off DBM are calibrate items, not bugs.
   block, the Eye's position and a server-side push-back are discussed then.
 - **Unsniffed templates.** More values than faction may be wrong (speed,
   flags, model scale). They are found in the test and fixed in data.
+
+## Amendment after the data dump (plan Task 1, 2026-10-18)
+
+The "88" and "13" above are radius indexes, not yards. Corrections from the
+client data (`~/emerald-nightmare/ilgynoth_task1.txt`, notes
+`ilgynoth-task1-findings.md`):
+
+- **Nightmare Explosion.** Its radius is 10 yd, so the Eye takes the 5%
+  from Ichors within 10 yd, not 13.
+- **Dark Reconstitution, Final Torpor and Cursed Blood.** They reach 300 yd.
+  - Dark Reconstitution's instakill is an area-enemy target
+    (`TARGET_UNIT_DEST_AREA_ENEMY`), so a target filter on effect 0 cuts it
+    down to the chamber.
+  - Final Torpor needs no filter: 300 yd covers the whole floor.
+- **Spew Corruption.** It has a 10 s cast on Normal and hits one enemy
+  target, not an area. "Back to back" means a new cast after each one ends.
+- **Pools.** Area triggers 6514 and 7424 have no client shape. Pools are
+  spheres of radius 5 (calibrate), using decal 31, the Nythendra green.
+- **Cursed Blood burst** (215143). It is 11 yd, as the journal says.
+- **Violent Bloodburst** is not built. Nothing in the client data, the world
+  database or DBM casts 215971. Known gap.
+- **Forcefield 251555.** Its model is `collisionwallpvp01.m2`, a thin
+  invisible collision wall. It blocks movement but shows nothing.
