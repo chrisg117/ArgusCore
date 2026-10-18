@@ -25,7 +25,7 @@
 // floor height. There are no doors in v1.
 BossBoundaryData const boundaries =
 {
-    { DATA_NYTHENDRA, new CircleBoundary(Position(1881.5f, 1311.0f, 369.5f), 55.0f) }
+    { DATA_NYTHENDRA, new CircleBoundary(Position(1881.5f, 1311.0f, 369.5f), 73.0f) }
 };
 
 // The four Dragons of Nightmare are left out: how they are tracked is decided

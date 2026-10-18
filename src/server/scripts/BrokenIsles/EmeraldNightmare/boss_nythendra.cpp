@@ -20,6 +20,7 @@
 #include "Containers.h"
 #include "InstanceScript.h"
 #include "Log.h"
+#include "Map.h"
 #include "MotionMaster.h"
 #include "ObjectAccessor.h"
 #include "ScriptedCreature.h"
@@ -32,14 +33,17 @@
 
 enum NythendraSpells
 {
+    SPELL_INFESTED_BREATH_CAST      = 202968, // instant dummy cast just before the breath (DBM's breath trigger)
     SPELL_INFESTED_BREATH           = 202977, // 3 s cast, 5 s aura on the target ticking every 500 ms
     SPELL_INFESTED_BREATH_DAMAGE    = 202978, // cone from the caster to a destination
+    SPELL_ROT_CAST                  = 203095, // instant dummy cast before each Rot wave (DBM's Rot trigger)
     SPELL_ROT                       = 203096, // ticks 203097 every 3 s for 9 s
     SPELL_VOLATILE_ROT              = 204463, // detonates (204470, 204777) after 8 s
     SPELL_INFESTED_GROUND           = 203044, // creates area trigger 5887 at a destination
     SPELL_INFESTED_GROUND_DAMAGE    = 203045, // applied to units standing in a pool
     SPELL_HEART_OF_THE_SWARM        = 203552, // 3.7 s cast, 20 s self channel, +5 energy a second
-    SPELL_BURST_OF_CORRUPTION       = 203646  // cast by a swollen vermin, stacks +25% taken
+    SPELL_BURST_OF_CORRUPTION       = 203646, // cast by a swollen vermin, stacks +25% taken
+    SPELL_BERSERK                   = 26662
 };
 
 enum NythendraEvents
@@ -50,7 +54,8 @@ enum NythendraEvents
     EVENT_HEART_OF_THE_SWARM,
     EVENT_SWELL_VERMIN,
     EVENT_BURST_OF_CORRUPTION,
-    EVENT_END_HEART_OF_THE_SWARM
+    EVENT_END_HEART_OF_THE_SWARM,
+    EVENT_STAND_UP
 };
 
 enum NythendraTalks
@@ -76,7 +81,7 @@ enum NythendraMisc
     BURSTS_PER_VERMIN               = 3
 };
 
-float const VerminSpreadRadius  = 45.0f; // around her spawn, inside the 55 yard boundary
+float const VerminSpreadRadius  = 45.0f; // around her spawn, inside the 73 yard boundary
 float const PoolPullSpeed       = 12.0f; // yards a second towards her in Phase 2
 
 // Drops Infested Ground pools around a point. The boss casts them so they are
@@ -106,18 +111,30 @@ struct boss_nythendra : public BossAI
     {
         BossAI::JustEngagedWith(who);
         instance->SendEncounterUnit(ENCOUNTER_FRAME_ENGAGE, me, 1);
-        StartPhaseOne();
+        StartPhaseOne(false);
+
+        // DBM: 10 min on Normal and Raid Finder, 8 min above. On the scheduler
+        // so the phase changes, which reset the event map, leave it running.
+        Difficulty difficulty = me->GetMap()->GetDifficultyID();
+        bool easy = difficulty == DIFFICULTY_NORMAL_RAID || difficulty == DIFFICULTY_LFR_NEW;
+        scheduler.Schedule(easy ? 10min : 8min, [this](TaskContext)
+        {
+            DoCastSelf(SPELL_BERSERK, true);
+        });
     }
 
-    void StartPhaseOne()
+    // Timers follow the retail Normal timers in Deadly Boss Mods 7.3.31
+    // (DBM-EmeraldNightmare/Nythendra.lua); the opening after a Heart of the
+    // Swarm is later than the one on the pull.
+    void StartPhaseOne(bool afterSwarm)
     {
         _rotTargets = 1;
         _volatileRotCount = 0;
         events.Reset();
         events.SetPhase(PHASE_ONE);
-        events.ScheduleEvent(EVENT_ROT, 8s, 0, PHASE_ONE);
-        events.ScheduleEvent(EVENT_VOLATILE_ROT, 20s, 0, PHASE_ONE);
-        events.ScheduleEvent(EVENT_INFESTED_BREATH, 45s, 0, PHASE_ONE);
+        events.ScheduleEvent(EVENT_ROT, afterSwarm ? 12s : 5s, 0, PHASE_ONE);
+        events.ScheduleEvent(EVENT_VOLATILE_ROT, afterSwarm ? 29s : 20s, 0, PHASE_ONE);
+        events.ScheduleEvent(EVENT_INFESTED_BREATH, afterSwarm ? 43s : 37s, 0, PHASE_ONE);
     }
 
     // Energy is 0: once the last breath has finished she collapses into Heart of the Swarm.
@@ -125,7 +142,7 @@ struct boss_nythendra : public BossAI
     {
         events.Reset();
         events.SetPhase(PHASE_TWO);
-        events.ScheduleEvent(EVENT_HEART_OF_THE_SWARM, 5s, 0, PHASE_TWO);
+        events.ScheduleEvent(EVENT_HEART_OF_THE_SWARM, 10s, 0, PHASE_TWO);
     }
 
     // The channel has begun: every pool slides into her, the vermin appear,
@@ -162,13 +179,12 @@ struct boss_nythendra : public BossAI
         summons.DespawnAll();
         _swelling.clear();
         me->RemoveAreaTrigger(SPELL_INFESTED_GROUND);
-        me->SetControlled(false, UNIT_STATE_ROOT);
-        me->SetReactState(REACT_AGGRESSIVE);
         me->SetPower(POWER_ENERGY, 100);
-        StartPhaseOne();
+        StartPhaseOne(true);
 
-        if (Unit* target = SelectTarget(SelectTargetMethod::MaxThreat, 0))
-            AttackStart(target);
+        // She stays where she lay until her stand-up animation has played
+        // (about 3 s in a retail Normal kill, held 6 s so she is fully up), then goes back to the tank.
+        events.ScheduleEvent(EVENT_STAND_UP, 6s, 0, PHASE_ONE);
     }
 
     void JustSummoned(Creature* summon) override
@@ -184,6 +200,7 @@ struct boss_nythendra : public BossAI
         summons.DespawnAll();
         _swelling.clear();
         me->RemoveAllAreaTriggers();
+        me->RemoveUnitFlag2(UNIT_FLAG2_CANNOT_TURN);
         me->SetControlled(false, UNIT_STATE_ROOT);
         me->SetReactState(REACT_AGGRESSIVE);
         instance->DoRemoveAurasDueToSpellOnPlayers(SPELL_ROT);
@@ -231,8 +248,9 @@ struct boss_nythendra : public BossAI
         me->SetPower(POWER_ENERGY, energy);
         _rotTargets = 2;
 
+        // DBM: 36-42 s from one breath's start to the next; this is the cast's end.
         if (energy > 0)
-            events.ScheduleEvent(EVENT_INFESTED_BREATH, 45s, 0, PHASE_ONE);
+            events.ScheduleEvent(EVENT_INFESTED_BREATH, 36s, 0, PHASE_ONE);
         else
             StartPhaseTwo();
     }
@@ -242,6 +260,10 @@ struct boss_nythendra : public BossAI
         if (!UpdateVictim())
             return;
 
+        if (me->HasUnitFlag2(UNIT_FLAG2_CANNOT_TURN) && !me->HasUnitState(UNIT_STATE_CASTING))
+            me->RemoveUnitFlag2(UNIT_FLAG2_CANNOT_TURN);
+
+        scheduler.Update(diff);
         events.Update(diff);
 
         // Phase 2 runs its events through her channel.
@@ -260,12 +282,13 @@ struct boss_nythendra : public BossAI
                         if (Unit* victim = me->GetVictim())
                             targets.push_back(victim); // solo: the tank is the only raider
 
+                    DoCastSelf(SPELL_ROT_CAST, true);
                     for (Unit* target : targets)
                     {
                         Talk(TALK_ROT, target);
                         DoCast(target, SPELL_ROT, true);
                     }
-                    events.Repeat(16s);
+                    events.Repeat(15s);
                     break;
                 }
                 case EVENT_VOLATILE_ROT:
@@ -275,12 +298,23 @@ struct boss_nythendra : public BossAI
                         DoCast(victim, SPELL_VOLATILE_ROT, true);
                     }
                     if (++_volatileRotCount < VOLATILE_ROTS_PER_PHASE)
-                        events.Repeat(30s);
+                        events.Repeat(22s); // DBM: 20.5-24 s
+                    break;
+                case EVENT_STAND_UP:
+                    me->SetControlled(false, UNIT_STATE_ROOT);
+                    me->SetReactState(REACT_AGGRESSIVE);
+                    if (Unit* target = SelectTarget(SelectTargetMethod::MaxThreat, 0))
+                        AttackStart(target);
                     break;
                 case EVENT_INFESTED_BREATH:
                     if (Unit* target = SelectTarget(SelectTargetMethod::Random, 0, 0.0f, true))
                     {
                         Talk(TALK_INFESTED_BREATH);
+                        // She breathes the way she faced when the cast began and does not
+                        // turn after the target; UpdateAI frees her once the channel ends.
+                        me->SetFacingToObject(target);
+                        me->SetUnitFlag2(UNIT_FLAG2_CANNOT_TURN);
+                        DoCastSelf(SPELL_INFESTED_BREATH_CAST, true);
                         DoCast(target, SPELL_INFESTED_BREATH);
                     }
                     break;
