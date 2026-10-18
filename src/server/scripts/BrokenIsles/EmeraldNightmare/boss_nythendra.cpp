@@ -81,7 +81,7 @@ enum NythendraMisc
     BURSTS_PER_VERMIN               = 3
 };
 
-float const VerminSpreadRadius  = 45.0f; // around her spawn, inside the 73 yard boundary
+float const VerminSpreadRadius  = 45.0f; // around her spawn, inside the 90 yard boundary
 float const PoolPullSpeed       = 12.0f; // yards a second towards her in Phase 2
 
 // Drops Infested Ground pools around a point. The boss casts them so they are

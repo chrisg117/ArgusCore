@@ -22,10 +22,11 @@
 
 // Nythendra: the room is a circle fitted through three points on its edge
 // (measured in game, 2026-10-17). The check is 3D, so the centre needs the
-// floor height. There are no doors in v1.
+// floor height. The radius is widened past the fitted 55 yd to 90 yd so it
+// reaches where the entrance gate would stand (1842.2, 1387.2). No doors in v1.
 BossBoundaryData const boundaries =
 {
-    { DATA_NYTHENDRA, new CircleBoundary(Position(1881.5f, 1311.0f, 369.5f), 73.0f) }
+    { DATA_NYTHENDRA, new CircleBoundary(Position(1881.5f, 1311.0f, 369.5f), 90.0f) }
 };
 
 // The four Dragons of Nightmare are left out: how they are tracked is decided

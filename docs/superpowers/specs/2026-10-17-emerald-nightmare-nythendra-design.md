@@ -77,7 +77,7 @@ a full fight in game with the unmodified addon installed.
 | Enrage | none on Normal | Berserk 26662 at 10 min (Normal, Raid Finder), 8 min above | **Settled.** DBM's `berserkTimer`; the earlier "none on Normal" was wrong. |
 | Stand-up after the swarm | moved at once | rooted 6 s after the channel (retail video: about 3 s of animation, too short in game) | **Settled.** |
 | Breath facing | turned after the target | faces the target at cast start, `UNIT_FLAG2_CANNOT_TURN` until the channel ends | **Settled.** |
-| Reset boundary | 55 yd | 73 yd (a pool dropped at the room edge evaded her) | **Settled.** |
+| Reset boundary | 55 yd | 90 yd: 73 yd so a pool dropped at the room edge does not evade her, then 90 yd to reach where the entrance gate would stand, (1842.2, 1387.2), 85.8 yd from the centre | **Settled.** |
 
 Also added: the retail cast markers DBM keys on, 203095 (Rot, once per
 wave) and 202968 (Infested Breath, at its start), both instant dummies cast
