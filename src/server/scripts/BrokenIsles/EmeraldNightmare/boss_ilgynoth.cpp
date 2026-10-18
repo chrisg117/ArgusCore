@@ -232,7 +232,8 @@ struct boss_ilgynoth : public BossAI
     void JustAppeared() override
     {
         Setup();
-        SetForcefield(false);
+        if (instance->GetBossState(DATA_ILGYNOTH) != DONE)
+            SetForcefield(false);
         SummonEye();
     }
 
@@ -262,6 +263,10 @@ struct boss_ilgynoth : public BossAI
     {
         // Not BossAI::JustSummoned: the Eye engages by being hit or approached.
         summons.Summon(summon);
+        // The Eye that comes back after Dark Reconstitution is engaged at once, so its
+        // frame and Gaze start and it takes part in the wipe check.
+        if (summon->GetEntry() == NPC_EYE_OF_ILGYNOTH && me->IsEngaged())
+            DoZoneInCombat(summon);
     }
 
     // The heart is rooted and cannot be selected until the Eye is dead.
@@ -565,8 +570,13 @@ struct boss_ilgynoth : public BossAI
 
     void UpdateAI(uint32 diff) override
     {
-        // No victim in the outside phase: the heart must not evade from that.
-        if (_heartPhase && !UpdateVictim())
+        // The heart is passive, so UpdateVictim only evades once nobody is left in
+        // combat with it. There is no combat pulse in this fork: pull the zone again
+        // first, so a living player is found before the raid is judged gone.
+        if (!_heartPhase && me->IsEngaged() && !me->IsInCombat())
+            DoZoneInCombat();
+
+        if (!UpdateVictim())
             return;
 
         scheduler.Update(diff);
