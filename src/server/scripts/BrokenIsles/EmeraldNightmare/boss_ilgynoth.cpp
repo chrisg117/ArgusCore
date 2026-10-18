@@ -67,7 +67,6 @@ enum IlgynothEvents
     // Dominator
     EVENT_FURY,
     EVENT_GROUND_SLAM,
-    EVENT_RUPTURING_ROAR,
 
     // Deathglare
     EVENT_MIND_FLAY,
@@ -555,7 +554,6 @@ struct npc_dominator_tentacle : public ilgynoth_add_ai
     {
         _events.ScheduleEvent(EVENT_FURY, 6s);
         _events.ScheduleEvent(EVENT_GROUND_SLAM, 12s);
-        _events.ScheduleEvent(EVENT_RUPTURING_ROAR, 1s);
     }
 
     void JustDied(Unit* /*killer*/) override
@@ -592,18 +590,6 @@ struct npc_dominator_tentacle : public ilgynoth_add_ai
                     else
                         _events.Repeat(1s);
                     break;
-                case EVENT_RUPTURING_ROAR:
-                {
-                    // Nobody in reach: the roar goes out back to back.
-                    bool const anyInReach = SelectTarget(SelectTargetMethod::MaxThreat, 0, [this](Unit* unit)
-                    {
-                        return me->IsWithinMeleeRange(unit);
-                    }) != nullptr;
-                    if (!anyInReach)
-                        DoCastAOE(SPELL_RUPTURING_ROAR);
-                    _events.Repeat(500ms);
-                    break;
-                }
                 default:
                     break;
             }
@@ -611,6 +597,15 @@ struct npc_dominator_tentacle : public ilgynoth_add_ai
             if (me->HasUnitState(UNIT_STATE_CASTING))
                 return;
         }
+
+        // Nothing else was due: with nobody in reach the roar goes out back to back. It is
+        // checked here, not scheduled, so that a due Fury or Slam always goes first.
+        bool const anyInReach = SelectTarget(SelectTargetMethod::MaxThreat, 0, [this](Unit* unit)
+        {
+            return me->IsWithinMeleeRange(unit);
+        }) != nullptr;
+        if (!anyInReach)
+            DoCastAOE(SPELL_RUPTURING_ROAR);
     }
 };
 
