@@ -18,9 +18,11 @@
 #include "AreaTrigger.h"
 #include "AreaTriggerAI.h"
 #include "CellImpl.h"
+#include "Containers.h"
 #include "GridNotifiersImpl.h"
 #include "InstanceScript.h"
 #include "Map.h"
+#include "MotionMaster.h"
 #include "ObjectAccessor.h"
 #include "ScriptedCreature.h"
 #include "ScriptMgr.h"
@@ -53,7 +55,18 @@ enum IlgynothSpells
     SPELL_HORROR_EMERGE         = 210289,
 
     // Every add
-    SPELL_SUMMON_ICHOR          = 209966
+    SPELL_SUMMON_ICHOR          = 209966, // not cast: see SummonIchors
+
+    // Eye
+    SPELL_NIGHTMARE_GAZE        = 210931,
+
+    // Nightmare Ichor
+    SPELL_TOUCH_OF_CORRUPTION   = 209467, // proc aura on the Ichor itself
+    SPELL_FIXATE                = 210099,
+    SPELL_NIGHTMARE_EXPLOSION   = 209471, // 2.5 s cast
+
+    // Heart
+    SPELL_REABSORPTION          = 212942  // an Ichor reached the chamber: raid damage from the heart
 };
 
 enum IlgynothEvents
@@ -75,7 +88,10 @@ enum IlgynothEvents
     EVENT_SPEW_CORRUPTION,
 
     // Horror
-    EVENT_EYE_OF_FATE
+    EVENT_EYE_OF_FATE,
+
+    // Eye
+    EVENT_NIGHTMARE_GAZE
 };
 
 enum IlgynothTalks
@@ -154,6 +170,12 @@ Milliseconds const HorrorAfter          = 95s;
 Milliseconds const HorrorInterval       = 280s;
 Milliseconds const RandomTentacleTime   = 60s;
 
+// Nightmare Explosion reaches 10 yd (the spell's radius index 13), not the plan's 13.
+float const ExplosionRange          = 10.0f;
+float const ExplosionEyePct         = 5.0f;
+Milliseconds const GazeMin          = 2s;
+Milliseconds const GazeMax          = 3s;
+
 Position const DominatorPositions[2] =
 {
     { -12848.881f, 12332.325f, -249.96867f, 3.730643f },
@@ -168,14 +190,22 @@ struct NightmarePoolCheck
     bool operator()(AreaTrigger* at) const { return at->GetSpellId() == SPELL_NIGHTMARE_CORRUPTION; }
 };
 
-// Every add leaves Ichors behind when it dies (Task 4 owns what they do).
+// Every add leaves Ichors behind when it dies. They are summoned through the heart, not
+// cast with 209966: a TempSummon made by the spell belongs to the add (the summoner's
+// AI gets JustSummoned), so the heart's summon list would not hold it, and an Ichor
+// could survive a wipe. The heart's list is despawned by CleanUp.
 static void SummonIchors(Creature* me, uint8 count)
 {
+    InstanceScript* instance = me->GetInstanceScript();
+    Creature* heart = instance ? instance->GetCreature(DATA_ILGYNOTH) : nullptr;
+    if (!heart || !heart->IsAlive() || !heart->IsEngaged())
+        return;
+
     for (uint8 i = 0; i < count; ++i)
     {
         Position pos = me->GetPosition();
         me->MovePosition(pos, frand(0.0f, 3.0f), frand(0.0f, 2.0f * float(M_PI)));
-        me->CastSpell(pos, SPELL_SUMMON_ICHOR, CastSpellExtraArgs(TRIGGERED_FULL_MASK));
+        heart->SummonCreature(NPC_NIGHTMARE_ICHOR, pos, TEMPSUMMON_MANUAL_DESPAWN);
     }
 }
 
@@ -244,7 +274,11 @@ struct boss_ilgynoth : public BossAI
             case ACTION_EYE_DIED:
                 StartHeartPhase();
                 break;
-            case ACTION_ICHOR_INSIDE: // Reabsorption: a later task
+            case ACTION_ICHOR_INSIDE:
+                // The heart is the caster, so the raid damage comes from it.
+                if (_heartPhase && me->IsAlive())
+                    me->CastSpell(me, SPELL_REABSORPTION, CastSpellExtraArgs(TRIGGERED_FULL_MASK));
+                break;
             default:
                 break;
         }
@@ -365,9 +399,15 @@ struct boss_ilgynoth : public BossAI
             events.ScheduleEvent(EVENT_RANDOM_TENTACLE, RandomTentacleTime, 0, PHASE_OUTSIDE);
     }
 
-    // Stub: Task 4 fills in Cursed Blood and the timed cast.
+    bool IsHeartPhase() const { return _heartPhase; }
+
+    // Stub: a later task fills in Cursed Blood and the timed cast.
     void StartHeartPhase()
     {
+        if (_heartPhase)
+            return;
+
+        TC_LOG_DEBUG("scripts", "Il'gynoth: the Eye died, heart phase starts");
         _heartPhase = true;
         events.Reset();
         events.SetPhase(PHASE_HEART);
@@ -466,13 +506,34 @@ struct npc_eye_of_ilgynoth : public ScriptedAI
 
     void Setup()
     {
+        _dying = false;
+        _events.Reset();
         me->SetControlled(true, UNIT_STATE_ROOT);
         if (!me->HasAura(SPELL_STUFF_OF_NIGHTMARES))
             DoCastSelf(SPELL_STUFF_OF_NIGHTMARES);
     }
 
+    // An Ichor exploded next to the Eye: 5% of its health, set directly because Stuff of
+    // Nightmares would cut a damage hit to 1%. The Eye is killed by the Ichor, once.
+    void TakeExplosion(Unit* ichor)
+    {
+        if (_dying || !me->IsAlive())
+            return;
+
+        uint32 const amount = me->CountPctFromMaxHealth(ExplosionEyePct);
+        if (me->GetHealth() > amount)
+        {
+            me->SetHealth(me->GetHealth() - amount);
+            return;
+        }
+
+        _dying = true;
+        Unit::Kill(ichor, me);
+    }
+
     void JustEngagedWith(Unit* /*who*/) override
     {
+        _events.ScheduleEvent(EVENT_NIGHTMARE_GAZE, GazeMin, GazeMax);
         _instance->SendEncounterUnit(ENCOUNTER_FRAME_ENGAGE, me, 2);
         if (Creature* heart = _instance->GetCreature(DATA_ILGYNOTH))
             heart->AI()->DoAction(ACTION_PULL);
@@ -487,6 +548,7 @@ struct npc_eye_of_ilgynoth : public ScriptedAI
 
     void EnterEvadeMode(EvadeReason why) override
     {
+        _events.Reset();
         _instance->SendEncounterUnit(ENCOUNTER_FRAME_DISENGAGE, me);
         if (Creature* heart = _instance->GetCreature(DATA_ILGYNOTH))
             if (heart->IsEngaged())
@@ -501,13 +563,158 @@ struct npc_eye_of_ilgynoth : public ScriptedAI
         Setup();
     }
 
-    void UpdateAI(uint32 /*diff*/) override
+    void UpdateAI(uint32 diff) override
     {
-        UpdateVictim();
+        if (!UpdateVictim())
+            return;
+
+        _events.Update(diff);
+
+        if (me->HasUnitState(UNIT_STATE_CASTING))
+            return;
+
+        while (uint32 eventId = _events.ExecuteEvent())
+            if (eventId == EVENT_NIGHTMARE_GAZE)
+            {
+                if (Unit* target = SelectTarget(SelectTargetMethod::Random, 0, 0.0f, true))
+                    DoCast(target, SPELL_NIGHTMARE_GAZE);
+                _events.Repeat(GazeMin, GazeMax);
+                break;
+            }
     }
 
 private:
     InstanceScript* _instance;
+    EventMap _events;
+    bool _dying = false;
+};
+
+// 105721 - Nightmare Ichor
+// Fixates a player in the room, chases, and when it is hurt to 1 HP stops and blows up
+// (10 yd). Next to the Eye the blast takes 5% of the Eye's health. In the heart phase an
+// Ichor that gets into the chamber is reabsorbed.
+struct npc_nightmare_ichor : public ScriptedAI
+{
+    npc_nightmare_ichor(Creature* creature) : ScriptedAI(creature), _instance(creature->GetInstanceScript()) { }
+
+    void JustAppeared() override
+    {
+        DoCastSelf(SPELL_TOUCH_OF_CORRUPTION);
+        PickTarget();
+    }
+
+    bool InRoom(Unit const* unit) const
+    {
+        CreatureBoundary const* boundary = _instance ? _instance->GetBossBoundary(DATA_ILGYNOTH) : nullptr;
+        Position const pos = unit->GetPosition();
+        return !boundary || CreatureAI::IsInBounds(*boundary, &pos);
+    }
+
+    bool IsGoodTarget(Unit const* unit) const
+    {
+        return unit && unit->IsAlive() && InRoom(unit);
+    }
+
+    void ReleaseTarget()
+    {
+        if (Unit* old = ObjectAccessor::GetUnit(*me, _fixate))
+            old->RemoveAurasDueToSpell(SPELL_FIXATE, me->GetGUID());
+        _fixate.Clear();
+    }
+
+    // A random living player in the room, or nobody: then the Ichor just stands.
+    void PickTarget()
+    {
+        ReleaseTarget();
+
+        std::vector<Player*> candidates;
+        for (MapReference const& ref : me->GetMap()->GetPlayers())
+            if (Player* player = ref.GetSource())
+                if (!player->IsGameMaster() && IsGoodTarget(player))
+                    candidates.push_back(player);
+
+        if (candidates.empty())
+        {
+            me->AttackStop();
+            me->StopMoving();
+            return;
+        }
+
+        Player* target = Trinity::Containers::SelectRandomContainerElement(candidates);
+        _fixate = target->GetGUID();
+        DoCast(target, SPELL_FIXATE, CastSpellExtraArgs(TRIGGERED_FULL_MASK));
+        AttackStart(target);
+    }
+
+    void DamageTaken(Unit* /*attacker*/, uint32& damage, DamageEffectType /*type*/, SpellInfo const* /*spell*/) override
+    {
+        if (damage < me->GetHealth())
+            return;
+
+        // Never dies from damage: it is brought to 1 HP, and then blows up.
+        damage = me->GetHealth() - 1;
+        if (_exploding)
+            return;
+
+        _exploding = true;
+        ReleaseTarget();
+        me->AttackStop();
+        me->StopMoving();
+        me->GetMotionMaster()->Clear();
+        me->GetMotionMaster()->MoveIdle();
+    }
+
+    void OnSpellCast(SpellInfo const* spell) override
+    {
+        if (spell->Id == SPELL_NIGHTMARE_EXPLOSION)
+            _exploded = true; // resolved in UpdateAI, not inside the spell's own cast
+    }
+
+    void UpdateAI(uint32 /*diff*/) override
+    {
+        if (!me->IsAlive())
+            return;
+
+        if (_exploded)
+        {
+            _exploded = false;
+            if (Creature* eye = _instance->GetCreature(DATA_EYE_OF_ILGYNOTH))
+                if (eye->IsAlive() && me->IsWithinDist(eye, ExplosionRange))
+                    if (npc_eye_of_ilgynoth* eyeAI = CAST_AI(npc_eye_of_ilgynoth, eye->AI()))
+                        eyeAI->TakeExplosion(me);
+            if (me->IsAlive())
+                me->KillSelf();
+            return;
+        }
+
+        if (_exploding)
+        {
+            // Starts the cast, and again if it ever failed to start.
+            if (!me->HasUnitState(UNIT_STATE_CASTING))
+                DoCastSelf(SPELL_NIGHTMARE_EXPLOSION);
+            return;
+        }
+
+        if (Creature* heart = _instance->GetCreature(DATA_ILGYNOTH))
+            if (heart->IsAlive() && IsInsideChamber(*me))
+                if (boss_ilgynoth* heartAI = CAST_AI(boss_ilgynoth, heart->AI()))
+                    if (heartAI->IsHeartPhase())
+                    {
+                        heart->AI()->DoAction(ACTION_ICHOR_INSIDE);
+                        ReleaseTarget();
+                        me->DespawnOrUnsummon();
+                        return;
+                    }
+
+        if (!IsGoodTarget(ObjectAccessor::GetUnit(*me, _fixate)))
+            PickTarget();
+    }
+
+private:
+    InstanceScript* _instance;
+    ObjectGuid _fixate;
+    bool _exploding = false;
+    bool _exploded = false;
 };
 
 // The adds are rooted (the Horror aside), engage everyone in the zone as they appear
@@ -795,6 +1002,7 @@ void AddSC_boss_ilgynoth()
 {
     RegisterEmeraldNightmareCreatureAI(boss_ilgynoth);
     RegisterEmeraldNightmareCreatureAI(npc_eye_of_ilgynoth);
+    RegisterEmeraldNightmareCreatureAI(npc_nightmare_ichor);
     RegisterEmeraldNightmareCreatureAI(npc_dominator_tentacle);
     RegisterEmeraldNightmareCreatureAI(npc_deathglare_tentacle);
     RegisterEmeraldNightmareCreatureAI(npc_ilgynoth_corruptor_tentacle);
