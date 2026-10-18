@@ -60,6 +60,37 @@ beyond these):
    A second creature template named Nythendra (103160) exists and is left
    alone.
 
+### Calibration (Task 5, 2026-10-17)
+
+Timers are now taken from Deadly Boss Mods 7.3.31 (interface 70300, the
+7.3.5 client), `DBM-EmeraldNightmare/Nythendra.lua`: retail combat-log
+timers, open source. The script is fitted to the addon, and the user checked
+a full fight in game with the unmodified addon installed.
+
+| Item | Was | Now (DBM) | Status |
+|---|---|---|---|
+| 1. Breath count and times | 45 s, 90 s | 2 per phase: 37 s on the pull, 43 s after a swarm; 39 s start to start | **Settled.** First breath 2-3 s off the bar, second on it. |
+| 2. Volatile Rot | 20 / 50 / 80 s | 20 s on the pull, 29 s after a swarm, then every 22 s, 3 per phase | **Settled.** |
+| Rot timer | 8 s, every 16 s | 5 s on the pull, 12 s after a swarm, every 15 s | **Settled.** |
+| Heart of the Swarm start | about 98 s | 10 s after the second breath's cast ends (about 88 s; DBM 86-91 s) | **Settled.** 2-3 s early on the second cycle; DBM marks its 98 s repeat as uncertain. |
+| Heart of the Swarm length | 3.7 s + 20 s | DBM 23 s from cast start | **Settled**, unchanged. |
+| Enrage | none on Normal | Berserk 26662 at 10 min (Normal, Raid Finder), 8 min above | **Settled.** DBM's `berserkTimer`; the earlier "none on Normal" was wrong. |
+| Stand-up after the swarm | moved at once | rooted 6 s after the channel (retail video: about 3 s of animation, too short in game) | **Settled.** |
+| Breath facing | turned after the target | faces the target at cast start, `UNIT_FLAG2_CANNOT_TURN` until the channel ends | **Settled.** |
+| Reset boundary | 55 yd | 73 yd (a pool dropped at the room edge evaded her) | **Settled.** |
+
+Also added: the retail cast markers DBM keys on, 203095 (Rot, once per
+wave) and 202968 (Infested Breath, at its start), both instant dummies cast
+before the real spell.
+
+3. **Rot ramp** (1 target, 2 after the first breath), the vermin count
+   (40), the first swell (10 s) and swell rate (1/s), the pool pull-in
+   speed (12 yd/s) and the pool radius (5 yd) are not timed by DBM and are
+   **still open**. The Heart of the Swarm pose (lying flat) comes from the
+   spell's client visual, not the script; the retail Normal tank-POV video
+   (youtube.com/watch?v=dAj2s59iwss, about 1:55-2:08) shows her lying flat,
+   and the user is to compare it with the in-game pose.
+
 ## What exists today
 
 Checked 2026-10-17 on `dev` (`bce66df3`) and the server's databases.
@@ -118,7 +149,8 @@ journal and is not built.
 - When the channel ends the energy is 100, the vermin are gone and Phase 1
   begins again with its timers restarted.
 
-**Enrage:** none on Normal (8 minutes on Heroic and above, not built).
+**Enrage:** Berserk (26662) at 10 minutes on Normal, 8 minutes on Heroic
+and above (DBM; see Calibration).
 
 Calibrate: breath times, Volatile Rot times, the Rot ramp, the number of
 vermin, the pull-in speed, and the first Rot time after a phase starts

@@ -107,6 +107,6 @@
 **Files:**
 - Modify: `boss_nythendra.cpp` (constants only), the spec's "Sources and what is uncertain" list if a number is settled
 
-- [ ] **Step 1:** Run a full fight and write down the real times of each event against the Global Constraints timings; for any ability that is wrong by more than a few seconds, compare against a retail video (user supplies the link, as for the Broken Shore) and change the constant.
-- [ ] **Step 2:** Final regression: re-run the Task 2 and Task 4 checks that touch evade and kill after any constant change.
-- [ ] **Step 3:** Update `docs/superpowers/specs/2026-10-17-emerald-nightmare-nythendra-design.md` "Sources and what is uncertain" to mark settled items; copy the spec and this plan to `C:\Users\chris\code\acore-webservice\docs\superpowers\`; commit `docs: Nythendra calibration notes`; push.
+- [x] **Step 1:** Run a full fight and write down the real times of each event against the Global Constraints timings; for any ability that is wrong by more than a few seconds, compare against a retail video (user supplies the link, as for the Broken Shore) and change the constant.
+- [x] **Step 2:** Final regression: re-run the Task 2 and Task 4 checks that touch evade and kill after any constant change.
+- [x] **Step 3:** Update `docs/superpowers/specs/2026-10-17-emerald-nightmare-nythendra-design.md` "Sources and what is uncertain" to mark settled items; copy the spec and this plan to `C:\Users\chris\code\acore-webservice\docs\superpowers\`; commit `docs: Nythendra calibration notes`; push.
