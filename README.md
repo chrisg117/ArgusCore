@@ -66,6 +66,7 @@ before 2026-10-17 had branches of their own, kept as `archive/` tags.
 | Quest completed bits were all written to the first block | `engine`, in `dev` |
 | Scenario criteria fed by game events could never complete | `engine`, in `dev` |
 | Conversations whose actors are not world objects failed to start | `engine`, in `dev` |
+| Area trigger re-paths went out in the wrong packet for 7.3.5 (`SMSG_AREA_TRIGGER_RE_SHAPE`) | `engine`, in `dev` |
 
 ### Content
 
@@ -77,7 +78,40 @@ only while two sessions work at once (see `docs/BRANCHING.md`).
 | Broken Shore scenario | The Legion intro scenario, Alliance side, every stage scripted against a retail recording | Playable start to end; polish parked |
 | Shadow priest artifact | The opening quests, the "Blade in Twilight" scenario, the Dalaran turn-in, the way into Netherlight Temple | Playable; polish parked |
 | Priest class hall | Content on top of the engine pieces | Started: the mission table |
-| Emerald Nightmare | The raid: enterable through its Val'sharah portal, with an exit, a meeting stone and an instance script for all seven encounters | Scaffold done; no bosses yet (Nythendra next) |
+| Emerald Nightmare | The raid, boss by boss on Normal (see below) | Nythendra playable; Il'gynoth designed |
+
+### Emerald Nightmare
+
+The first Legion raid, built one boss at a time on Normal difficulty. Each boss
+has a design spec and a plan in [docs/superpowers](docs/superpowers) and is
+tested in game before the next one starts. Boss timers follow Deadly Boss Mods
+7.3.31, the Legion-era addon built from retail combat logs: the script is
+fitted to the addon, so its bars line up in the client. What DBM does not time
+is measured from retail kill videos.
+
+**The raid around the bosses**
+
+- Entered through its portal in Val'sharah, with an exit portal and a meeting stone.
+- An instance script that tracks all seven encounters.
+- A graveyard at the raid's entrance.
+
+| Boss | Status | What is in |
+|------|--------|-----------|
+| Nythendra | **Playable, tested in game** | Both phases; timers fitted to DBM; enrage; voiced yells; root walls that seal the room |
+| Il'gynoth | Design spec written | |
+| Elerethe Renferal, Ursoc, Dragons of Nightmare, Cenarius, Xavius | Not started | |
+
+**Nythendra** in detail:
+
+- **Phase 1:** Rot on 2-4 raiders a wave. Volatile Rot on the tank, three a phase. Two Infested Breaths, each costing 50 energy, each a cone that holds the direction it started in.
+- **Infested Ground:** pools where a Rot or Volatile Rot expires and along each breath. They hurt to stand in and stay down until Phase 2.
+- **Phase 2, Heart of the Swarm:** she lies down for a 20 s channel. Every pool crawls back into her, and Corrupted Vermin cover the room. From 10 s on, one vermin a second swells and bursts with Burst of Corruption, and each hit stacks. When the channel ends she stands up with full energy.
+- **Retail cast markers:** she casts the dummy spells DBM listens for, so the addon's bars restart on time. She enrages after 10 minutes on Normal.
+- **Voiced yells:** her lines from the client's broadcast texts play with their sound: on the pull, on each breath, on each Volatile Rot, on Heart of the Swarm and on her death.
+- **Root walls:**
+  - one grows across the entrance while she is fought;
+  - one bars the way on to Il'gynoth until she is dead.
+- **Reset:** a boundary resets her if she is pulled out of her room.
 
 Local only: a Docker setup for running a server (`Dockerfile`,
 `docker-compose.yml`) and `.scenario` GM commands for stepping through
@@ -85,8 +119,9 @@ scenarios.
 
 ### Roadmap
 
-1. Priest class hall content: recruiters, research, troops (the mission table is in place).
-2. Broken Shore polish, after deciding between retail tuning and solo scaling.
+1. Emerald Nightmare: Il'gynoth next, then the remaining bosses in journal order.
+2. Priest class hall content: recruiters, research, troops (the mission table is in place).
+3. Broken Shore polish, after deciding between retail tuning and solo scaling.
 
 ## Requirements
 
