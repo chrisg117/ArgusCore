@@ -55,6 +55,12 @@ enum ENCreatureIds
     NPC_CORRUPTED_VERMIN            = 111005,
 };
 
+enum ENGameObjectIds
+{
+    GO_NYTHENDRA_ROOT_WALL          = 254985, // NightmareBoss1DungeonDoor, the widest of the 16
+    GO_NYTHENDRA_EXIT_ROOT_WALL     = 254987  // NightmareBoss1DungeonDoor, the way on to Il'gynoth
+};
+
 template <class AI, class T>
 inline AI* GetEmeraldNightmareAI(T* obj)
 {

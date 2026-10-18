@@ -23,10 +23,19 @@
 // Nythendra: the room is a circle fitted through three points on its edge
 // (measured in game, 2026-10-17). The check is 3D, so the centre needs the
 // floor height. The radius is widened past the fitted 55 yd to 90 yd so it
-// reaches where the entrance gate would stand (1842.2, 1387.2). No doors in v1.
+// reaches the entrance, where the root wall stands (1842.2, 1387.2).
 BossBoundaryData const boundaries =
 {
     { DATA_NYTHENDRA, new CircleBoundary(Position(1881.5f, 1311.0f, 369.5f), 90.0f) }
+};
+
+// A root wall grows across the entrance while Nythendra is fought; the one
+// on the way to Il'gynoth stands until she is dead.
+DoorData const doorData[] =
+{
+    { GO_NYTHENDRA_ROOT_WALL,       DATA_NYTHENDRA, EncounterDoorBehavior::OpenWhenNotInProgress },
+    { GO_NYTHENDRA_EXIT_ROOT_WALL,  DATA_NYTHENDRA, EncounterDoorBehavior::OpenWhenDone          },
+    { 0,                            0,              EncounterDoorBehavior::OpenWhenNotInProgress }  // END
 };
 
 // The four Dragons of Nightmare are left out: how they are tracked is decided
@@ -65,6 +74,7 @@ class instance_emerald_nightmare : public InstanceMapScript
                 SetHeaders(DataHeader);
                 SetBossNumber(EncounterCount);
                 LoadObjectData(creatureData, nullptr);
+                LoadDoorData(doorData);
                 LoadBossBoundaries(boundaries);
                 LoadDungeonEncounterData(encounters);
             }
