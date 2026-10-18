@@ -172,7 +172,7 @@ Milliseconds const RandomTentacleTime   = 60s;
 
 // Nightmare Explosion reaches 10 yd (the spell's radius index 13), not the plan's 13.
 float const ExplosionRange          = 10.0f;
-float const ExplosionEyePct         = 5.0f;
+uint32 const ExplosionsToKill       = 20; // each takes 5% of the Eye
 Milliseconds const GazeMin          = 2s;
 Milliseconds const GazeMax          = 3s;
 
@@ -507,6 +507,7 @@ struct npc_eye_of_ilgynoth : public ScriptedAI
     void Setup()
     {
         _dying = false;
+        _explosions = 0;
         _events.Reset();
         me->SetControlled(true, UNIT_STATE_ROOT);
         if (!me->HasAura(SPELL_STUFF_OF_NIGHTMARES))
@@ -520,10 +521,12 @@ struct npc_eye_of_ilgynoth : public ScriptedAI
         if (_dying || !me->IsAlive())
             return;
 
-        uint32 const amount = me->CountPctFromMaxHealth(ExplosionEyePct);
-        if (me->GetHealth() > amount)
+        // Counted, not computed from the health: a floored 5% would leave the Eye alive
+        // on the 20th hit by the rounding remainder.
+        if (++_explosions < ExplosionsToKill)
         {
-            me->SetHealth(me->GetHealth() - amount);
+            uint64 const max = me->GetMaxHealth();
+            me->SetHealth(max - max * _explosions / ExplosionsToKill);
             return;
         }
 
@@ -587,6 +590,7 @@ private:
     InstanceScript* _instance;
     EventMap _events;
     bool _dying = false;
+    uint32 _explosions = 0;
 };
 
 // 105721 - Nightmare Ichor
@@ -648,7 +652,7 @@ struct npc_nightmare_ichor : public ScriptedAI
 
     void DamageTaken(Unit* /*attacker*/, uint32& damage, DamageEffectType /*type*/, SpellInfo const* /*spell*/) override
     {
-        if (damage < me->GetHealth())
+        if (damage < me->GetHealth() - 1)
             return;
 
         // Never dies from damage: it is brought to 1 HP, and then blows up.
