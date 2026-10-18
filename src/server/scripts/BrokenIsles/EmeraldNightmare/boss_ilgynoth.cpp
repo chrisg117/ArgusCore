@@ -66,13 +66,22 @@ enum IlgynothSpells
     SPELL_NIGHTMARE_EXPLOSION   = 209471, // 2.5 s cast
 
     // Heart
-    SPELL_REABSORPTION          = 212942  // an Ichor reached the chamber: raid damage from the heart
+    SPELL_REABSORPTION          = 212942, // an Ichor reached the chamber: raid damage from the heart
+    SPELL_DARK_RECONSTITUTION   = 210781, // 50 s cast; kills what is left in the chamber
+    SPELL_FINAL_TORPOR          = 223121, // 90 s cast; kills everyone
+    SPELL_CURSED_BLOOD          = 215128, // 8 s DoT, 300 yd; capped to a few players by the script
+    SPELL_CURSED_BLOOD_BURST    = 215143  // 11 yd, when Cursed Blood runs out
 };
 
 enum IlgynothEvents
 {
+    // Heart, PHASE_HEART
+    EVENT_CURSED_BLOOD = 1,
+    EVENT_RECONSTITUTION_WARN,
+    EVENT_TORPOR_WARN,
+
     // Heart, PHASE_OUTSIDE
-    EVENT_WAVE_DEATHGLARE = 1,
+    EVENT_WAVE_DEATHGLARE,
     EVENT_WAVE_CORRUPTOR,
     EVENT_WAVE_HORROR,
     EVENT_RANDOM_TENTACLE,
@@ -170,6 +179,11 @@ Milliseconds const HorrorAfter          = 95s;
 Milliseconds const HorrorInterval       = 280s;
 Milliseconds const RandomTentacleTime   = 60s;
 
+// The heart phase. The warnings come 5 s before the cast ends (DBM 7.3.31).
+Milliseconds const CursedBloodInterval  = 15s;
+Milliseconds const ReconstitutionWarn   = 45s;
+Milliseconds const TorporWarn           = 85s;
+
 // Nightmare Explosion reaches 10 yd (the spell's radius index 13), not the plan's 13.
 float const ExplosionRange          = 10.0f;
 uint32 const ExplosionsToKill       = 20; // each takes 5% of the Eye
@@ -213,7 +227,7 @@ static void SummonIchors(Creature* me, uint8 count)
 struct boss_ilgynoth : public BossAI
 {
     boss_ilgynoth(Creature* creature) : BossAI(creature, DATA_ILGYNOTH), _heartPhase(false), _evading(false), _afterHeart(false),
-        _deathglareIndex(0), _corruptorIndex(0) { }
+        _heartPhases(0), _lowHealthSaid(false), _deathglareIndex(0), _corruptorIndex(0) { }
 
     void JustAppeared() override
     {
@@ -254,7 +268,12 @@ struct boss_ilgynoth : public BossAI
     void Setup()
     {
         _heartPhase = false;
+        _heartPhases = 0;
+        _lowHealthSaid = false;
         me->SetControlled(true, UNIT_STATE_ROOT);
+        // Passive: the heart never picks a victim to melee or turn to, yet still evades
+        // when its threat list runs empty.
+        me->SetReactState(REACT_PASSIVE);
         me->SetUnitFlag(UNIT_FLAG_UNINTERACTIBLE);
     }
 
@@ -387,6 +406,17 @@ struct boss_ilgynoth : public BossAI
                 SummonTentacles(urand(0, 1) ? NPC_DEATHGLARE_TENTACLE : NPC_CORRUPTOR_TENTACLE, 1);
                 events.Repeat(RandomTentacleTime);
                 break;
+            case EVENT_CURSED_BLOOD:
+                // The spell's script picks the targets; with nobody inside it hits nobody.
+                me->CastSpell(me, SPELL_CURSED_BLOOD, CastSpellExtraArgs(TRIGGERED_FULL_MASK));
+                events.Repeat(CursedBloodInterval);
+                break;
+            case EVENT_RECONSTITUTION_WARN:
+                Talk(TALK_RECONSTITUTION_WARN);
+                break;
+            case EVENT_TORPOR_WARN:
+                Talk(TALK_TORPOR_WARN);
+                break;
             default:
                 break;
         }
@@ -401,14 +431,14 @@ struct boss_ilgynoth : public BossAI
 
     bool IsHeartPhase() const { return _heartPhase; }
 
-    // Stub: a later task fills in Cursed Blood and the timed cast.
+    // The first heart phase casts Dark Reconstitution, the second Final Torpor.
     void StartHeartPhase()
     {
         if (_heartPhase)
             return;
 
-        TC_LOG_DEBUG("scripts", "Il'gynoth: the Eye died, heart phase starts");
         _heartPhase = true;
+        ++_heartPhases;
         events.Reset();
         events.SetPhase(PHASE_HEART);
         SetForcefield(true);
@@ -416,6 +446,47 @@ struct boss_ilgynoth : public BossAI
         Talk(TALK_HEART_PHASE);
         // Nobody has threat on the heart yet, and UpdateVictim would evade.
         DoZoneInCombat();
+
+        if (_heartPhases == 1)
+        {
+            DoCastSelf(SPELL_DARK_RECONSTITUTION);
+            events.ScheduleEvent(EVENT_RECONSTITUTION_WARN, ReconstitutionWarn, 0, PHASE_HEART);
+        }
+        else
+        {
+            DoCastSelf(SPELL_FINAL_TORPOR);
+            events.ScheduleEvent(EVENT_TORPOR_WARN, TorporWarn, 0, PHASE_HEART);
+        }
+
+        events.ScheduleEvent(EVENT_CURSED_BLOOD, CursedBloodInterval, 0, PHASE_HEART);
+    }
+
+    // The cast ended. Dark Reconstitution's kill is the spell's own; this closes the
+    // chamber and starts the outside phase again. Final Torpor needs nothing: it kills
+    // everyone and the wipe evades the heart.
+    void OnSpellCast(SpellInfo const* spell) override
+    {
+        if (spell->Id != SPELL_DARK_RECONSTITUTION || !_heartPhase)
+            return;
+
+        Talk(TALK_RECONSTITUTED);
+        SetForcefield(false);
+        me->SetUnitFlag(UNIT_FLAG_UNINTERACTIBLE);
+        // The Eye comes back at full health; the adds that are alive stay.
+        SummonEye();
+        StartOutsidePhase(true);
+    }
+
+    void DamageTaken(Unit* /*attacker*/, uint32& damage, DamageEffectType /*damageType*/, SpellInfo const* /*spellInfo*/) override
+    {
+        if (_lowHealthSaid)
+            return;
+
+        if (int64(me->GetHealth()) - int64(damage) <= int64(me->CountPctFromMaxHealth(30)))
+        {
+            _lowHealthSaid = true;
+            Talk(TALK_LOW_HEALTH);
+        }
     }
 
     void CleanUp()
@@ -430,6 +501,8 @@ struct boss_ilgynoth : public BossAI
         summons.DespawnAll();
         me->RemoveAllAreaTriggers();
         RemovePools();
+        // A plain removal does not burst.
+        instance->DoRemoveAurasDueToSpellOnPlayers(SPELL_CURSED_BLOOD);
     }
 
     // Pools belong to the adds that cast them and go with them; this catches stragglers.
@@ -450,6 +523,7 @@ struct boss_ilgynoth : public BossAI
             return;
         _evading = true;
 
+        me->InterruptNonMeleeSpells(false);
         CleanUp(); // despawns the Eye with the other summons
         SetForcefield(false);
 
@@ -461,6 +535,8 @@ struct boss_ilgynoth : public BossAI
 
     void JustDied(Unit* /*killer*/) override
     {
+        // A cast in progress must not finish: Dark Reconstitution and Final Torpor kill.
+        me->InterruptNonMeleeSpells(false);
         CleanUp();
         SetForcefield(true);
         Talk(TALK_DEATH);
@@ -484,6 +560,8 @@ private:
     bool _heartPhase;
     bool _evading;
     bool _afterHeart;
+    uint8 _heartPhases;
+    bool _lowHealthSaid;
     uint8 _deathglareIndex;
     uint8 _corruptorIndex;
     GuidVector _dominators;
@@ -969,6 +1047,77 @@ class spell_ilgynoth_spew_corruption : public AuraScript
     }
 };
 
+// 210781 - Dark Reconstitution: only what stands in the chamber is killed.
+class spell_ilgynoth_dark_reconstitution : public SpellScript
+{
+    void FilterTargets(std::list<WorldObject*>& targets)
+    {
+        targets.remove_if([](WorldObject* target) { return !IsInsideChamber(*target); });
+    }
+
+    void Register() override
+    {
+        OnObjectAreaTargetSelect += SpellObjectAreaTargetSelectFn(spell_ilgynoth_dark_reconstitution::FilterTargets, EFFECT_0, TARGET_UNIT_DEST_AREA_ENEMY);
+    }
+};
+
+// 215128 - Cursed Blood: players inside the chamber only; one if a single player is
+// there, else players / 5 clamped to 2..6.
+class spell_ilgynoth_cursed_blood : public SpellScript
+{
+    void FilterTargets(std::list<WorldObject*>& targets)
+    {
+        // The area is shared by the aura's effects; they must all get the same players.
+        if (_chosen)
+        {
+            targets.remove_if([this](WorldObject* target) { return !_picked.contains(target->GetGUID()); });
+            return;
+        }
+
+        _chosen = true;
+        targets.remove_if([](WorldObject* target) { return !target->IsPlayer() || !IsInsideChamber(*target); });
+
+        size_t const count = targets.size();
+        size_t const cap = count <= 1 ? 1 : std::clamp<size_t>(count / 5, 2, 6);
+        if (targets.size() > cap)
+            Trinity::Containers::RandomResize(targets, cap);
+
+        for (WorldObject* target : targets)
+            _picked.insert(target->GetGUID());
+    }
+
+    void Register() override
+    {
+        OnObjectAreaTargetSelect += SpellObjectAreaTargetSelectFn(spell_ilgynoth_cursed_blood::FilterTargets, EFFECT_0, TARGET_UNIT_DEST_AREA_ENEMY);
+        OnObjectAreaTargetSelect += SpellObjectAreaTargetSelectFn(spell_ilgynoth_cursed_blood::FilterTargets, EFFECT_1, TARGET_UNIT_DEST_AREA_ENEMY);
+    }
+
+    bool _chosen = false;
+    GuidUnorderedSet _picked;
+};
+
+// 215128 - Cursed Blood: when it runs out, not when it is removed, the target bursts.
+class spell_ilgynoth_cursed_blood_aura : public AuraScript
+{
+    bool Validate(SpellInfo const* /*spellInfo*/) override
+    {
+        return ValidateSpellInfo({ SPELL_CURSED_BLOOD_BURST });
+    }
+
+    void HandleRemove(AuraEffect const* /*aurEff*/, AuraEffectHandleModes /*mode*/)
+    {
+        if (GetTargetApplication()->GetRemoveMode() != AURA_REMOVE_BY_EXPIRE)
+            return;
+
+        GetTarget()->CastSpell(GetTarget(), SPELL_CURSED_BLOOD_BURST, CastSpellExtraArgs(TRIGGERED_FULL_MASK));
+    }
+
+    void Register() override
+    {
+        AfterEffectRemove += AuraEffectRemoveFn(spell_ilgynoth_cursed_blood_aura::HandleRemove, EFFECT_0, SPELL_AURA_PERIODIC_DAMAGE, AURA_EFFECT_HANDLE_REAL);
+    }
+};
+
 // 6514 - Nightmare Corruption (created by 208931)
 struct at_ilgynoth_nightmare_corruption : AreaTriggerAI
 {
@@ -1012,5 +1161,8 @@ void AddSC_boss_ilgynoth()
     RegisterEmeraldNightmareCreatureAI(npc_ilgynoth_corruptor_tentacle);
     RegisterEmeraldNightmareCreatureAI(npc_nightmare_horror);
     RegisterSpellScript(spell_ilgynoth_spew_corruption);
+    RegisterSpellScript(spell_ilgynoth_dark_reconstitution);
+    RegisterSpellScript(spell_ilgynoth_cursed_blood);
+    RegisterSpellScript(spell_ilgynoth_cursed_blood_aura);
     RegisterAreaTriggerAI(at_ilgynoth_nightmare_corruption);
 }
