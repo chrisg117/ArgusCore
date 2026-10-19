@@ -19,6 +19,7 @@
 #include "AreaTriggerAI.h"
 #include "CellImpl.h"
 #include "Containers.h"
+#include "GameTime.h"
 #include "GridNotifiersImpl.h"
 #include "InstanceScript.h"
 #include "Log.h"
@@ -493,9 +494,12 @@ struct boss_ilgynoth : public BossAI
         // Nobody has threat on the heart yet, and UpdateVictim would evade.
         DoZoneInCombat();
 
+        _heartStart = GameTime::GetGameTimeMS();
         if (_heartPhases == 1)
         {
-            DoCastSelf(SPELL_DARK_RECONSTITUTION);
+            SpellCastResult const result = DoCastSelf(SPELL_DARK_RECONSTITUTION);
+            // DIAG Dark Reconstitution - remove after root cause
+            TC_LOG_INFO("server.ilgynoth", "ILGDIAG Dark Reconstitution started: cast result {}", uint32(result));
             events.ScheduleEvent(EVENT_RECONSTITUTION_WARN, ReconstitutionWarn, 0, PHASE_HEART);
         }
         else
@@ -512,6 +516,10 @@ struct boss_ilgynoth : public BossAI
     // everyone and the wipe evades the heart.
     void OnSpellCast(SpellInfo const* spell) override
     {
+        if (spell->Id == SPELL_DARK_RECONSTITUTION || spell->Id == SPELL_FINAL_TORPOR) // DIAG Dark Reconstitution - remove after root cause
+            TC_LOG_INFO("server.ilgynoth", "ILGDIAG heart OnSpellCast {}: heartPhase {}, {} ms since the heart phase started",
+                spell->Id, _heartPhase, GameTime::GetGameTimeMS() - _heartStart);
+
         if (spell->Id != SPELL_DARK_RECONSTITUTION || !_heartPhase)
             return;
 
@@ -527,6 +535,10 @@ struct boss_ilgynoth : public BossAI
     // cast it again. The remaining time restarts, which is better than a soft lock.
     void OnSpellFailed(SpellInfo const* spell) override
     {
+        if (spell->Id == SPELL_DARK_RECONSTITUTION || spell->Id == SPELL_FINAL_TORPOR) // DIAG Dark Reconstitution - remove after root cause
+            TC_LOG_INFO("server.ilgynoth", "ILGDIAG heart OnSpellFailed {}: heartPhase {}, alive {}, {} ms since the heart phase started",
+                spell->Id, _heartPhase, me->IsAlive(), GameTime::GetGameTimeMS() - _heartStart);
+
         if (!_heartPhase || !me->IsAlive())
             return;
 
@@ -621,6 +633,7 @@ struct boss_ilgynoth : public BossAI
 
 private:
     bool _heartPhase;
+    uint32 _heartStart = 0; // DIAG Dark Reconstitution - remove after root cause
     bool _evading;
     bool _afterHeart;
     uint8 _heartPhases;
@@ -1167,14 +1180,50 @@ class spell_ilgynoth_spew_corruption : public AuraScript
 // 210781 - Dark Reconstitution: only what stands in the chamber is killed.
 class spell_ilgynoth_dark_reconstitution : public SpellScript
 {
+    // DIAG Dark Reconstitution - remove after root cause
+    void LogEffects()
+    {
+        for (SpellEffectInfo const& effect : GetSpellInfo()->GetEffects())
+            TC_LOG_INFO("server.ilgynoth", "ILGDIAG Dark Reconstitution effect {}: type {}, target A {}, target B {}, radius {}",
+                uint32(effect.EffectIndex), uint32(effect.Effect), uint32(effect.TargetA.GetTarget()), uint32(effect.TargetB.GetTarget()),
+                effect.CalcRadius(GetCaster()));
+    }
+
     void FilterTargets(std::list<WorldObject*>& targets)
     {
+        // DIAG Dark Reconstitution - remove after root cause
+        TC_LOG_INFO("server.ilgynoth", "ILGDIAG Dark Reconstitution filter: {} targets before", targets.size());
+        for (WorldObject* target : targets)
+            TC_LOG_INFO("server.ilgynoth", "ILGDIAG   target {} type {} at ({}, {}, {}) inside chamber {} gm {}", target->GetName(),
+                uint32(target->GetTypeId()), target->GetPositionX(), target->GetPositionY(), target->GetPositionZ(),
+                IsInsideChamber(*target), target->IsPlayer() && target->ToPlayer()->IsGameMaster());
+
         targets.remove_if([](WorldObject* target) { return !IsInsideChamber(*target); });
+
+        TC_LOG_INFO("server.ilgynoth", "ILGDIAG Dark Reconstitution filter: {} targets after", targets.size()); // DIAG Dark Reconstitution - remove after root cause
+    }
+
+    // DIAG Dark Reconstitution - remove after root cause
+    void HandleHit(SpellEffIndex /*effIndex*/)
+    {
+        if (Unit* target = GetHitUnit())
+            TC_LOG_INFO("server.ilgynoth", "ILGDIAG Dark Reconstitution instakill hits {} (alive {})", target->GetName(), target->IsAlive());
+    }
+
+    // DIAG Dark Reconstitution - remove after root cause
+    void HandleAfterCast()
+    {
+        Unit* caster = GetCaster();
+        TC_LOG_INFO("server.ilgynoth", "ILGDIAG Dark Reconstitution AfterCast: caster {} alive {} health {} casting {}",
+            caster->GetName(), caster->IsAlive(), caster->GetHealth(), caster->HasUnitState(UNIT_STATE_CASTING));
     }
 
     void Register() override
     {
+        BeforeCast += SpellCastFn(spell_ilgynoth_dark_reconstitution::LogEffects); // DIAG Dark Reconstitution - remove after root cause
         OnObjectAreaTargetSelect += SpellObjectAreaTargetSelectFn(spell_ilgynoth_dark_reconstitution::FilterTargets, EFFECT_0, TARGET_UNIT_DEST_AREA_ENEMY);
+        OnEffectHitTarget += SpellEffectFn(spell_ilgynoth_dark_reconstitution::HandleHit, EFFECT_0, SPELL_EFFECT_INSTAKILL); // DIAG Dark Reconstitution - remove after root cause
+        AfterCast += SpellCastFn(spell_ilgynoth_dark_reconstitution::HandleAfterCast); // DIAG Dark Reconstitution - remove after root cause
     }
 };
 
