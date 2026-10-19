@@ -1206,6 +1206,20 @@ class spell_ilgynoth_dark_reconstitution : public SpellScript
     }
 };
 
+// The chamber marker is permanent and would be saved with the character on logout. Its
+// caster, the heart, does not outlive the encounter, and an INTERFERE_TARGETTING aura without
+// a caster crashes the next non-melee cast, so a mark never survives a login.
+class playerScript_ilgynoth_chamber_mark : public PlayerScript
+{
+public:
+    playerScript_ilgynoth_chamber_mark() : PlayerScript("playerScript_ilgynoth_chamber_mark") { }
+
+    void OnLogin(Player* player, bool /*firstLogin*/) override
+    {
+        player->RemoveAurasDueToSpell(SPELL_CHAMBER_MARK);
+    }
+};
+
 // 215128 - Cursed Blood: players inside the chamber only; one if a single player is
 // there, else players / 5 clamped to 2..6.
 class spell_ilgynoth_cursed_blood : public SpellScript
@@ -1311,6 +1325,7 @@ void AddSC_boss_ilgynoth()
     RegisterEmeraldNightmareCreatureAI(npc_nightmare_horror);
     RegisterSpellScript(spell_ilgynoth_spew_corruption);
     RegisterSpellScript(spell_ilgynoth_dark_reconstitution);
+    new playerScript_ilgynoth_chamber_mark();
     RegisterSpellScript(spell_ilgynoth_cursed_blood);
     RegisterSpellScript(spell_ilgynoth_cursed_blood_aura);
     RegisterAreaTriggerAI(at_ilgynoth_nightmare_corruption);
