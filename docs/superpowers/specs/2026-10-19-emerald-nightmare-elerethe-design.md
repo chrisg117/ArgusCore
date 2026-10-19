@@ -483,3 +483,91 @@ items here rather than marking them OK or failed:
   energy power. The Il'gynoth Horror showed that it does.
 - **Unsniffed templates.** More values than faction and level may be wrong
   (speed, flags, model scale). They are found in the test and fixed in data.
+
+## Amendment after the data dump (plan Task 1, 2026-10-19)
+
+Findings from the client DB2 (build 26972), the world DB and the engine
+source. Full output: `~/emerald-nightmare/elerethe_task1.txt`. Where this
+section disagrees with the text above, this section wins.
+
+### Settled
+
+- **Berserk.** Spell 26662, as Nythendra uses. The client has no other spell
+  named exactly "Berserk" in the 2xxxxx range.
+- **Egg sac.** Entry 108540. It and 112078 have no difficulty row; 109855
+  and 113154 do, and 109855 is summoned by the Mythic spell 218631. All the
+  Surging Egg Sac displays (70606, 42349) are the same model
+  (`nastyspideregg.m2`, a Zul'Gurub doodad), so the model does not decide it.
+  This is the least certain pick, and a calibrate item if the sacs look wrong.
+- **Skittering Spiderlings.** 221726 Pop Egg Sac is an empty dummy. The
+  data's chain is 215505 (missile) then 215507, which summons 108542 within
+  3 yd. Nothing casts 215505, so the egg sac AI casts it once per spiderling.
+- **Necrotic Venom targets.** The spell's own `MaxTargets` is 2 on every
+  difficulty. The count is 2 (1 when solo). Twisting Shadows (210864) and
+  Web of Pain (215288) also cap at 2.
+- **Her lines.** All of the wiki lines are in `hotfixes.broadcast_text`
+  (the DB2 file has none of them). They are in `Text1` only, the female text,
+  and the voice sound is `SoundKitID[1]`:
+
+  | Line | Broadcast | Sound |
+  |---|---|---|
+  | aggro "This time I'm ready for your treachery!" | 108988 | 58624 |
+  | aggro "Mercy? None for you!..." | 108989 | 58625 |
+  | Web of Pain "Scream for me!" | 108982 | 58619 |
+  | Web of Pain "I'll adorn my web with your bones!" | 108983 | 58620 |
+  | Feeding Time "Such juicy morsels!" | 108981 | 58618 |
+  | Gathering Clouds "Now you have become prey!" | 108978 | 58615 |
+  | Gathering Clouds "There is nowhere left to hide!" | 108980 | 58617 |
+  | Razor Wing "Scurry, scurry, little rats!" | 108979 | 58616 |
+  | Spider Form "Not afraid of spiders, are you?" | 108986 | 58623 |
+  | kill "Feel the crush of my talons!" | 108984 | 58621 |
+  | kill "My beak will tear your flesh, vermin!" | 108985 | 58622 |
+  | wipe "Revenge is said to be sweet, but I taste only bitterness." | 108976 | 58613 |
+  | wipe "Your faces no longer appear familiar..." | 108977 | 58614 |
+  | death "Betrayers, will you remember killing me now?" | 108991 | 58626 |
+  | intro "Betrayers! Liars! Murderers!..." | 108972 | 58610 |
+  | intro "Do you remember murdering me?..." | 108974 | 58611 |
+  | intro "I recall my final moments..." | 108975 | 58612 |
+
+  The client's wording differs from the wiki in two places ("rats" and a
+  comma after "sweet"). The client's text is used.
+- **Malfurion.** No Malfurion creature spawns on map 1520, and no creature
+  or script uses 112997-113000. Nothing in the data names the speaker. His
+  lines are a known gap, as planned.
+
+### Contradictions with the text above
+
+1. **Yell 90971 is the wrong row.** It has the same text as 108982 but no
+   sound. The Web of Pain yell uses 108982 (sound 58619). The Text table in
+   the plan's constraints lists 90971 and needs the same change.
+2. **Her voice in Roc form.** The Roc display (70237) has gender "none".
+   `creature_text` then picks `SoundKitID[0]`, which is empty for her lines,
+   so she is silent in Roc form while the text still shows. Spider display
+   69474 is female and plays. A calibrate item: check in game, and if it
+   matters, play the sound by hand.
+3. **The tornado does not pull.** 210850's effect 0 is aura 236
+   (`CONTROL_VEHICLE`), which does nothing unless the target is a vehicle.
+   So 210850 is a 4 s stun plus 67,899 damage a second, not a pull. Nothing
+   in the data applies 210850 or 221877, so the tornado AI casts both. 221877
+   (`MOD_FIXATE`) only fixes the tornado's threat target; the AI still has
+   to move it (the template is faction 35 with no spells). This replaces
+   "pull-and-damage" in "Adds".
+4. **The Feather proc does not crush.** 212993's aura 42 proc is
+   `PROC_FLAG_JUMP`, which the engine fires when a jump starts, not on
+   landing. It casts 212986 (`LEAP_BACK`, speed 15 forward and 30 up), which
+   is where the jump height comes from; it is not an aura effect. Safe fall
+   (144), feather fall (105) and turn-while-falling (409) are the aura's own.
+   The engine supports the proc. The crush is 221993, a button spell
+   granted through `OVERRIDE_SPELLS` (221913), and nothing in the data casts
+   it, so the crush is the aura script of Task 6, as the fallback says.
+   221994 itself kills within 9 yd.
+5. **The spiderling pool.** Nothing makes a pool when a spiderling dies, and
+   215489 is a self-target damage aura, so "the AI casts 215489 at death"
+   would only hurt the corpse. 213123 creates AT 7078 at the caster and is
+   fired by the Necrotic Venom debuff only. The spiderling's AI casts 213123
+   on itself in `JustDied`, which gives the same pool as Necrotic Venom
+   (213124). The stacking corpse pool (215489) would need its own area
+   trigger and script. The first is used unless the user wants stacking.
+6. **Pool duration.** 213123 and 225519 have no duration; 222925 makes the
+   same AT for 15 s (source unknown). Pools stay until they are despawned,
+   as in "Pools".
