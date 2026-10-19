@@ -1044,17 +1044,30 @@ struct npc_ilgynoth_corruptor_tentacle : public ilgynoth_add_ai
 };
 
 // 105591 - Nightmare Horror
+// Eye of Fate costs the Horror's full 100 energy (SpellPower.db2), so the Horror is an
+// energy creature (unit_class 4). The script owns the energy: this fork only regenerates a
+// creature's power with UNIT_FLAG2_REGENERATE_POWER (cleared below), and the script adds
+// 10 per second from the moment Emerge ends, so the bar is full 14 s after the Horror
+// appears (DBM 7.3.31) and, the cast spending it, again 10 s after every Eye of Fate.
 struct npc_nightmare_horror : public ilgynoth_add_ai
 {
     static constexpr uint8 ICHORS = 4;
+    static constexpr uint32 MAX_ENERGY = 100;
+    static constexpr uint32 ENERGY_PER_SECOND = 10;
+    static constexpr uint32 EMERGE_TIME = 4000; // ms, the Emerge channel; energy starts after it
 
     npc_nightmare_horror(Creature* creature) : ilgynoth_add_ai(creature, false) { }
 
     void JustAppeared() override
     {
         ilgynoth_add_ai::JustAppeared();
+        me->RemoveUnitFlag2(UNIT_FLAG2_REGENERATE_POWER);
+        me->SetMaxPower(POWER_ENERGY, MAX_ENERGY); // power is set to 0 in Creature::UpdateMaxPower
+        me->SetPower(POWER_ENERGY, 0);
         SpellCastResult const emerge = DoCastSelf(SPELL_HORROR_EMERGE);
-        SpellCastResult const seeping = DoCastSelf(SPELL_SEEPING_CORRUPTION);
+        // Seeping Corruption is a passive periodic aura, so it is cast triggered: a normal cast
+        // fails with SPELL_FAILED_SPELL_IN_PROGRESS while the Emerge channel is running.
+        SpellCastResult const seeping = DoCastSelf(SPELL_SEEPING_CORRUPTION, CastSpellExtraArgs(TRIGGERED_FULL_MASK));
         // DIAG Eye of Fate - remove after root cause
         TC_LOG_INFO("server.ilgynoth", "ILGDIAG Horror appeared: Emerge cast result {}, Seeping Corruption cast result {}, has aura 209387: {}",
             uint32(emerge), uint32(seeping), me->HasAura(SPELL_SEEPING_CORRUPTION));
@@ -1062,8 +1075,7 @@ struct npc_nightmare_horror : public ilgynoth_add_ai
 
     void JustEngagedWith(Unit* /*who*/) override
     {
-        _events.ScheduleEvent(EVENT_EYE_OF_FATE, 14s);
-        TC_LOG_INFO("server.ilgynoth", "ILGDIAG Horror engaged, Eye of Fate in 14 s"); // DIAG Eye of Fate - remove after root cause
+        TC_LOG_INFO("server.ilgynoth", "ILGDIAG Horror engaged, energy {}", me->GetPower(POWER_ENERGY)); // DIAG Eye of Fate - remove after root cause
     }
 
     void JustDied(Unit* /*killer*/) override
@@ -1073,16 +1085,33 @@ struct npc_nightmare_horror : public ilgynoth_add_ai
 
     void UpdateAI(uint32 diff) override
     {
+        _age += diff;
+        if (_age >= EMERGE_TIME && me->GetPower(POWER_ENERGY) < MAX_ENERGY)
+        {
+            _energyTimer += diff;
+            while (_energyTimer >= 1000)
+            {
+                _energyTimer -= 1000;
+                me->SetPower(POWER_ENERGY, std::min(MAX_ENERGY, me->GetPower(POWER_ENERGY) + ENERGY_PER_SECOND));
+            }
+        }
+
+        if (_retryTimer > diff)
+            _retryTimer -= diff;
+        else
+            _retryTimer = 0;
+
         if (!UpdateVictim())
             return;
 
-        _events.Update(diff);
+        if (me->GetPower(POWER_ENERGY) < MAX_ENERGY)
+            return;
 
         if (me->HasUnitState(UNIT_STATE_CASTING))
         {
             // DIAG Eye of Fate - remove after root cause
             _diagTimer += diff;
-            if (_diagTimer >= 1000 && _events.GetTimeUntilEvent(EVENT_EYE_OF_FATE) <= 0ms)
+            if (_diagTimer >= 1000)
             {
                 _diagTimer = 0;
                 Spell const* channeled = me->GetCurrentSpell(CURRENT_CHANNELED_SPELL);
@@ -1093,20 +1122,22 @@ struct npc_nightmare_horror : public ilgynoth_add_ai
             return;
         }
 
-        while (uint32 eventId = _events.ExecuteEvent())
-            if (eventId == EVENT_EYE_OF_FATE)
-            {
-                Unit* victim = me->GetVictim();
-                SpellCastResult const result = DoCastVictim(SPELL_EYE_OF_FATE);
-                // DIAG Eye of Fate - remove after root cause
-                TC_LOG_INFO("server.ilgynoth", "ILGDIAG Horror Eye of Fate attempt: cast result {}, victim {}, distance {}, in arc {}",
-                    uint32(result), victim ? victim->GetName() : "none", victim ? me->GetDistance(victim) : -1.0f, victim && me->HasInArc(0.5f, victim));
-                _events.Repeat(10s);
-                break;
-            }
+        // A failed cast keeps the energy, so it is retried once a second.
+        Unit* victim = me->GetVictim();
+        if (!victim || _retryTimer)
+            return;
+
+        SpellCastResult const result = DoCastVictim(SPELL_EYE_OF_FATE);
+        _retryTimer = 1000;
+        // DIAG Eye of Fate - remove after root cause
+        TC_LOG_INFO("server.ilgynoth", "ILGDIAG Horror Eye of Fate attempt: cast result {}, victim {}, distance {}, in arc {}",
+            uint32(result), victim->GetName(), me->GetDistance(victim), me->HasInArc(0.5f, victim));
     }
 
 private:
+    uint32 _age = 0;
+    uint32 _energyTimer = 0;
+    uint32 _retryTimer = 0;
     uint32 _diagTimer = 0; // DIAG Eye of Fate - remove after root cause
 };
 
