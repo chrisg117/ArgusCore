@@ -21,9 +21,11 @@
 #include "Containers.h"
 #include "GridNotifiersImpl.h"
 #include "InstanceScript.h"
+#include "Log.h"
 #include "Map.h"
 #include "MotionMaster.h"
 #include "ObjectAccessor.h"
+#include "PathGenerator.h"
 #include "ScriptedCreature.h"
 #include "ScriptMgr.h"
 #include "SpellAuraEffects.h"
@@ -197,6 +199,18 @@ Position const DominatorPositions[2] =
 };
 Position const HorrorPosition(-12833.5f, 12317.3f, -248.5f, 3.730643f);
 float const TentacleRingRadius = 30.0f;
+uint8 const RingPointTries = 30;
+float const RingMaxFloorDiff = 6.0f;
+float const RingLosHeight = 2.0f;
+float const RingPathEndTolerance = 2.0f;
+
+// Known-good floor spots, used when no random ring point passes the checks.
+std::array<Position, 3> const RingFallbackPoints =
+{ {
+    { -12848.881f, 12332.325f, -249.96867f, 3.730643f },    // Dominator A
+    { -12814.461f, 12288.635f, -248.5229f, 3.730643f },     // Dominator B
+    { -12833.5f, 12317.3f, -248.5f, 3.730643f }             // Horror spot
+} };
 
 // Looks for the pools of Nightmare Corruption around a point.
 struct NightmarePoolCheck
@@ -355,23 +369,42 @@ struct boss_ilgynoth : public BossAI
     WaveList const& DeathglareList() const { return _afterHeart ? DeathglareAfter : DeathglareFirst; }
     WaveList const& CorruptorList() const { return _afterHeart ? CorruptorAfter : CorruptorFirst; }
 
-    // A random point on the ring around the Eye, outside the chamber, on the ground.
+    // A random point on the ring around the Eye that is open floor: outside the chamber,
+    // ground found near the Eye's floor, in line of sight of the Eye and walkable from the
+    // Horror's spot. Falls back to a known-good floor spot.
     Position RandomRingPoint() const
     {
-        Position pos = EyePosition;
-        for (uint8 tries = 0; tries < 10; ++tries)
+        Map* map = me->GetMap();
+        for (uint8 tries = 0; tries < RingPointTries; ++tries)
         {
             float const angle = frand(0.0f, 2.0f * float(M_PI));
-            pos.Relocate(EyePosition.GetPositionX() + TentacleRingRadius * std::cos(angle),
-                EyePosition.GetPositionY() + TentacleRingRadius * std::sin(angle), EyePosition.GetPositionZ());
-            pos.SetOrientation(Position::NormalizeOrientation(angle + float(M_PI)));
-            float const z = me->GetMap()->GetHeight(me->GetPhaseShift(), pos.GetPositionX(), pos.GetPositionY(), EyePosition.GetPositionZ() + 5.0f, true, 30.0f);
-            if (z > INVALID_HEIGHT)
-                pos.m_positionZ = z;
-            if (!IsInsideChamber(pos))
-                break;
+            float const x = EyePosition.GetPositionX() + TentacleRingRadius * std::cos(angle);
+            float const y = EyePosition.GetPositionY() + TentacleRingRadius * std::sin(angle);
+            float const z = map->GetHeight(me->GetPhaseShift(), x, y, EyePosition.GetPositionZ() + 5.0f, true, 30.0f);
+            if (z <= INVALID_HEIGHT || std::fabs(z - EyePosition.GetPositionZ()) > RingMaxFloorDiff)
+                continue;
+
+            Position pos(x, y, z, Position::NormalizeOrientation(angle + float(M_PI)));
+            if (IsInsideChamber(pos))
+                continue;
+
+            if (!map->isInLineOfSight(me->GetPhaseShift(), EyePosition.GetPositionX(), EyePosition.GetPositionY(), EyePosition.GetPositionZ() + RingLosHeight,
+                x, y, z + RingLosHeight, LINEOFSIGHT_ALL_CHECKS, VMAP::ModelIgnoreFlags::Nothing))
+                continue;
+
+            PathGenerator path(me);
+            path.CalculatePath(HorrorPosition.GetPositionX(), HorrorPosition.GetPositionY(), HorrorPosition.GetPositionZ(), x, y, z, false);
+            if (path.GetPathType() != PATHFIND_NORMAL)
+                continue;
+
+            G3D::Vector3 const& end = path.GetEndPosition();
+            if (pos.GetExactDist(end.x, end.y, end.z) > RingPathEndTolerance)
+                continue;
+
+            return pos;
         }
-        return pos;
+
+        return Trinity::Containers::SelectRandomContainerElement(RingFallbackPoints);
     }
 
     void SummonTentacles(uint32 entry, uint8 count)
@@ -1020,13 +1053,17 @@ struct npc_nightmare_horror : public ilgynoth_add_ai
     void JustAppeared() override
     {
         ilgynoth_add_ai::JustAppeared();
-        DoCastSelf(SPELL_HORROR_EMERGE);
-        DoCastSelf(SPELL_SEEPING_CORRUPTION);
+        SpellCastResult const emerge = DoCastSelf(SPELL_HORROR_EMERGE);
+        SpellCastResult const seeping = DoCastSelf(SPELL_SEEPING_CORRUPTION);
+        // DIAG Eye of Fate - remove after root cause
+        TC_LOG_INFO("server.ilgynoth", "ILGDIAG Horror appeared: Emerge cast result {}, Seeping Corruption cast result {}, has aura 209387: {}",
+            uint32(emerge), uint32(seeping), me->HasAura(SPELL_SEEPING_CORRUPTION));
     }
 
     void JustEngagedWith(Unit* /*who*/) override
     {
         _events.ScheduleEvent(EVENT_EYE_OF_FATE, 14s);
+        TC_LOG_INFO("server.ilgynoth", "ILGDIAG Horror engaged, Eye of Fate in 14 s"); // DIAG Eye of Fate - remove after root cause
     }
 
     void JustDied(Unit* /*killer*/) override
@@ -1042,16 +1079,35 @@ struct npc_nightmare_horror : public ilgynoth_add_ai
         _events.Update(diff);
 
         if (me->HasUnitState(UNIT_STATE_CASTING))
+        {
+            // DIAG Eye of Fate - remove after root cause
+            _diagTimer += diff;
+            if (_diagTimer >= 1000 && _events.GetTimeUntilEvent(EVENT_EYE_OF_FATE) <= 0ms)
+            {
+                _diagTimer = 0;
+                Spell const* channeled = me->GetCurrentSpell(CURRENT_CHANNELED_SPELL);
+                Spell const* generic = me->GetCurrentSpell(CURRENT_GENERIC_SPELL);
+                TC_LOG_INFO("server.ilgynoth", "ILGDIAG Horror Eye of Fate due but casting: channeled spell {}, generic spell {}",
+                    channeled ? channeled->GetSpellInfo()->Id : 0, generic ? generic->GetSpellInfo()->Id : 0);
+            }
             return;
+        }
 
         while (uint32 eventId = _events.ExecuteEvent())
             if (eventId == EVENT_EYE_OF_FATE)
             {
-                DoCastVictim(SPELL_EYE_OF_FATE);
+                Unit* victim = me->GetVictim();
+                SpellCastResult const result = DoCastVictim(SPELL_EYE_OF_FATE);
+                // DIAG Eye of Fate - remove after root cause
+                TC_LOG_INFO("server.ilgynoth", "ILGDIAG Horror Eye of Fate attempt: cast result {}, victim {}, distance {}, in arc {}",
+                    uint32(result), victim ? victim->GetName() : "none", victim ? me->GetDistance(victim) : -1.0f, victim && me->HasInArc(0.5f, victim));
                 _events.Repeat(10s);
                 break;
             }
     }
+
+private:
+    uint32 _diagTimer = 0; // DIAG Eye of Fate - remove after root cause
 };
 
 // 208929 - Spew Corruption: every tick the Corruptor spits a pool where the victim stands.
