@@ -19,10 +19,8 @@
 #include "AreaTriggerAI.h"
 #include "CellImpl.h"
 #include "Containers.h"
-#include "GameTime.h"
 #include "GridNotifiersImpl.h"
 #include "InstanceScript.h"
-#include "Log.h"
 #include "Map.h"
 #include "MotionMaster.h"
 #include "ObjectAccessor.h"
@@ -73,7 +71,8 @@ enum IlgynothSpells
     SPELL_DARK_RECONSTITUTION   = 210781, // 50 s cast; kills what is left in the chamber
     SPELL_FINAL_TORPOR          = 223121, // 90 s cast; kills everyone
     SPELL_CURSED_BLOOD          = 215128, // 8 s DoT, 300 yd; capped to a few players by the script
-    SPELL_CURSED_BLOOD_BURST    = 215143  // 11 yd, when Cursed Blood runs out
+    SPELL_CURSED_BLOOD_BURST    = 215143, // 11 yd, when Cursed Blood runs out
+    SPELL_CHAMBER_MARK          = 210780  // SPELL_AURA_INTERFERE_TARGETTING: Dark Reconstitution (TargetAuraSpell) only hits what carries it
 };
 
 enum IlgynothEvents
@@ -82,6 +81,7 @@ enum IlgynothEvents
     EVENT_CURSED_BLOOD = 1,
     EVENT_RECONSTITUTION_WARN,
     EVENT_TORPOR_WARN,
+    EVENT_CHAMBER_MARK,
 
     // Heart, PHASE_OUTSIDE
     EVENT_WAVE_DEATHGLARE,
@@ -184,6 +184,7 @@ Milliseconds const RandomTentacleTime   = 60s;
 
 // The heart phase. The warnings come 5 s before the cast ends (DBM 7.3.31).
 Milliseconds const CursedBloodInterval  = 15s;
+Milliseconds const ChamberMarkInterval = 500ms;
 Milliseconds const ReconstitutionWarn   = 45s;
 Milliseconds const TorporWarn           = 85s;
 
@@ -464,6 +465,10 @@ struct boss_ilgynoth : public BossAI
             case EVENT_TORPOR_WARN:
                 Talk(TALK_TORPOR_WARN);
                 break;
+            case EVENT_CHAMBER_MARK:
+                UpdateChamberMarks();
+                events.Repeat(ChamberMarkInterval);
+                break;
             default:
                 break;
         }
@@ -494,12 +499,15 @@ struct boss_ilgynoth : public BossAI
         // Nobody has threat on the heart yet, and UpdateVictim would evade.
         DoZoneInCombat();
 
-        _heartStart = GameTime::GetGameTimeMS();
+        // Dark Reconstitution only hits what carries the chamber marker (its aura restriction),
+        // and retail marks everyone who is inside the chamber, so do the same.
+        me->CastSpell(me, SPELL_CHAMBER_MARK, CastSpellExtraArgs(TRIGGERED_FULL_MASK));
+        UpdateChamberMarks();
+        events.ScheduleEvent(EVENT_CHAMBER_MARK, ChamberMarkInterval, 0, PHASE_HEART);
+
         if (_heartPhases == 1)
         {
-            SpellCastResult const result = DoCastSelf(SPELL_DARK_RECONSTITUTION);
-            // DIAG Dark Reconstitution - remove after root cause
-            TC_LOG_INFO("server.ilgynoth", "ILGDIAG Dark Reconstitution started: cast result {}", uint32(result));
+            DoCastSelf(SPELL_DARK_RECONSTITUTION);
             events.ScheduleEvent(EVENT_RECONSTITUTION_WARN, ReconstitutionWarn, 0, PHASE_HEART);
         }
         else
@@ -511,18 +519,46 @@ struct boss_ilgynoth : public BossAI
         events.ScheduleEvent(EVENT_CURSED_BLOOD, CursedBloodInterval, 0, PHASE_HEART);
     }
 
+    // The marker is the heart's own: players inside the chamber carry it, the others do not.
+    void UpdateChamberMarks()
+    {
+        for (MapReference const& ref : me->GetMap()->GetPlayers())
+        {
+            Player* player = ref.GetSource();
+            if (!player)
+                continue;
+
+            if (player->IsAlive() && IsInsideChamber(*player))
+            {
+                if (!player->HasAura(SPELL_CHAMBER_MARK, me->GetGUID()))
+                    me->CastSpell(player, SPELL_CHAMBER_MARK, CastSpellExtraArgs(TRIGGERED_FULL_MASK));
+            }
+            else
+                player->RemoveAurasDueToSpell(SPELL_CHAMBER_MARK, me->GetGUID());
+        }
+    }
+
+    void RemoveChamberMarks()
+    {
+        me->RemoveAurasDueToSpell(SPELL_CHAMBER_MARK);
+        for (MapReference const& ref : me->GetMap()->GetPlayers())
+            if (Player* player = ref.GetSource())
+                player->RemoveAurasDueToSpell(SPELL_CHAMBER_MARK, me->GetGUID());
+    }
+
     // The cast ended. Dark Reconstitution's kill is the spell's own; this closes the
     // chamber and starts the outside phase again. Final Torpor needs nothing: it kills
     // everyone and the wipe evades the heart.
     void OnSpellCast(SpellInfo const* spell) override
     {
-        if (spell->Id == SPELL_DARK_RECONSTITUTION || spell->Id == SPELL_FINAL_TORPOR) // DIAG Dark Reconstitution - remove after root cause
-            TC_LOG_INFO("server.ilgynoth", "ILGDIAG heart OnSpellCast {}: heartPhase {}, {} ms since the heart phase started",
-                spell->Id, _heartPhase, GameTime::GetGameTimeMS() - _heartStart);
+        if (spell->Id == SPELL_FINAL_TORPOR)
+            RemoveChamberMarks();
 
         if (spell->Id != SPELL_DARK_RECONSTITUTION || !_heartPhase)
             return;
 
+        // OnSpellCast comes after the spell's effects, so the marker no longer saves anyone.
+        RemoveChamberMarks();
         Talk(TALK_RECONSTITUTED);
         SetForcefield(false);
         me->SetUnitFlag(UNIT_FLAG_UNINTERACTIBLE);
@@ -535,10 +571,6 @@ struct boss_ilgynoth : public BossAI
     // cast it again. The remaining time restarts, which is better than a soft lock.
     void OnSpellFailed(SpellInfo const* spell) override
     {
-        if (spell->Id == SPELL_DARK_RECONSTITUTION || spell->Id == SPELL_FINAL_TORPOR) // DIAG Dark Reconstitution - remove after root cause
-            TC_LOG_INFO("server.ilgynoth", "ILGDIAG heart OnSpellFailed {}: heartPhase {}, alive {}, {} ms since the heart phase started",
-                spell->Id, _heartPhase, me->IsAlive(), GameTime::GetGameTimeMS() - _heartStart);
-
         if (!_heartPhase || !me->IsAlive())
             return;
 
@@ -568,6 +600,7 @@ struct boss_ilgynoth : public BossAI
         if (Creature* eye = instance->GetCreature(DATA_EYE_OF_ILGYNOTH))
             instance->SendEncounterUnit(ENCOUNTER_FRAME_DISENGAGE, eye);
         summons.DespawnAll();
+        RemoveChamberMarks();
         me->RemoveAllAreaTriggers();
         RemovePools();
         // A plain removal does not burst.
@@ -633,7 +666,6 @@ struct boss_ilgynoth : public BossAI
 
 private:
     bool _heartPhase;
-    uint32 _heartStart = 0; // DIAG Dark Reconstitution - remove after root cause
     bool _evading;
     bool _afterHeart;
     uint8 _heartPhases;
@@ -1077,18 +1109,10 @@ struct npc_nightmare_horror : public ilgynoth_add_ai
         me->RemoveUnitFlag2(UNIT_FLAG2_REGENERATE_POWER);
         me->SetMaxPower(POWER_ENERGY, MAX_ENERGY); // power is set to 0 in Creature::UpdateMaxPower
         me->SetPower(POWER_ENERGY, 0);
-        SpellCastResult const emerge = DoCastSelf(SPELL_HORROR_EMERGE);
+        DoCastSelf(SPELL_HORROR_EMERGE);
         // Seeping Corruption is a passive periodic aura, so it is cast triggered: a normal cast
         // fails with SPELL_FAILED_SPELL_IN_PROGRESS while the Emerge channel is running.
-        SpellCastResult const seeping = DoCastSelf(SPELL_SEEPING_CORRUPTION, CastSpellExtraArgs(TRIGGERED_FULL_MASK));
-        // DIAG Eye of Fate - remove after root cause
-        TC_LOG_INFO("server.ilgynoth", "ILGDIAG Horror appeared: Emerge cast result {}, Seeping Corruption cast result {}, has aura 209387: {}",
-            uint32(emerge), uint32(seeping), me->HasAura(SPELL_SEEPING_CORRUPTION));
-    }
-
-    void JustEngagedWith(Unit* /*who*/) override
-    {
-        TC_LOG_INFO("server.ilgynoth", "ILGDIAG Horror engaged, energy {}", me->GetPower(POWER_ENERGY)); // DIAG Eye of Fate - remove after root cause
+        DoCastSelf(SPELL_SEEPING_CORRUPTION, CastSpellExtraArgs(TRIGGERED_FULL_MASK));
     }
 
     void JustDied(Unit* /*killer*/) override
@@ -1121,37 +1145,21 @@ struct npc_nightmare_horror : public ilgynoth_add_ai
             return;
 
         if (me->HasUnitState(UNIT_STATE_CASTING))
-        {
-            // DIAG Eye of Fate - remove after root cause
-            _diagTimer += diff;
-            if (_diagTimer >= 1000)
-            {
-                _diagTimer = 0;
-                Spell const* channeled = me->GetCurrentSpell(CURRENT_CHANNELED_SPELL);
-                Spell const* generic = me->GetCurrentSpell(CURRENT_GENERIC_SPELL);
-                TC_LOG_INFO("server.ilgynoth", "ILGDIAG Horror Eye of Fate due but casting: channeled spell {}, generic spell {}",
-                    channeled ? channeled->GetSpellInfo()->Id : 0, generic ? generic->GetSpellInfo()->Id : 0);
-            }
             return;
-        }
 
         // A failed cast keeps the energy, so it is retried once a second.
         Unit* victim = me->GetVictim();
         if (!victim || _retryTimer)
             return;
 
-        SpellCastResult const result = DoCastVictim(SPELL_EYE_OF_FATE);
+        DoCastVictim(SPELL_EYE_OF_FATE);
         _retryTimer = 1000;
-        // DIAG Eye of Fate - remove after root cause
-        TC_LOG_INFO("server.ilgynoth", "ILGDIAG Horror Eye of Fate attempt: cast result {}, victim {}, distance {}, in arc {}",
-            uint32(result), victim->GetName(), me->GetDistance(victim), me->HasInArc(0.5f, victim));
     }
 
 private:
     uint32 _age = 0;
     uint32 _energyTimer = 0;
     uint32 _retryTimer = 0;
-    uint32 _diagTimer = 0; // DIAG Eye of Fate - remove after root cause
 };
 
 // 208929 - Spew Corruption: every tick the Corruptor spits a pool where the victim stands.
@@ -1177,93 +1185,24 @@ class spell_ilgynoth_spew_corruption : public AuraScript
     }
 };
 
-// DIAG Dark Reconstitution - remove after root cause
-// Logs, for every player in the map, each condition the spell target selection tests
-// (Spell.cpp WorldObjectSpellAreaTargetCheck / WorldObjectSpellTargetCheck / SpellInfo::CheckTarget).
-void LogTargetChecks(Unit* caster, SpellInfo const* spellInfo, char const* when)
-{
-    uint32 conditionEffects = 0;
-    for (SpellEffectInfo const& effect : spellInfo->GetEffects())
-        if (effect.ImplicitTargetConditions && !effect.ImplicitTargetConditions->empty())
-            ++conditionEffects;
-
-    TC_LOG_INFO("server.ilgynoth", "ILGDIAG [{}] spell {}: caster {} flags {:#x} flags2 {:#x} react {} faction {} alive {} visible {}, effects with target conditions {}, attr1 EXCLUDE_CASTER {} ONLY_PEACEFUL {}, attr3 NOT_ON_AOE_IMMUNE {} ONLY_ON_PLAYER {}, attr5 NOT_ON_PLAYER {}, attr8 CAN_HIT_AOE_UNTARGETABLE {}",
-        when, spellInfo->Id, caster->GetName(), caster->GetUInt32Value(UNIT_FIELD_FLAGS), caster->GetUInt32Value(UNIT_FIELD_FLAGS_2),
-        caster->ToCreature() ? uint32(caster->ToCreature()->GetReactState()) : 99u, caster->GetFaction(), caster->IsAlive(), caster->IsVisible(),
-        conditionEffects, spellInfo->HasAttribute(SPELL_ATTR1_EXCLUDE_CASTER), spellInfo->HasAttribute(SPELL_ATTR1_ONLY_PEACEFUL_TARGETS),
-        spellInfo->HasAttribute(SPELL_ATTR3_NOT_ON_AOE_IMMUNE), spellInfo->HasAttribute(SPELL_ATTR3_ONLY_ON_PLAYER),
-        spellInfo->HasAttribute(SPELL_ATTR5_NOT_ON_PLAYER), spellInfo->HasAttribute(SPELL_ATTR8_CAN_HIT_AOE_UNTARGETABLE));
-
-    for (MapReference const& ref : caster->GetMap()->GetPlayers())
-    {
-        Player* player = ref.GetSource();
-        if (!player)
-            continue;
-
-        CanSeeOrDetectExtraArgs seeArgs;
-        seeArgs.ImplicitDetection = true;
-        seeArgs.IgnorePhaseShift = spellInfo->HasAttribute(SPELL_ATTR6_IGNORE_PHASE_SHIFT);
-        TC_LOG_INFO("server.ilgynoth", "ILGDIAG [{}] spell {} player {}: gm {} alive {} dist {} dist2d {} dz {} inside chamber {}, "
-            "CheckTarget {}, canSeeOrDetect {}, validAttackTarget {}, immuned {}, aoeImmune {}, totem {}, ghost {}, onlyPeacefulBlock {}, "
-            "inCombatWith {}, playerVisible {}, inFlight {}, canFreeMove {}",
-            when, spellInfo->Id, player->GetName(), player->IsGameMaster(), player->IsAlive(), caster->GetDistance(player), caster->GetDistance2d(player),
-            std::fabs(player->GetPositionZ() - caster->GetPositionZ()), IsInsideChamber(*player),
-            uint32(spellInfo->CheckTarget(caster, player, true)), caster->CanSeeOrDetect(player, seeArgs), caster->IsValidAttackTarget(player, spellInfo),
-            player->IsImmunedToSpell(spellInfo, caster), player->GetSpellOtherImmunityMask().HasFlag(SpellOtherImmunity::AoETarget),
-            player->IsTotem(), player->HasAuraType(SPELL_AURA_GHOST), player->IsInCombat(),
-            caster->IsInCombatWith(player), player->IsVisible(), player->HasUnitState(UNIT_STATE_IN_FLIGHT), player->CanFreeMove());
-    }
-}
-
 // 210781 - Dark Reconstitution: only what stands in the chamber is killed.
 class spell_ilgynoth_dark_reconstitution : public SpellScript
 {
-    // DIAG Dark Reconstitution - remove after root cause
-    void LogEffects()
+    bool Validate(SpellInfo const* /*spellInfo*/) override
     {
-        LogTargetChecks(GetCaster(), GetSpellInfo(), "before cast");
-        for (SpellEffectInfo const& effect : GetSpellInfo()->GetEffects())
-            TC_LOG_INFO("server.ilgynoth", "ILGDIAG Dark Reconstitution effect {}: type {}, target A {}, target B {}, radius {}",
-                uint32(effect.EffectIndex), uint32(effect.Effect), uint32(effect.TargetA.GetTarget()), uint32(effect.TargetB.GetTarget()),
-                effect.CalcRadius(GetCaster()));
+        return ValidateSpellInfo({ SPELL_CHAMBER_MARK });
     }
 
     void FilterTargets(std::list<WorldObject*>& targets)
     {
-        // DIAG Dark Reconstitution - remove after root cause
-        TC_LOG_INFO("server.ilgynoth", "ILGDIAG Dark Reconstitution filter: {} targets before", targets.size());
-        LogTargetChecks(GetCaster(), GetSpellInfo(), "target selection");
-        for (WorldObject* target : targets)
-            TC_LOG_INFO("server.ilgynoth", "ILGDIAG   target {} type {} at ({}, {}, {}) inside chamber {} gm {}", target->GetName(),
-                uint32(target->GetTypeId()), target->GetPositionX(), target->GetPositionY(), target->GetPositionZ(),
-                IsInsideChamber(*target), target->IsPlayer() && target->ToPlayer()->IsGameMaster());
-
+        // The chamber marker (SPELL_CHAMBER_MARK) already limits the targets to the chamber;
+        // this filter is kept as a harmless second guard.
         targets.remove_if([](WorldObject* target) { return !IsInsideChamber(*target); });
-
-        TC_LOG_INFO("server.ilgynoth", "ILGDIAG Dark Reconstitution filter: {} targets after", targets.size()); // DIAG Dark Reconstitution - remove after root cause
-    }
-
-    // DIAG Dark Reconstitution - remove after root cause
-    void HandleHit(SpellEffIndex /*effIndex*/)
-    {
-        if (Unit* target = GetHitUnit())
-            TC_LOG_INFO("server.ilgynoth", "ILGDIAG Dark Reconstitution instakill hits {} (alive {})", target->GetName(), target->IsAlive());
-    }
-
-    // DIAG Dark Reconstitution - remove after root cause
-    void HandleAfterCast()
-    {
-        Unit* caster = GetCaster();
-        TC_LOG_INFO("server.ilgynoth", "ILGDIAG Dark Reconstitution AfterCast: caster {} alive {} health {} casting {}",
-            caster->GetName(), caster->IsAlive(), caster->GetHealth(), caster->HasUnitState(UNIT_STATE_CASTING));
     }
 
     void Register() override
     {
-        BeforeCast += SpellCastFn(spell_ilgynoth_dark_reconstitution::LogEffects); // DIAG Dark Reconstitution - remove after root cause
         OnObjectAreaTargetSelect += SpellObjectAreaTargetSelectFn(spell_ilgynoth_dark_reconstitution::FilterTargets, EFFECT_0, TARGET_UNIT_DEST_AREA_ENEMY);
-        OnEffectHitTarget += SpellEffectFn(spell_ilgynoth_dark_reconstitution::HandleHit, EFFECT_0, SPELL_EFFECT_INSTAKILL); // DIAG Dark Reconstitution - remove after root cause
-        AfterCast += SpellCastFn(spell_ilgynoth_dark_reconstitution::HandleAfterCast); // DIAG Dark Reconstitution - remove after root cause
     }
 };
 
@@ -1273,9 +1212,6 @@ class spell_ilgynoth_cursed_blood : public SpellScript
 {
     void FilterTargets(std::list<WorldObject*>& targets)
     {
-        if (!_chosen) // DIAG Dark Reconstitution - remove after root cause
-            LogTargetChecks(GetCaster(), GetSpellInfo(), "target selection");
-
         // The area is shared by the aura's effects; they must all get the same players.
         if (_chosen)
         {
