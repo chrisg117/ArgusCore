@@ -723,9 +723,9 @@ void ClassHallMissions::CompleteMission(ObjectGuid npcGuid, uint32 garrMissionId
     {
         mission.PacketInfo.MissionState = CLASS_HALL_MISSION_STATE_COMPLETED;
 
-        // the chance over 100 is the chance of the bonus rewards, as the client shows it; the 7.3.5
-        // client learns of the result only from the complete reply it drops, so it is not told and shows the
-        // bonus as failed
+        // the chance over 100 is the chance of the bonus rewards, as the client shows it. The complete
+        // reply has no place for the result and what tells the 7.3.5 client of it is not known, so it shows
+        // the bonus as failed
         if (sGarrisonMgr.GetClassHallMissionOvermaxRewards(garrMissionId))
             mission.BonusWon = roll_chance_i(std::clamp(int32(mission.PacketInfo.SuccessChance) - 100, 0, 100));
 
@@ -740,7 +740,8 @@ void ClassHallMissions::CompleteMission(ObjectGuid npcGuid, uint32 garrMissionId
     }
     else
     {
-        // the 7.3.5 client does not take the complete reply, so it is told with the messages it takes
+        // the freed followers and the mission back on offer are also sent on their own; with the complete
+        // reply the client still shows the failure once
         for (WorldPackets::Garrison::GarrisonMissionFollowerInfo const& follower : completeMissionResult.Followers)
             followers.SetFollowerMission(follower.FollowerDBID, 0);
 
