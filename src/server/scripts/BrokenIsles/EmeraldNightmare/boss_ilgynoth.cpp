@@ -1177,12 +1177,51 @@ class spell_ilgynoth_spew_corruption : public AuraScript
     }
 };
 
+// DIAG Dark Reconstitution - remove after root cause
+// Logs, for every player in the map, each condition the spell target selection tests
+// (Spell.cpp WorldObjectSpellAreaTargetCheck / WorldObjectSpellTargetCheck / SpellInfo::CheckTarget).
+void LogTargetChecks(Unit* caster, SpellInfo const* spellInfo, char const* when)
+{
+    uint32 conditionEffects = 0;
+    for (SpellEffectInfo const& effect : spellInfo->GetEffects())
+        if (effect.ImplicitTargetConditions && !effect.ImplicitTargetConditions->empty())
+            ++conditionEffects;
+
+    TC_LOG_INFO("server.ilgynoth", "ILGDIAG [{}] spell {}: caster {} flags {:#x} flags2 {:#x} react {} faction {} alive {} visible {}, effects with target conditions {}, attr1 EXCLUDE_CASTER {} ONLY_PEACEFUL {}, attr3 NOT_ON_AOE_IMMUNE {} ONLY_ON_PLAYER {}, attr5 NOT_ON_PLAYER {}, attr8 CAN_HIT_AOE_UNTARGETABLE {}",
+        when, spellInfo->Id, caster->GetName(), caster->GetUInt32Value(UNIT_FIELD_FLAGS), caster->GetUInt32Value(UNIT_FIELD_FLAGS_2),
+        caster->ToCreature() ? uint32(caster->ToCreature()->GetReactState()) : 99u, caster->GetFaction(), caster->IsAlive(), caster->IsVisible(),
+        conditionEffects, spellInfo->HasAttribute(SPELL_ATTR1_EXCLUDE_CASTER), spellInfo->HasAttribute(SPELL_ATTR1_ONLY_PEACEFUL_TARGETS),
+        spellInfo->HasAttribute(SPELL_ATTR3_NOT_ON_AOE_IMMUNE), spellInfo->HasAttribute(SPELL_ATTR3_ONLY_ON_PLAYER),
+        spellInfo->HasAttribute(SPELL_ATTR5_NOT_ON_PLAYER), spellInfo->HasAttribute(SPELL_ATTR8_CAN_HIT_AOE_UNTARGETABLE));
+
+    for (MapReference const& ref : caster->GetMap()->GetPlayers())
+    {
+        Player* player = ref.GetSource();
+        if (!player)
+            continue;
+
+        CanSeeOrDetectExtraArgs seeArgs;
+        seeArgs.ImplicitDetection = true;
+        seeArgs.IgnorePhaseShift = spellInfo->HasAttribute(SPELL_ATTR6_IGNORE_PHASE_SHIFT);
+        TC_LOG_INFO("server.ilgynoth", "ILGDIAG [{}] spell {} player {}: gm {} alive {} dist {} dist2d {} dz {} inside chamber {}, "
+            "CheckTarget {}, canSeeOrDetect {}, validAttackTarget {}, immuned {}, aoeImmune {}, totem {}, ghost {}, onlyPeacefulBlock {}, "
+            "inCombatWith {}, playerVisible {}, inFlight {}, canFreeMove {}",
+            when, spellInfo->Id, player->GetName(), player->IsGameMaster(), player->IsAlive(), caster->GetDistance(player), caster->GetDistance2d(player),
+            std::fabs(player->GetPositionZ() - caster->GetPositionZ()), IsInsideChamber(*player),
+            uint32(spellInfo->CheckTarget(caster, player, true)), caster->CanSeeOrDetect(player, seeArgs), caster->IsValidAttackTarget(player, spellInfo),
+            player->IsImmunedToSpell(spellInfo, caster), player->GetSpellOtherImmunityMask().HasFlag(SpellOtherImmunity::AoETarget),
+            player->IsTotem(), player->HasAuraType(SPELL_AURA_GHOST), player->IsInCombat(),
+            caster->IsInCombatWith(player), player->IsVisible(), player->HasUnitState(UNIT_STATE_IN_FLIGHT), player->CanFreeMove());
+    }
+}
+
 // 210781 - Dark Reconstitution: only what stands in the chamber is killed.
 class spell_ilgynoth_dark_reconstitution : public SpellScript
 {
     // DIAG Dark Reconstitution - remove after root cause
     void LogEffects()
     {
+        LogTargetChecks(GetCaster(), GetSpellInfo(), "before cast");
         for (SpellEffectInfo const& effect : GetSpellInfo()->GetEffects())
             TC_LOG_INFO("server.ilgynoth", "ILGDIAG Dark Reconstitution effect {}: type {}, target A {}, target B {}, radius {}",
                 uint32(effect.EffectIndex), uint32(effect.Effect), uint32(effect.TargetA.GetTarget()), uint32(effect.TargetB.GetTarget()),
@@ -1193,6 +1232,7 @@ class spell_ilgynoth_dark_reconstitution : public SpellScript
     {
         // DIAG Dark Reconstitution - remove after root cause
         TC_LOG_INFO("server.ilgynoth", "ILGDIAG Dark Reconstitution filter: {} targets before", targets.size());
+        LogTargetChecks(GetCaster(), GetSpellInfo(), "target selection");
         for (WorldObject* target : targets)
             TC_LOG_INFO("server.ilgynoth", "ILGDIAG   target {} type {} at ({}, {}, {}) inside chamber {} gm {}", target->GetName(),
                 uint32(target->GetTypeId()), target->GetPositionX(), target->GetPositionY(), target->GetPositionZ(),
@@ -1233,6 +1273,9 @@ class spell_ilgynoth_cursed_blood : public SpellScript
 {
     void FilterTargets(std::list<WorldObject*>& targets)
     {
+        if (!_chosen) // DIAG Dark Reconstitution - remove after root cause
+            LogTargetChecks(GetCaster(), GetSpellInfo(), "target selection");
+
         // The area is shared by the aura's effects; they must all get the same players.
         if (_chosen)
         {
