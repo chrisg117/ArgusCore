@@ -227,10 +227,12 @@ struct boss_elerethe_renferal : public BossAI
         switch (spell->Id)
         {
             case SPELL_DARKWING_FORM:
+                me->RemoveAurasDueToSpell(SPELL_SPIDER_TRANSFORM);
                 DoCastSelf(SPELL_BIRD_TRANSFORM, true);
                 StartRocForm();
                 break;
             case SPELL_ARACHNID_FORM:
+                me->RemoveAurasDueToSpell(SPELL_BIRD_TRANSFORM);
                 DoCastSelf(SPELL_SPIDER_TRANSFORM, true);
                 ++_formCount;
                 Talk(TALK_SPIDER_FORM);
