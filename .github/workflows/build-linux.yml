@@ -5,6 +5,10 @@ on:
     branches: [main, master, dev]
   pull_request:
     branches: [main, master, dev]
+  schedule:
+    # 1:00 AM US Eastern while daylight saving is on (UTC-4); use 0 6 after Nov 1
+    - cron: "0 5 * * *"
+  workflow_dispatch:
 
 concurrency:
   group: linux-${{ github.ref }}

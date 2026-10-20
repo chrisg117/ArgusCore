@@ -24,17 +24,20 @@
 #include "Log.h"
 #include "Map.h"
 #include "MotionMaster.h"
+#include "MoveSplineInit.h"
 #include "ObjectAccessor.h"
 #include "Player.h"
 #include "ScriptedCreature.h"
 #include "ScriptMgr.h"
 #include "SpellAuras.h"
+#include "SpellMgr.h"
 #include "SpellScript.h"
 #include "TemporarySummon.h"
 #include "emerald_nightmare.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <functional>
 #include <vector>
 
 enum EleretheSpells
@@ -68,7 +71,20 @@ enum EleretheSpells
     SPELL_GATHERING_CLOUDS          = 212707, // 2.5 s cast, 8 s wind that pushes players back
     SPELL_RAKING_TALONS             = 215582, // 2 s cast, a stacking debuff
     SPELL_RAKING_TALONS_REPEAT      = 222037, // the quick second hit
-    SPELL_RAZOR_WING                = 210547  // 4.5 s cast, a cone in front of her
+    SPELL_RAZOR_WING                = 210547, // 4.5 s cast, a cone in front of her
+
+    // The flight
+    SPELL_DARK_STORM                = 210948, // 4 s cast on herself; the flight and the storm start when it ends
+    SPELL_DARK_STORM_TICK           = 213936, // damage to every enemy in 1000 yd, cast once a second by the script
+    SPELL_FOUL_WINDS                = 211137, // 45 s marker; its aura (276) is a stub in this core, the ramp is in the script
+    SPELL_EYE_OF_THE_STORM          = 211127, // safe aura while inside the Eye
+    SPELL_SHIMMERING_FEATHER        = 212993  // the Feather's aura (Task 6 adds the crush)
+};
+
+enum EleretheAreaTriggers
+{
+    AT_EYE_OF_THE_STORM             = 152011, // custom create properties ids (152003-152010 are the hub portals)
+    AT_SHIMMERING_FEATHER           = 152012
 };
 
 enum EleretheEvents
@@ -88,12 +104,14 @@ enum EleretheEvents
     EVENT_DARK_STORM,
     EVENT_RAKING_TALONS,
     EVENT_RAKING_TALONS_REPEAT,
-    EVENT_RAZOR_WING
+    EVENT_RAZOR_WING,
+    EVENT_FLIGHT_FAILSAFE
 };
 
 enum ElerethePoints
 {
-    POINT_FEEDING_TIME_RISE = 1
+    POINT_FEEDING_TIME_RISE = 1,
+    POINT_FLIGHT
 };
 
 enum EleretheGroups
@@ -171,6 +189,19 @@ static constexpr float TornadoFixateRange = 100.0f;
 // Calibrate: how high above the web she flies over a bridge's middle.
 static constexpr float FlightHeight = 20.0f;
 
+// Calibrate: the flight, Dark Storm and the Feathers.
+static constexpr float FlightSeconds = 8.0f;                   // the spline's speed is its length over this
+static constexpr Milliseconds FlightFailsafeExtra = 4s;        // landing is forced this long after the planned arrival
+static constexpr uint32 StormDurationMs = 45000;               // = Foul Winds' 45 s
+static constexpr uint32 StormTickMs = 1000;
+static constexpr uint32 StormTicks = StormDurationMs / StormTickMs;
+static constexpr float StormRampPerSecond = 0.05f;             // Foul Winds: +5% damage a second (stub aura, done here)
+static constexpr uint8 FeathersPerFlight = 3;
+static constexpr float FeatherRing = 3.0f;                     // yards from the take-off spot; neighbours are about 3.5 apart
+static constexpr uint8 BridgeDropSpiderlings = 2;
+static constexpr uint8 BridgeDropTornadoes = 1;
+static constexpr float BridgeDropSpread = 3.0f;
+
 struct PlatformData
 {
     Position landing;   // where she lands, facing the next platform
@@ -229,6 +260,27 @@ namespace
         return players;
     }
 
+    // The nearest living player who is not a GM, or null.
+    Player* FindNearestLivingPlayer(Unit* source, float range)
+    {
+        std::list<Player*> players;
+        source->GetPlayerListInGrid(players, range);
+        Player* nearest = nullptr;
+        float best = 0.0f;
+        for (Player* player : players)
+        {
+            if (!player->IsAlive() || player->IsGameMaster())
+                continue;
+            float const dist = source->GetExactDist(player);
+            if (!nearest || dist < best)
+            {
+                nearest = player;
+                best = dist;
+            }
+        }
+        return nearest;
+    }
+
     bool IsRangedPlayer(Player const* player)
     {
         ChrSpecializationEntry const* spec = player->GetPrimarySpecializationEntry();
@@ -275,6 +327,11 @@ struct boss_elerethe_renferal : public BossAI
         _twistingCasts = 0;
         _talonCasts = 0;
         _razorCasts = 0;
+        _flightActive = false;
+        _stormActive = false;
+        _stormElapsed = 0;
+        _stormTickTimer = 0;
+        _stormTicks = 0;
     }
 
     void Reset() override
@@ -416,6 +473,11 @@ struct boss_elerethe_renferal : public BossAI
                 Talk(TALK_SPIDER_FORM);
                 StartSpiderForm();
                 break;
+            case SPELL_DARK_STORM:
+                // The cast went through: the storm starts and she leaves for the next platform.
+                if (_rocCount <= DarkStormRocForms && _platform < FlightPaths.size() && !_flightActive)
+                    StartFlight();
+                break;
             case SPELL_RAKING_TALONS:
                 // One quick second hit when the cast ends.
                 events.ScheduleEvent(EVENT_RAKING_TALONS_REPEAT, 1ms, GROUP_FORM, PHASE_ROC);
@@ -538,10 +600,182 @@ struct boss_elerethe_renferal : public BossAI
         SetBusy(false);
     }
 
+    // Dark Storm: three Feathers where she stands, the Eye where she will land, the storm on, and she
+    // leaves over the bridge. Run once the 210948 cast has gone through.
+    void StartFlight()
+    {
+        _flightActive = true;
+        SetBusy(true);
+        me->SetUnitFlag(UNIT_FLAG_UNINTERACTIBLE);
+        me->SetCanFly(true);
+        me->SetDisableGravity(true);
+
+        CreateFeathers();
+        CreateEye();
+        StartStorm();
+
+        // One smooth spline: the air point over the bridge, then the landing. The speed makes it FlightSeconds long.
+        std::vector<Position> const& route = FlightPaths[_platform];
+        float length = 0.0f;
+        Position previous = me->GetPosition();
+        for (Position const& point : route)
+        {
+            length += previous.GetExactDist(point);
+            previous = point;
+        }
+        float const velocity = std::max(length / FlightSeconds, 1.0f);
+
+        std::function<void(Movement::MoveSplineInit&)> initializer = [&route, velocity](Movement::MoveSplineInit& init)
+        {
+            Movement::PointsArray points;
+            for (Position const& point : route)
+                points.emplace_back(point.GetPositionX(), point.GetPositionY(), point.GetPositionZ());
+            init.MovebyPath(points);
+            init.SetSmooth();
+            init.SetFly();
+            init.SetVelocity(velocity);
+        };
+        me->GetMotionMaster()->LaunchMoveSpline(std::move(initializer), POINT_FLIGHT, MOTION_PRIORITY_NORMAL, POINT_MOTION_TYPE);
+
+        // Landing comes from MovementInform; this catches a flight that never arrives.
+        events.ScheduleEvent(EVENT_FLIGHT_FAILSAFE, Milliseconds(uint32(FlightSeconds * 1000.0f)) + FlightFailsafeExtra, GROUP_FORM, PHASE_ROC);
+    }
+
+    // Feathers lie in a ring around her take-off spot until the storm ends.
+    void CreateFeathers()
+    {
+        float const start = frand(0.0f, 2.0f * float(M_PI));
+        for (uint8 i = 0; i < FeathersPerFlight; ++i)
+        {
+            float const angle = start + 2.0f * float(M_PI) * float(i) / float(FeathersPerFlight);
+            float x = me->GetPositionX() + std::cos(angle) * FeatherRing;
+            float y = me->GetPositionY() + std::sin(angle) * FeatherRing;
+            float z = me->GetPositionZ();
+            me->UpdateGroundPositionZ(x, y, z);
+            AreaTrigger::CreateAreaTrigger({ AT_SHIMMERING_FEATHER, true }, Position(x, y, z), int32(StormDurationMs), me, nullptr);
+        }
+    }
+
+    // The Eye is at the landing spot of the next platform and lasts as long as the storm.
+    void CreateEye()
+    {
+        Position const& centre = Platforms[_platform + 1].centre;
+        AreaTrigger::CreateAreaTrigger({ AT_EYE_OF_THE_STORM, true }, centre, int32(StormDurationMs), me, nullptr);
+    }
+
+    void StartStorm()
+    {
+        _stormActive = true;
+        _stormElapsed = 0;
+        _stormTickTimer = 0;
+        _stormTicks = 0;
+        DoCastSelf(SPELL_FOUL_WINDS, true);
+    }
+
+    // Runs outside the event map and the casting check: the storm ticks every second whatever she is doing.
+    void UpdateStorm(uint32 diff)
+    {
+        if (!_stormActive)
+            return;
+
+        _stormTickTimer += diff;
+        while (_stormActive && _stormTickTimer >= StormTickMs)
+        {
+            _stormTickTimer -= StormTickMs;
+            ++_stormTicks;
+            StormTick();
+            if (_stormTicks >= StormTicks)
+                StopStorm(false);
+        }
+    }
+
+    // One tick: 213936 hits every enemy in range, its script drops whoever is in the Eye. Foul Winds is not a
+    // working ramp in this core (aura 276 is a stub), so the +5% a second is applied to the damage here.
+    void StormTick()
+    {
+        CastSpellExtraArgs args(TRIGGERED_FULL_MASK);
+        if (SpellInfo const* info = sSpellMgr->GetSpellInfo(SPELL_DARK_STORM_TICK, me->GetMap()->GetDifficultyID()))
+        {
+            int32 const base = info->GetEffect(EFFECT_0).CalcValue(me);
+            args.AddSpellBP0(int32(float(base) * (1.0f + StormRampPerSecond * float(_stormTicks))));
+        }
+        me->CastSpell(me, SPELL_DARK_STORM_TICK, args);
+
+        // The Foul Winds marker on the players, for the display; applied by the player, cast for her.
+        for (Player* player : GetLivingPlayers(me))
+        {
+            if (player->HasAura(SPELL_FOUL_WINDS))
+                continue;
+            CastSpellExtraArgs windArgs(TRIGGERED_FULL_MASK);
+            windArgs.SetOriginalCaster(me->GetGUID());
+            player->CastSpell(player, SPELL_FOUL_WINDS, windArgs);
+        }
+    }
+
+    // The storm's end (45 s) or a kill / wipe (everything: the Feathers' aura and the Eye's too).
+    void StopStorm(bool everything)
+    {
+        _stormActive = false;
+        me->RemoveAurasDueToSpell(SPELL_FOUL_WINDS);
+        instance->DoRemoveAurasDueToSpellOnPlayers(SPELL_FOUL_WINDS);
+        if (everything)
+        {
+            instance->DoRemoveAurasDueToSpellOnPlayers(SPELL_EYE_OF_THE_STORM);
+            instance->DoRemoveAurasDueToSpellOnPlayers(SPELL_SHIMMERING_FEATHER);
+        }
+    }
+
+    // She lands on the next platform and the fight goes on there. Runs once per flight.
+    void LandFromFlight()
+    {
+        if (!_flightActive)
+            return;
+
+        _flightActive = false;
+        events.CancelEvent(EVENT_FLIGHT_FAILSAFE);
+        ++_platform;
+
+        me->SetDisableGravity(false);
+        me->SetCanFly(false);
+        me->RemoveUnitFlag(UNIT_FLAG_UNINTERACTIBLE);
+        me->SetFacingTo(Platforms[_platform].landing.GetOrientation());
+        if (Unit* victim = me->GetVictim())
+            me->GetMotionMaster()->MoveChase(victim);
+
+        DropOnBridge();
+        SetBusy(false);
+    }
+
+    // What waits on the bridge she just crossed: two spiderlings and a tornado at its middle.
+    void DropOnBridge()
+    {
+        Position const& middle = BridgeMidpoints[_platform - 1];
+        for (uint8 i = 0; i < BridgeDropSpiderlings + BridgeDropTornadoes; ++i)
+        {
+            float const angle = frand(0.0f, 2.0f * float(M_PI));
+            float const dist = frand(0.0f, BridgeDropSpread);
+            Position spot(middle.GetPositionX() + std::cos(angle) * dist, middle.GetPositionY() + std::sin(angle) * dist, middle.GetPositionZ() + 0.5f, angle);
+            if (i < BridgeDropSpiderlings)
+                me->SummonCreature(NPC_VENOMOUS_SPIDERLING, spot, TEMPSUMMON_CORPSE_TIMED_DESPAWN, 10s);
+            else
+                me->SummonCreature(NPC_TWISTING_SHADOWS, spot, TEMPSUMMON_TIMED_DESPAWN, TornadoDuration);
+        }
+    }
+
+    // In flight she is over the gaps between the boundary's pieces; that is not leaving the room.
+    bool CheckInRoom() override
+    {
+        if (_flightActive)
+            return true;
+        return BossAI::CheckInRoom();
+    }
+
     void MovementInform(uint32 type, uint32 id) override
     {
         if (type == EFFECT_MOTION_TYPE && id == EVENT_JUMP)
             Land();
+        else if (type == POINT_MOTION_TYPE && id == POINT_FLIGHT)
+            LandFromFlight();
     }
 
     void RemovePools()
@@ -568,9 +802,14 @@ struct boss_elerethe_renferal : public BossAI
         me->RemoveAurasDueToSpell(SPELL_BIRD_TRANSFORM);
         me->RemoveAurasDueToSpell(SPELL_SPIDER_TRANSFORM);
         me->RemoveAurasDueToSpell(SPELL_SWARM);
+        bool const airborne = _busy || _flightActive;
+        _flightActive = false;
+        StopStorm(true);
         me->SetDisableGravity(false);
         me->SetCanFly(false);
         me->RemoveUnitFlag(UNIT_FLAG_UNINTERACTIBLE);
+        if (airborne)
+            me->GetMotionMaster()->MoveFall();
         events.CancelEventGroup(GROUP_FORM);
         _berserkTimer = 0;
         _ambushActive = false;
@@ -619,6 +858,7 @@ struct boss_elerethe_renferal : public BossAI
         // Before the casting check, so a long cast never delays either.
         UpdateEnergy(diff);
         UpdateBerserk(diff);
+        UpdateStorm(diff);
 
         events.Update(diff);
 
@@ -629,7 +869,8 @@ struct boss_elerethe_renferal : public BossAI
         {
             // Holding: up in the web or in flight nothing else is cast. Vile Ambush ends the web
             // phase; the energy timer keeps the form change due.
-            bool const ambush = eventId == EVENT_VILE_AMBUSH || eventId == EVENT_VILE_AMBUSH_FAILSAFE;
+            // The flight's failsafe is exempt too: it exists to end the busy time.
+            bool const ambush = eventId == EVENT_VILE_AMBUSH || eventId == EVENT_VILE_AMBUSH_FAILSAFE || eventId == EVENT_FLIGHT_FAILSAFE;
             if (_busy && !ambush)
             {
                 events.Repeat(1s);
@@ -678,7 +919,12 @@ struct boss_elerethe_renferal : public BossAI
                     DoCastSelf(SPELL_GATHERING_CLOUDS);
                     break;
                 case EVENT_DARK_STORM:
-                    // Task 5: the flight and the storm.
+                    // The flight and the storm start when this cast goes through (OnSpellCast).
+                    if (_platform < FlightPaths.size())
+                        DoCastSelf(SPELL_DARK_STORM);
+                    break;
+                case EVENT_FLIGHT_FAILSAFE:
+                    LandFromFlight();
                     break;
                 case EVENT_RAKING_TALONS:
                     DoCastVictim(SPELL_RAKING_TALONS);
@@ -718,6 +964,11 @@ private:
     uint8 _twistingCasts;
     uint8 _talonCasts;
     uint8 _razorCasts;
+    bool _flightActive;        // Dark Storm went off and she has not landed
+    bool _stormActive;
+    uint32 _stormElapsed;
+    uint32 _stormTickTimer;
+    uint32 _stormTicks;
 };
 
 // 106311 - Venomous Spiderling
@@ -729,7 +980,7 @@ struct npc_en_venomous_spiderling : public ScriptedAI
     {
         DoCastSelf(SPELL_DRIPPING_FANGS, true);
         DoZoneInCombat();
-        if (Player* nearest = me->SelectNearestPlayer(200.0f))
+        if (Player* nearest = FindNearestLivingPlayer(me, 200.0f))
         {
             AddThreat(nearest, 1000.0f);
             AttackStart(nearest);
@@ -881,16 +1132,23 @@ struct npc_en_twisting_shadows : public ScriptedAI
         me->SetReactState(REACT_PASSIVE);
         me->SetSpeedRate(MOVE_WALK, TornadoSpeedRate);
         me->SetSpeedRate(MOVE_RUN, TornadoSpeedRate);
+    }
 
-        // The player it chases: the nearest one (the marked player stood where it formed).
-        if (Player* target = me->SelectNearestPlayer(TornadoFixateRange))
-        {
-            if (!target->IsGameMaster())
-            {
-                DoCast(target, SPELL_TWISTING_SHADOWS_FIXATE, true);
-                me->GetMotionMaster()->MoveFollow(target, 0.5f);
-            }
-        }
+    // A mark's tornado is told whose mark it came from, right after it is summoned.
+    void SetGUID(ObjectGuid const& guid, int32 /*id*/) override
+    {
+        if (Player* player = ObjectAccessor::GetPlayer(*me, guid))
+            Fixate(player);
+    }
+
+    void Fixate(Player* player)
+    {
+        if (!player->IsAlive() || player->IsGameMaster())
+            return;
+
+        _target = player->GetGUID();
+        DoCast(player, SPELL_TWISTING_SHADOWS_FIXATE, true);
+        me->GetMotionMaster()->MoveFollow(player, 0.5f);
     }
 
     void UpdateAI(uint32 diff) override
@@ -901,6 +1159,15 @@ struct npc_en_twisting_shadows : public ScriptedAI
             return;
         }
         _checkTimer = 250;
+
+        // No mark (the bridge drop), or its player is gone: the nearest living player who is not a GM.
+        Player* fixated = !_target.IsEmpty() ? ObjectAccessor::GetPlayer(*me, _target) : nullptr;
+        if (!fixated || !fixated->IsAlive())
+        {
+            _target.Clear();
+            if (Player* nearest = FindNearestLivingPlayer(me, TornadoFixateRange))
+                Fixate(nearest);
+        }
 
         std::list<Player*> players;
         me->GetPlayerListInGrid(players, TornadoReach);
@@ -917,6 +1184,7 @@ struct npc_en_twisting_shadows : public ScriptedAI
 
 private:
     uint32 _checkTimer;
+    ObjectGuid _target;
 };
 
 // 210864 - Twisting Shadows (cast): marks up to two players (one when solo) with 210863.
@@ -972,13 +1240,87 @@ class spell_en_twisting_shadows_mark : public AuraScript
         if (!target->IsAlive() || !caster || !caster->IsAlive() || !caster->IsEngaged())
             return;
 
-        caster->SummonCreature(NPC_TWISTING_SHADOWS, target->GetPosition(), TEMPSUMMON_TIMED_DESPAWN, TornadoDuration);
+        // The tornado chases the player whose mark made it.
+        if (TempSummon* tornado = caster->SummonCreature(NPC_TWISTING_SHADOWS, target->GetPosition(), TEMPSUMMON_TIMED_DESPAWN, TornadoDuration))
+            if (CreatureAI* ai = tornado->AI())
+                ai->SetGUID(target->GetGUID(), 0);
     }
 
     void Register() override
     {
         OnEffectPeriodic += AuraEffectPeriodicFn(spell_en_twisting_shadows_mark::HandlePeriodic, EFFECT_0, SPELL_AURA_PERIODIC_TRIGGER_SPELL);
         AfterEffectRemove += AuraEffectRemoveFn(spell_en_twisting_shadows_mark::HandleRemove, EFFECT_0, SPELL_AURA_PERIODIC_TRIGGER_SPELL, AURA_EFFECT_HANDLE_REAL);
+    }
+};
+
+// 211127 - Eye of the Storm (the safe aura). The custom area trigger 152011 is made at the landing spot when
+// she takes off and lasts as long as the storm. Standing in it holds the aura; leaving it, or its end, takes it off.
+struct at_en_eye_of_the_storm : AreaTriggerAI
+{
+    at_en_eye_of_the_storm(AreaTrigger* at) : AreaTriggerAI(at) { }
+
+    void OnUnitEnter(Unit* unit) override
+    {
+        if (!unit->IsPlayer() || !unit->IsAlive() || unit->HasAura(SPELL_EYE_OF_THE_STORM))
+            return;
+
+        unit->CastSpell(unit, SPELL_EYE_OF_THE_STORM, CastSpellExtraArgs(TRIGGERED_FULL_MASK));
+    }
+
+    void OnUnitExit(Unit* unit) override
+    {
+        if (unit->IsPlayer())
+            unit->RemoveAurasDueToSpell(SPELL_EYE_OF_THE_STORM);
+    }
+
+    // Expiry and removal run OnUnitExit for everyone inside; this also covers a unit the search no longer lists.
+    void OnRemove() override
+    {
+        for (ObjectGuid const& guid : at->GetInsideUnits())
+            if (Player* player = ObjectAccessor::GetPlayer(*at, guid))
+                player->RemoveAurasDueToSpell(SPELL_EYE_OF_THE_STORM);
+    }
+};
+
+// 212993 - Shimmering Feather: custom area trigger 152012. The first player to touch it gets the aura and it is gone.
+struct at_en_shimmering_feather : AreaTriggerAI
+{
+    at_en_shimmering_feather(AreaTrigger* at) : AreaTriggerAI(at), _taken(false) { }
+
+    void OnUnitEnter(Unit* unit) override
+    {
+        Player* player = unit->ToPlayer();
+        if (_taken || !player || !player->IsAlive() || player->IsGameMaster() || player->HasAura(SPELL_SHIMMERING_FEATHER))
+            return;
+
+        _taken = true;
+        CastSpellExtraArgs args(TRIGGERED_FULL_MASK);
+        if (InstanceScript* instance = at->GetInstanceScript())
+            if (Creature* boss = instance->GetCreature(DATA_ELERETHE_RENFERAL))
+                args.SetOriginalCaster(boss->GetGUID());
+        player->CastSpell(player, SPELL_SHIMMERING_FEATHER, args);
+        at->Remove();
+    }
+
+private:
+    bool _taken;
+};
+
+// 213936 - Dark Storm (the tick): everyone in the Eye of the Storm is spared. Only players take it.
+class spell_en_dark_storm_damage : public SpellScript
+{
+    void FilterTargets(std::list<WorldObject*>& targets)
+    {
+        targets.remove_if([](WorldObject* target)
+        {
+            Player* player = target->ToPlayer();
+            return !player || !player->IsAlive() || player->IsGameMaster() || player->HasAura(SPELL_EYE_OF_THE_STORM);
+        });
+    }
+
+    void Register() override
+    {
+        OnObjectAreaTargetSelect += SpellObjectAreaTargetSelectFn(spell_en_dark_storm_damage::FilterTargets, EFFECT_0, TARGET_UNIT_SRC_AREA_ENEMY);
     }
 };
 
@@ -1000,4 +1342,7 @@ void AddSC_boss_elerethe_renferal()
     RegisterSpellScript(spell_en_twisting_shadows);
     RegisterSpellScript(spell_en_twisting_shadows_mark);
     RegisterAreaTriggerAI(at_en_venomous_pool);
+    RegisterAreaTriggerAI(at_en_eye_of_the_storm);
+    RegisterAreaTriggerAI(at_en_shimmering_feather);
+    RegisterSpellScript(spell_en_dark_storm_damage);
 }
