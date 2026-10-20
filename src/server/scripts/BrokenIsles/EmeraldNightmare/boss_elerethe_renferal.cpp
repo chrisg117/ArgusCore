@@ -15,9 +15,22 @@
  * with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "AreaTrigger.h"
+#include "AreaTriggerAI.h"
+#include "CellImpl.h"
+#include "Containers.h"
+#include "GridNotifiersImpl.h"
 #include "InstanceScript.h"
+#include "Log.h"
+#include "Map.h"
+#include "MotionMaster.h"
+#include "ObjectAccessor.h"
+#include "Player.h"
 #include "ScriptedCreature.h"
 #include "ScriptMgr.h"
+#include "SpellAuras.h"
+#include "SpellScript.h"
+#include "TemporarySummon.h"
 #include "emerald_nightmare.h"
 #include <algorithm>
 #include <array>
@@ -31,13 +44,39 @@ enum EleretheSpells
     SPELL_ARACHNID_FORM             = 210326, // cast: Roc to Spider
     SPELL_SPIDER_TRANSFORM          = 226055, // the Spider display aura
     SPELL_SWARM                     = 214450, // passive
-    SPELL_BERSERK                   = 26662
+    SPELL_BERSERK                   = 26662,
+
+    // Spider form
+    SPELL_NECROTIC_VENOM            = 215443, // cast: dummy on up to two players
+    SPELL_NECROTIC_VENOM_AURA       = 215449, // the 10 s mark, applied to each chosen player
+    SPELL_NECROTIC_VENOM_DOT        = 215460, // when the mark runs out: damage and a pool under the player (225519)
+    SPELL_NECROTIC_VENOM_POOL       = 225519, // creates area trigger 7078, cast by 215460's tick
+    SPELL_FEEDING_TIME              = 212364,
+    SPELL_VILE_AMBUSH               = 214339, // missile, then a jump to the point (214346) and a knockback on arrival
+    SPELL_WEB_OF_PAIN               = 215288,
+    SPELL_WEB_OF_PAIN_SOURCE        = 215300,
+    SPELL_WEB_OF_PAIN_TARGET        = 215307,
+    SPELL_DRIPPING_FANGS            = 210229, // spiderling passive
+    SPELL_VENOMOUS_POOL_CREATE      = 213123, // spiderling death: creates area trigger 7078
+    SPELL_VENOMOUS_POOL_DAMAGE      = 213124  // aura on a unit standing in a pool
 };
 
 enum EleretheEvents
 {
     EVENT_BERSERK = 1,
-    EVENT_ENERGY
+    EVENT_ENERGY,
+
+    // Spider form
+    EVENT_NECROTIC_VENOM,
+    EVENT_FEEDING_TIME,
+    EVENT_VILE_AMBUSH,
+    EVENT_VILE_AMBUSH_FAILSAFE,
+    EVENT_WEB_OF_PAIN
+};
+
+enum ElerethePoints
+{
+    POINT_FEEDING_TIME_RISE = 1
 };
 
 enum EleretheGroups
@@ -76,6 +115,21 @@ static constexpr float FirstSpiderFormSeconds = 90.0f;
 static constexpr float SpiderFormSeconds = 92.0f;
 static constexpr float RocFormSeconds = 132.0f;
 static constexpr uint32 MAX_ENERGY = 100;
+
+// Calibrate: Spider form abilities (DBM 7.3.31 times; see global-constraints.md).
+static constexpr Milliseconds NecroticVenomFirst = 12200ms;
+static constexpr Milliseconds NecroticVenomRepeat = 21800ms;
+static constexpr uint8 NecroticVenomCasts = 4;
+static constexpr Milliseconds FeedingTimeFirst = 15500ms;
+static constexpr Milliseconds FeedingTimeRepeat = 50s;
+static constexpr uint8 FeedingTimeCasts = 2;
+static constexpr Milliseconds VileAmbushDelay = 10s;       // time in the web
+static constexpr Milliseconds VileAmbushFailsafe = 9s;     // after the cast; the missile takes seconds to arrive
+static constexpr Milliseconds WebOfPainRepeat = 30s;
+static constexpr float FeedingTimeRise = 15.0f;            // yards straight up
+static constexpr uint8 SpiderlingsPerFeedingTime = 5;
+static constexpr float SpiderlingSpread = 6.0f;            // radius around the players' centroid
+static constexpr uint32 NecroticVenomMaxTargets = 2;       // 1 when a single player is in the fight
 
 // Calibrate: how high above the web she flies over a bridge's middle.
 static constexpr float FlightHeight = 20.0f;
@@ -125,6 +179,35 @@ static std::array<std::vector<Position>, 2> const FlightPaths =
 // The middle of each bridge web, where she is drawn to for Feeding Time.
 static std::array<Position, 2> const BridgeMidpoints = { MakePosition(EleretheRoom::BridgeMiddles[0]), MakePosition(EleretheRoom::BridgeMiddles[1]) };
 
+namespace
+{
+    // Players in the boss's map that are alive.
+    std::vector<Player*> GetLivingPlayers(WorldObject const* source)
+    {
+        std::vector<Player*> players;
+        for (MapReference const& ref : source->GetMap()->GetPlayers())
+            if (Player* player = ref.GetSource())
+                if (player->IsAlive())
+                    players.push_back(player);
+        return players;
+    }
+
+    bool IsRangedPlayer(Player const* player)
+    {
+        ChrSpecializationEntry const* spec = player->GetPrimarySpecializationEntry();
+        return spec && spec->GetFlags().HasFlag(ChrSpecializationFlag::Ranged);
+    }
+
+    // Venomous Pool area triggers: the spiderling's (213123) and Necrotic Venom's (225519).
+    struct VenomousPoolCheck
+    {
+        bool operator()(AreaTrigger* at) const
+        {
+            return at->GetSpellId() == SPELL_VENOMOUS_POOL_CREATE || at->GetSpellId() == SPELL_NECROTIC_VENOM_POOL;
+        }
+    };
+}
+
 // 106087 - Elerethe Renferal
 struct boss_elerethe_renferal : public BossAI
 {
@@ -144,6 +227,11 @@ struct boss_elerethe_renferal : public BossAI
         _busy = false;
         _formChangePending = false;
         _inRocForm = false;
+        _venomCasts = 0;
+        _feedingCount = 0;
+        _ambushActive = false;
+        _webWarned = false;
+        _webTargets.clear();
         _energy = 0.0f;
         _energyPerSecond = 0.0f;
     }
@@ -169,12 +257,18 @@ struct boss_elerethe_renferal : public BossAI
         StartSpiderForm();
     }
 
-    // Spider form: energy runs from 0 and the form's abilities are scheduled (Tasks 3 and 4).
+    // Spider form: energy runs from 0 and the form's abilities are scheduled.
     void StartSpiderForm()
     {
         _inRocForm = false;
         events.SetPhase(PHASE_SPIDER);
         StartForm(_formCount == 1 ? FirstSpiderFormSeconds : SpiderFormSeconds);
+
+        _venomCasts = 0;
+        _feedingCount = 0;
+        events.ScheduleEvent(EVENT_NECROTIC_VENOM, NecroticVenomFirst, GROUP_FORM, PHASE_SPIDER);
+        events.ScheduleEvent(EVENT_FEEDING_TIME, FeedingTimeFirst, GROUP_FORM, PHASE_SPIDER);
+        events.ScheduleEvent(EVENT_WEB_OF_PAIN, WebOfPainRepeat, GROUP_FORM, PHASE_SPIDER);
     }
 
     // Roc form: energy runs from 0 and the form's abilities are scheduled (Task 5).
@@ -238,9 +332,138 @@ struct boss_elerethe_renferal : public BossAI
                 Talk(TALK_SPIDER_FORM);
                 StartSpiderForm();
                 break;
+            case SPELL_WEB_OF_PAIN:
+                // The pair lands when the cast finishes; the players were picked at its start.
+                for (ObjectGuid const& guid : _webTargets)
+                    if (Player* player = ObjectAccessor::GetPlayer(*me, guid))
+                        if (player->IsAlive())
+                            me->CastSpell(player, guid == _webTargets.front() ? SPELL_WEB_OF_PAIN_SOURCE : SPELL_WEB_OF_PAIN_TARGET, CastSpellExtraArgs(TRIGGERED_FULL_MASK));
+                _webTargets.clear();
+                break;
             default:
                 break;
         }
+    }
+
+    // Two distinct random players get the Web of Pain pair. Solo it is skipped (the line too).
+    void CastWebOfPain()
+    {
+        std::vector<Player*> players = GetLivingPlayers(me);
+        if (players.size() < 2)
+        {
+            if (!_webWarned)
+            {
+                _webWarned = true;
+                TC_LOG_DEBUG("scripts.ai", "boss_elerethe_renferal: Web of Pain skipped, fewer than two players in the fight");
+            }
+            return;
+        }
+
+        Trinity::Containers::RandomResize(players, 2);
+        _webTargets.clear();
+        for (Player* player : players)
+            _webTargets.push_back(player->GetGUID());
+
+        Talk(TALK_WEB_OF_PAIN);
+        DoCastSelf(SPELL_WEB_OF_PAIN);
+    }
+
+    // Feeding Time: she rises out of reach and spiderlings drop around the players.
+    void StartFeedingTime()
+    {
+        DoCastSelf(SPELL_FEEDING_TIME, true);
+        Talk(TALK_FEEDING_TIME);
+        Talk(TALK_FEEDING_TIME_EMOTE);
+
+        SetBusy(true);
+        me->SetUnitFlag(UNIT_FLAG_UNINTERACTIBLE);
+        me->SetCanFly(true);
+        me->SetDisableGravity(true);
+        Position up = me->GetPosition();
+        up.m_positionZ += FeedingTimeRise;
+        me->GetMotionMaster()->MovePoint(POINT_FEEDING_TIME_RISE, up, false);
+
+        SummonSpiderlings();
+        events.ScheduleEvent(EVENT_VILE_AMBUSH, VileAmbushDelay, GROUP_FORM, PHASE_SPIDER);
+    }
+
+    void SummonSpiderlings()
+    {
+        // Around the centroid of the players, at ground z.
+        std::vector<Player*> players = GetLivingPlayers(me);
+        float x = me->GetPositionX(), y = me->GetPositionY(), z = me->GetPositionZ();
+        if (!players.empty())
+        {
+            x = y = z = 0.0f;
+            for (Player* player : players)
+            {
+                x += player->GetPositionX();
+                y += player->GetPositionY();
+                z += player->GetPositionZ();
+            }
+            x /= players.size();
+            y /= players.size();
+            z /= players.size();
+        }
+
+        for (uint8 i = 0; i < SpiderlingsPerFeedingTime; ++i)
+        {
+            float const angle = frand(0.0f, 2.0f * float(M_PI));
+            float const dist = frand(0.0f, SpiderlingSpread);
+            float sx = x + std::cos(angle) * dist;
+            float sy = y + std::sin(angle) * dist;
+            float sz = z;
+            me->UpdateGroundPositionZ(sx, sy, sz);
+            me->SummonCreature(NPC_VENOMOUS_SPIDERLING, Position(sx, sy, sz, frand(0.0f, 2.0f * float(M_PI))), TEMPSUMMON_CORPSE_TIMED_DESPAWN, 10s);
+        }
+    }
+
+    // Vile Ambush: jump onto a random player's spot. Land() ends the web phase.
+    void StartVileAmbush()
+    {
+        Position dest = me->GetPosition();
+        std::vector<Player*> players = GetLivingPlayers(me);
+        if (!players.empty())
+            dest = Trinity::Containers::SelectRandomContainerElement(players)->GetPosition();
+        float z = dest.GetPositionZ();
+        me->UpdateGroundPositionZ(dest.m_positionX, dest.m_positionY, z);
+        dest.m_positionZ = z;
+
+        _ambushActive = true;
+        me->CastSpell(dest, SPELL_VILE_AMBUSH, CastSpellExtraArgs(TRIGGERED_FULL_MASK));
+        // Landing comes from MovementInform; this catches a jump that never happens.
+        events.ScheduleEvent(EVENT_VILE_AMBUSH_FAILSAFE, VileAmbushFailsafe, GROUP_FORM, PHASE_SPIDER);
+    }
+
+    void Land()
+    {
+        if (!_ambushActive)
+            return;
+
+        _ambushActive = false;
+        events.CancelEvent(EVENT_VILE_AMBUSH_FAILSAFE);
+        me->SetDisableGravity(false);
+        me->SetCanFly(false);
+        me->RemoveUnitFlag(UNIT_FLAG_UNINTERACTIBLE);
+        if (Unit* victim = me->GetVictim())
+            me->GetMotionMaster()->MoveChase(victim);
+        SetBusy(false);
+    }
+
+    void MovementInform(uint32 type, uint32 id) override
+    {
+        if (type == EFFECT_MOTION_TYPE && id == EVENT_JUMP)
+            Land();
+    }
+
+    void RemovePools()
+    {
+        std::list<AreaTrigger*> pools;
+        VenomousPoolCheck check;
+        Trinity::AreaTriggerListSearcher<VenomousPoolCheck> searcher(me, pools, check);
+        Cell::VisitAllObjects(me, searcher, 250.0f);
+        for (AreaTrigger* pool : pools)
+            pool->Remove();
     }
 
     void KilledUnit(Unit* victim) override
@@ -260,12 +483,25 @@ struct boss_elerethe_renferal : public BossAI
         me->SetDisableGravity(false);
         me->SetCanFly(false);
         me->RemoveUnitFlag(UNIT_FLAG_UNINTERACTIBLE);
+        events.CancelEventGroup(GROUP_FORM);
+        _ambushActive = false;
+        _webTargets.clear();
+        RemovePools();
+        instance->DoRemoveAurasDueToSpellOnPlayers(SPELL_NECROTIC_VENOM_AURA);
+        instance->DoRemoveAurasDueToSpellOnPlayers(SPELL_NECROTIC_VENOM_DOT);
+        instance->DoRemoveAurasDueToSpellOnPlayers(SPELL_WEB_OF_PAIN_SOURCE);
+        instance->DoRemoveAurasDueToSpellOnPlayers(SPELL_WEB_OF_PAIN_TARGET);
+        instance->DoRemoveAurasDueToSpellOnPlayers(SPELL_VENOMOUS_POOL_DAMAGE);
     }
 
     void EnterEvadeMode(EvadeReason /*why*/) override
     {
-        if (me->IsEngaged())
-            Talk(TALK_WIPE);
+        // An idle evade (not engaged, or already dead) must not despawn her.
+        if (!me->IsEngaged() || !me->IsAlive())
+            return;
+
+        Talk(TALK_WIPE);
+        me->InterruptNonMeleeSpells(false);
 
         CleanUp();
         // Task 6: tell the instance to respawn the egg sacs.
@@ -289,10 +525,42 @@ struct boss_elerethe_renferal : public BossAI
 
         events.Update(diff);
 
+        if (me->HasUnitState(UNIT_STATE_CASTING))
+            return;
+
         while (uint32 eventId = events.ExecuteEvent())
         {
+            // Holding: up in the web or in flight nothing else is cast. Vile Ambush ends the web
+            // phase, the energy tick keeps the form change due, and Berserk is never held.
+            if (_busy && eventId != EVENT_VILE_AMBUSH && eventId != EVENT_VILE_AMBUSH_FAILSAFE
+                && eventId != EVENT_ENERGY && eventId != EVENT_BERSERK)
+            {
+                events.Repeat(1s);
+                continue;
+            }
+
             switch (eventId)
             {
+                case EVENT_NECROTIC_VENOM:
+                    DoCastSelf(SPELL_NECROTIC_VENOM);
+                    if (++_venomCasts < NecroticVenomCasts)
+                        events.Repeat(NecroticVenomRepeat);
+                    break;
+                case EVENT_FEEDING_TIME:
+                    StartFeedingTime();
+                    if (++_feedingCount < FeedingTimeCasts)
+                        events.Repeat(FeedingTimeRepeat);
+                    break;
+                case EVENT_VILE_AMBUSH:
+                    StartVileAmbush();
+                    break;
+                case EVENT_VILE_AMBUSH_FAILSAFE:
+                    Land();
+                    break;
+                case EVENT_WEB_OF_PAIN:
+                    CastWebOfPain();
+                    events.Repeat(WebOfPainRepeat);
+                    break;
                 case EVENT_BERSERK:
                     DoCastSelf(SPELL_BERSERK, true);
                     break;
@@ -324,14 +592,155 @@ private:
     bool _busy;                // true while up in the web or in flight
     bool _formChangePending;
     bool _inRocForm;
+    uint8 _venomCasts;
+    uint8 _feedingCount;
+    bool _ambushActive;        // Vile Ambush cast, not landed yet
+    bool _webWarned;           // the solo debug line is logged once per fight
+    std::vector<ObjectGuid> _webTargets;
     float _energy;
     float _energyPerSecond;
 };
 
-// 106311 - Venomous Spiderling (Task 3)
+// 106311 - Venomous Spiderling
 struct npc_en_venomous_spiderling : public ScriptedAI
 {
     npc_en_venomous_spiderling(Creature* creature) : ScriptedAI(creature) { }
+
+    void JustAppeared() override
+    {
+        DoCastSelf(SPELL_DRIPPING_FANGS, true);
+        DoZoneInCombat();
+        if (Player* nearest = me->SelectNearestPlayer(200.0f))
+        {
+            AddThreat(nearest, 1000.0f);
+            AttackStart(nearest);
+        }
+    }
+
+    // The pool is made here, at the corpse (Task 1 (d)); 215489 would only hurt the corpse.
+    void JustDied(Unit* /*killer*/) override
+    {
+        DoCastSelf(SPELL_VENOMOUS_POOL_CREATE, true);
+    }
+
+    void UpdateAI(uint32 /*diff*/) override
+    {
+        if (!me->IsEngaged())
+            DoZoneInCombat();
+        UpdateVictim();
+    }
+};
+
+// 215443 - Necrotic Venom: one target when a single player is in the fight, else two; ranged first.
+class spell_en_necrotic_venom : public SpellScript
+{
+    bool Validate(SpellInfo const* /*spellInfo*/) override
+    {
+        return ValidateSpellInfo({ SPELL_NECROTIC_VENOM_AURA });
+    }
+
+    void FilterTargets(std::list<WorldObject*>& targets)
+    {
+        targets.remove_if([](WorldObject* target) { return !target->IsPlayer() || !target->ToPlayer()->IsAlive(); });
+
+        size_t const wanted = GetLivingPlayers(GetCaster()).size() <= 1 ? 1 : NecroticVenomMaxTargets;
+        if (targets.size() <= wanted)
+            return;
+
+        std::vector<WorldObject*> ranged, other;
+        for (WorldObject* target : targets)
+            (IsRangedPlayer(target->ToPlayer()) ? ranged : other).push_back(target);
+
+        // Ranged players first (chosen among themselves), then anyone for the rest.
+        Trinity::Containers::RandomShuffle(ranged);
+        Trinity::Containers::RandomShuffle(other);
+        std::vector<WorldObject*> picked;
+        for (WorldObject* target : ranged)
+            if (picked.size() < wanted)
+                picked.push_back(target);
+        for (WorldObject* target : other)
+            if (picked.size() < wanted)
+                picked.push_back(target);
+
+        targets.assign(picked.begin(), picked.end());
+    }
+
+    void HandleDummy(SpellEffIndex /*effIndex*/)
+    {
+        GetCaster()->CastSpell(GetHitUnit(), SPELL_NECROTIC_VENOM_AURA, CastSpellExtraArgs(TRIGGERED_FULL_MASK));
+    }
+
+    void Register() override
+    {
+        OnObjectAreaTargetSelect += SpellObjectAreaTargetSelectFn(spell_en_necrotic_venom::FilterTargets, EFFECT_0, TARGET_UNIT_SRC_AREA_ENEMY);
+        OnEffectHitTarget += SpellEffectFn(spell_en_necrotic_venom::HandleDummy, EFFECT_0, SPELL_EFFECT_DUMMY);
+    }
+};
+
+// 215449 - Necrotic Venom (the 10 s mark): when it runs out, the damage and pool-dropping debuff starts.
+class spell_en_necrotic_venom_mark : public AuraScript
+{
+    bool Validate(SpellInfo const* /*spellInfo*/) override
+    {
+        return ValidateSpellInfo({ SPELL_NECROTIC_VENOM_DOT });
+    }
+
+    void HandleRemove(AuraEffect const* /*aurEff*/, AuraEffectHandleModes /*mode*/)
+    {
+        if (GetTargetApplication()->GetRemoveMode() != AURA_REMOVE_BY_EXPIRE)
+            return;
+
+        Unit* target = GetTarget();
+        if (!target->IsAlive())
+            return;
+
+        if (Unit* caster = GetCaster())
+            if (caster->IsAlive() && caster->IsEngaged())
+                caster->CastSpell(target, SPELL_NECROTIC_VENOM_DOT, CastSpellExtraArgs(TRIGGERED_FULL_MASK));
+    }
+
+    void Register() override
+    {
+        AfterEffectRemove += AuraEffectRemoveFn(spell_en_necrotic_venom_mark::HandleRemove, EFFECT_0, SPELL_AURA_PERIODIC_TRIGGER_SPELL, AURA_EFFECT_HANDLE_REAL);
+    }
+};
+
+// 7078 - Venomous Pool (created by 213123 on a spiderling's death and by 225519 under a Necrotic Venom player)
+struct at_en_venomous_pool : AreaTriggerAI
+{
+    at_en_venomous_pool(AreaTrigger* at) : AreaTriggerAI(at) { }
+
+    // 213124 targets its caster (effect target 1), so the player must be the caster, or the aura
+    // lands on whoever cast it (the boss stacked it on herself). Elerethe is the original caster
+    // for the damage credit. One application per player: the pool presence holds it.
+    void OnUnitEnter(Unit* unit) override
+    {
+        if (!unit->IsPlayer() || !unit->IsAlive() || unit->HasAura(SPELL_VENOMOUS_POOL_DAMAGE))
+            return;
+
+        CastSpellExtraArgs args(TRIGGERED_FULL_MASK);
+        if (InstanceScript* instance = at->GetInstanceScript())
+            if (Creature* boss = instance->GetCreature(DATA_ELERETHE_RENFERAL))
+                args.SetOriginalCaster(boss->GetGUID());
+        unit->CastSpell(unit, SPELL_VENOMOUS_POOL_DAMAGE, args);
+    }
+
+    void OnUnitExit(Unit* unit) override
+    {
+        if (!unit->IsPlayer())
+            return;
+
+        // Pools overlap: keep the damage while the player still stands in another one.
+        std::list<AreaTrigger*> pools;
+        VenomousPoolCheck check;
+        Trinity::AreaTriggerListSearcher<VenomousPoolCheck> searcher(at, pools, check);
+        Cell::VisitAllObjects(at, searcher, 15.0f);
+        for (AreaTrigger* other : pools)
+            if (other != at && other->GetInsideUnits().contains(unit->GetGUID()))
+                return;
+
+        unit->RemoveAurasDueToSpell(SPELL_VENOMOUS_POOL_DAMAGE);
+    }
 };
 
 // 108542 - Skittering Spiderling (Task 6)
@@ -359,4 +768,7 @@ void AddSC_boss_elerethe_renferal()
     RegisterCreatureAI(npc_en_skittering_spiderling);
     RegisterCreatureAI(npc_en_twisting_shadows);
     RegisterCreatureAI(npc_en_elerethe_egg_sac);
+    RegisterSpellScript(spell_en_necrotic_venom);
+    RegisterSpellScript(spell_en_necrotic_venom_mark);
+    RegisterAreaTriggerAI(at_en_venomous_pool);
 }
