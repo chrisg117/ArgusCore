@@ -95,8 +95,7 @@ called from `broken_isles_script_loader.cpp` in the Emerald Nightmare block.
   create-properties id (position read from the WorldSafeLocs entry by id, so
   the Id lives in one table in the script, not hard-coded coordinates).
 - If refused, send the player a short system message ("The portal does not
-  respond.") and throttle it so standing in the trigger does not spam. A
-  per-player timestamp in the AI is enough.
+  respond."). `OnUnitEnter` only fires on entry, so no throttle is needed.
 - Destination wing is determined by `at->GetCreateProperties()->Id`, not by
   trigger position, so the SQL and script share one key.
 
@@ -112,9 +111,9 @@ may have taken them):
 |-----|-----|
 | Hub triggers, template + create properties | 152003-152006 (Un'goro, Thunder Bluff, Grizzly Hills, Emerald Dreamway) |
 | Return triggers, template + create properties | 152007-152010, same wing order |
-| `areatrigger` spawns, hub | 1520002-1520005 |
-| `areatrigger` spawns, return | 1520006-1520009 |
-| `gameobject` spawns, portals | 1520004-1520007 for 254270-254273 |
+| `areatrigger` spawns, hub | 1520201-1520204 |
+| `areatrigger` spawns, return | 1520205-1520208 |
+| `gameobject` spawns, portals | 1520201-1520204 for 254270-254273 (1520004-1520110 are taken by the Il'gynoth and Elerethe work) |
 
 - Hub triggers: `areatrigger_create_properties` with `ScriptName
   'at_en_hub_portal'`, sphere (shape 0) radius 4, `IsCustom = 1`; a matching
