@@ -58,20 +58,37 @@ enum EleretheSpells
     SPELL_WEB_OF_PAIN_TARGET        = 215307,
     SPELL_DRIPPING_FANGS            = 210229, // spiderling passive
     SPELL_VENOMOUS_POOL_CREATE      = 213123, // spiderling death: creates area trigger 7078
-    SPELL_VENOMOUS_POOL_DAMAGE      = 213124  // aura on a unit standing in a pool
+    SPELL_VENOMOUS_POOL_DAMAGE      = 213124, // aura on a unit standing in a pool
+
+    // Roc form
+    SPELL_TWISTING_SHADOWS          = 210864, // 1.3 s cast, hits everyone in 300 yd; the script keeps 2 (1 solo)
+    SPELL_TWISTING_SHADOWS_MARK     = 210863, // the 10 s mark; a tornado forms where the player stands when it ends
+    SPELL_TWISTING_SHADOWS_AURA     = 210850, // 4 s stun and damage, put on a player the tornado reaches
+    SPELL_TWISTING_SHADOWS_FIXATE   = 221877, // the tornado's target
+    SPELL_GATHERING_CLOUDS          = 212707, // 2.5 s cast, 8 s wind that pushes players back
+    SPELL_RAKING_TALONS             = 215582, // 2 s cast, a stacking debuff
+    SPELL_RAKING_TALONS_REPEAT      = 222037, // the quick second hit
+    SPELL_RAZOR_WING                = 210547  // 4.5 s cast, a cone in front of her
 };
 
 enum EleretheEvents
 {
-    EVENT_BERSERK = 1,
-    EVENT_ENERGY,
+    // Energy and Berserk are timers in UpdateAI, not events: a cast must not delay them.
 
     // Spider form
-    EVENT_NECROTIC_VENOM,
+    EVENT_NECROTIC_VENOM = 1,
     EVENT_FEEDING_TIME,
     EVENT_VILE_AMBUSH,
     EVENT_VILE_AMBUSH_FAILSAFE,
-    EVENT_WEB_OF_PAIN
+    EVENT_WEB_OF_PAIN,
+
+    // Roc form
+    EVENT_TWISTING_SHADOWS,
+    EVENT_GATHERING_CLOUDS,
+    EVENT_DARK_STORM,
+    EVENT_RAKING_TALONS,
+    EVENT_RAKING_TALONS_REPEAT,
+    EVENT_RAZOR_WING
 };
 
 enum ElerethePoints
@@ -130,6 +147,26 @@ static constexpr float FeedingTimeRise = 15.0f;            // yards straight up
 static constexpr uint8 SpiderlingsPerFeedingTime = 5;
 static constexpr float SpiderlingSpread = 6.0f;            // radius around the players' centroid
 static constexpr uint32 NecroticVenomMaxTargets = 2;       // 1 when a single player is in the fight
+
+// Calibrate: Roc form abilities (DBM 7.3.31 times from the form's transform; see global-constraints.md).
+static constexpr Milliseconds TwistingShadowsFirst = 6600ms;
+static constexpr std::array<Milliseconds, 3> TwistingShadowsGaps = { 40s, 21500ms, 32500ms };  // 4 casts
+static constexpr Milliseconds GatheringCloudsFirst = 15800ms;
+static constexpr Milliseconds DarkStormFirst = 26s;          // first and second Roc form only (Task 5)
+static constexpr uint8 DarkStormRocForms = 2;
+static constexpr Milliseconds RakingTalonsFirst = 52s;
+static constexpr Milliseconds RakingTalonsRepeat = 32500ms;
+static constexpr uint8 RakingTalonsCasts = 3;
+static constexpr Milliseconds RazorWingFirst = 59s;
+static constexpr Milliseconds RazorWingRepeat = 32500ms;
+static constexpr uint8 RazorWingCasts = 3;
+static constexpr uint32 TwistingShadowsMaxTargets = 2;       // 1 when a single player is in the fight
+
+// Calibrate: the Twisting Shadows tornado.
+static constexpr Milliseconds TornadoDuration = 4s;          // = the 4 s of 210850
+static constexpr float TornadoSpeedRate = 0.5f;              // "slowly"
+static constexpr float TornadoReach = 5.0f;                  // yards: a player this close gets 210850
+static constexpr float TornadoFixateRange = 100.0f;
 
 // Calibrate: how high above the web she flies over a bridge's middle.
 static constexpr float FlightHeight = 20.0f;
@@ -234,6 +271,10 @@ struct boss_elerethe_renferal : public BossAI
         _webTargets.clear();
         _energy = 0.0f;
         _energyPerSecond = 0.0f;
+        _berserkTimer = 0;
+        _twistingCasts = 0;
+        _talonCasts = 0;
+        _razorCasts = 0;
     }
 
     void Reset() override
@@ -253,7 +294,7 @@ struct boss_elerethe_renferal : public BossAI
         Talk(TALK_AGGRO);
         DoCastSelf(SPELL_SWARM, true);
 
-        events.ScheduleEvent(EVENT_BERSERK, 540s);
+        _berserkTimer = 540000;
         StartSpiderForm();
     }
 
@@ -271,13 +312,23 @@ struct boss_elerethe_renferal : public BossAI
         events.ScheduleEvent(EVENT_WEB_OF_PAIN, WebOfPainRepeat, GROUP_FORM, PHASE_SPIDER);
     }
 
-    // Roc form: energy runs from 0 and the form's abilities are scheduled (Task 5).
+    // Roc form: energy runs from 0 and the form's abilities are scheduled (Task 5 adds the flight).
     void StartRocForm()
     {
         _inRocForm = true;
         ++_rocCount;
         events.SetPhase(PHASE_ROC);
         StartForm(RocFormSeconds);
+
+        _twistingCasts = 0;
+        _talonCasts = 0;
+        _razorCasts = 0;
+        events.ScheduleEvent(EVENT_TWISTING_SHADOWS, TwistingShadowsFirst, GROUP_FORM, PHASE_ROC);
+        events.ScheduleEvent(EVENT_GATHERING_CLOUDS, GatheringCloudsFirst, GROUP_FORM, PHASE_ROC);
+        if (_rocCount <= DarkStormRocForms)
+            events.ScheduleEvent(EVENT_DARK_STORM, DarkStormFirst, GROUP_FORM, PHASE_ROC);
+        events.ScheduleEvent(EVENT_RAKING_TALONS, RakingTalonsFirst, GROUP_FORM, PHASE_ROC);
+        events.ScheduleEvent(EVENT_RAZOR_WING, RazorWingFirst, GROUP_FORM, PHASE_ROC);
     }
 
     void StartForm(float secondsToFull)
@@ -287,7 +338,40 @@ struct boss_elerethe_renferal : public BossAI
         _energy = 0.0f;
         _energyPerSecond = float(MAX_ENERGY) / secondsToFull;
         me->SetPower(POWER_ENERGY, 0);
-        events.RescheduleEvent(EVENT_ENERGY, 1s);
+    }
+
+    // Energy fills from elapsed time, outside the event map: casts (Gathering Clouds, Razor Wing)
+    // must not delay the form change. At 100 the change is retried every update until it can happen.
+    void UpdateEnergy(uint32 diff)
+    {
+        if (_energy < float(MAX_ENERGY))
+        {
+            _energy = std::min(_energy + _energyPerSecond * float(diff) / 1000.0f, float(MAX_ENERGY));
+            // Within a thousandth of full counts as full.
+            if (_energy > float(MAX_ENERGY) - 0.001f)
+                _energy = float(MAX_ENERGY);
+            if (int32(_energy) != me->GetPower(POWER_ENERGY))
+                me->SetPower(POWER_ENERGY, int32(_energy));
+        }
+
+        if (_energy >= float(MAX_ENERGY))
+            TryFormChange();
+    }
+
+    // Berserk is not held by anything.
+    void UpdateBerserk(uint32 diff)
+    {
+        if (!_berserkTimer)
+            return;
+
+        if (diff < _berserkTimer)
+        {
+            _berserkTimer -= diff;
+            return;
+        }
+
+        _berserkTimer = 0;
+        DoCastSelf(SPELL_BERSERK, true);
     }
 
     // Energy is full: change form as soon as she is on the ground and not in a cast. If she is up
@@ -331,6 +415,10 @@ struct boss_elerethe_renferal : public BossAI
                 ++_formCount;
                 Talk(TALK_SPIDER_FORM);
                 StartSpiderForm();
+                break;
+            case SPELL_RAKING_TALONS:
+                // One quick second hit when the cast ends.
+                events.ScheduleEvent(EVENT_RAKING_TALONS_REPEAT, 1ms, GROUP_FORM, PHASE_ROC);
                 break;
             case SPELL_WEB_OF_PAIN:
                 // The pair lands when the cast finishes; the players were picked at its start.
@@ -484,6 +572,7 @@ struct boss_elerethe_renferal : public BossAI
         me->SetCanFly(false);
         me->RemoveUnitFlag(UNIT_FLAG_UNINTERACTIBLE);
         events.CancelEventGroup(GROUP_FORM);
+        _berserkTimer = 0;
         _ambushActive = false;
         _webTargets.clear();
         RemovePools();
@@ -492,6 +581,10 @@ struct boss_elerethe_renferal : public BossAI
         instance->DoRemoveAurasDueToSpellOnPlayers(SPELL_WEB_OF_PAIN_SOURCE);
         instance->DoRemoveAurasDueToSpellOnPlayers(SPELL_WEB_OF_PAIN_TARGET);
         instance->DoRemoveAurasDueToSpellOnPlayers(SPELL_VENOMOUS_POOL_DAMAGE);
+        me->RemoveAurasDueToSpell(SPELL_GATHERING_CLOUDS);
+        instance->DoRemoveAurasDueToSpellOnPlayers(SPELL_TWISTING_SHADOWS_MARK);
+        instance->DoRemoveAurasDueToSpellOnPlayers(SPELL_TWISTING_SHADOWS_AURA);
+        instance->DoRemoveAurasDueToSpellOnPlayers(SPELL_RAKING_TALONS);
     }
 
     void EnterEvadeMode(EvadeReason /*why*/) override
@@ -523,6 +616,10 @@ struct boss_elerethe_renferal : public BossAI
         if (!UpdateVictim())
             return;
 
+        // Before the casting check, so a long cast never delays either.
+        UpdateEnergy(diff);
+        UpdateBerserk(diff);
+
         events.Update(diff);
 
         if (me->HasUnitState(UNIT_STATE_CASTING))
@@ -531,11 +628,18 @@ struct boss_elerethe_renferal : public BossAI
         while (uint32 eventId = events.ExecuteEvent())
         {
             // Holding: up in the web or in flight nothing else is cast. Vile Ambush ends the web
-            // phase, the energy tick keeps the form change due, and Berserk is never held.
-            if (_busy && eventId != EVENT_VILE_AMBUSH && eventId != EVENT_VILE_AMBUSH_FAILSAFE
-                && eventId != EVENT_ENERGY && eventId != EVENT_BERSERK)
+            // phase; the energy timer keeps the form change due.
+            bool const ambush = eventId == EVENT_VILE_AMBUSH || eventId == EVENT_VILE_AMBUSH_FAILSAFE;
+            if (_busy && !ambush)
             {
                 events.Repeat(1s);
+                continue;
+            }
+
+            // A cast began earlier in this update: this one waits, it is not lost.
+            if (!ambush && me->HasUnitState(UNIT_STATE_CASTING))
+            {
+                events.Repeat(100ms);
                 continue;
             }
 
@@ -561,23 +665,34 @@ struct boss_elerethe_renferal : public BossAI
                     CastWebOfPain();
                     events.Repeat(WebOfPainRepeat);
                     break;
-                case EVENT_BERSERK:
-                    DoCastSelf(SPELL_BERSERK, true);
+                case EVENT_TWISTING_SHADOWS:
+                    // The spell's script marks the players (2, 1 solo).
+                    DoCastSelf(SPELL_TWISTING_SHADOWS);
+                    if (_twistingCasts < TwistingShadowsGaps.size())
+                        events.Repeat(TwistingShadowsGaps[_twistingCasts]);
+                    ++_twistingCasts;
                     break;
-                case EVENT_ENERGY:
-                    // A float accumulator: the rate is not a whole number a second.
-                    if (_energy < float(MAX_ENERGY))
-                    {
-                        _energy = std::min(_energy + _energyPerSecond, float(MAX_ENERGY));
-                        // Within a thousandth of full counts as full (100/92 added 92 times).
-                        if (_energy > float(MAX_ENERGY) - 0.001f)
-                            _energy = float(MAX_ENERGY);
-                        me->SetPower(POWER_ENERGY, int32(_energy));
-                    }
-                    // At 100 the change is retried every second until it can happen.
-                    if (_energy >= float(MAX_ENERGY))
-                        TryFormChange();
-                    events.Repeat(1s);
+                case EVENT_GATHERING_CLOUDS:
+                    Talk(TALK_GATHERING_CLOUDS);
+                    Talk(TALK_GATHERING_CLOUDS_EMOTE);
+                    DoCastSelf(SPELL_GATHERING_CLOUDS);
+                    break;
+                case EVENT_DARK_STORM:
+                    // Task 5: the flight and the storm.
+                    break;
+                case EVENT_RAKING_TALONS:
+                    DoCastVictim(SPELL_RAKING_TALONS);
+                    if (++_talonCasts < RakingTalonsCasts)
+                        events.Repeat(RakingTalonsRepeat);
+                    break;
+                case EVENT_RAKING_TALONS_REPEAT:
+                    DoCastVictim(SPELL_RAKING_TALONS_REPEAT);
+                    break;
+                case EVENT_RAZOR_WING:
+                    Talk(TALK_RAZOR_WING);
+                    DoCastVictim(SPELL_RAZOR_WING);
+                    if (++_razorCasts < RazorWingCasts)
+                        events.Repeat(RazorWingRepeat);
                     break;
                 default:
                     break;
@@ -599,6 +714,10 @@ private:
     std::vector<ObjectGuid> _webTargets;
     float _energy;
     float _energyPerSecond;
+    uint32 _berserkTimer;      // ms left to Berserk; 0 = not running
+    uint8 _twistingCasts;
+    uint8 _talonCasts;
+    uint8 _razorCasts;
 };
 
 // 106311 - Venomous Spiderling
@@ -749,10 +868,118 @@ struct npc_en_skittering_spiderling : public ScriptedAI
     npc_en_skittering_spiderling(Creature* creature) : ScriptedAI(creature) { }
 };
 
-// 106350 - Twisting Shadows (Task 5)
+// 106350 - Twisting Shadows: the tornado a 210863 mark leaves behind. It follows a player slowly and
+// puts 210850 (stun and damage for 4 s) on whoever it reaches, then goes (the summon's duration).
+// 210850's own effects target its caster, so the player casts it on themselves; the tornado is the
+// original caster. The boss summons the tornado, so JustSummoned puts it in her summons.
 struct npc_en_twisting_shadows : public ScriptedAI
 {
-    npc_en_twisting_shadows(Creature* creature) : ScriptedAI(creature) { }
+    npc_en_twisting_shadows(Creature* creature) : ScriptedAI(creature), _checkTimer(0) { }
+
+    void JustAppeared() override
+    {
+        me->SetReactState(REACT_PASSIVE);
+        me->SetSpeedRate(MOVE_WALK, TornadoSpeedRate);
+        me->SetSpeedRate(MOVE_RUN, TornadoSpeedRate);
+
+        // The player it chases: the nearest one (the marked player stood where it formed).
+        if (Player* target = me->SelectNearestPlayer(TornadoFixateRange))
+        {
+            if (!target->IsGameMaster())
+            {
+                DoCast(target, SPELL_TWISTING_SHADOWS_FIXATE, true);
+                me->GetMotionMaster()->MoveFollow(target, 0.5f);
+            }
+        }
+    }
+
+    void UpdateAI(uint32 diff) override
+    {
+        if (_checkTimer > diff)
+        {
+            _checkTimer -= diff;
+            return;
+        }
+        _checkTimer = 250;
+
+        std::list<Player*> players;
+        me->GetPlayerListInGrid(players, TornadoReach);
+        for (Player* player : players)
+        {
+            if (!player->IsAlive() || player->IsGameMaster() || player->HasAura(SPELL_TWISTING_SHADOWS_AURA))
+                continue;
+
+            CastSpellExtraArgs args(TRIGGERED_FULL_MASK);
+            args.SetOriginalCaster(me->GetGUID());
+            player->CastSpell(player, SPELL_TWISTING_SHADOWS_AURA, args);
+        }
+    }
+
+private:
+    uint32 _checkTimer;
+};
+
+// 210864 - Twisting Shadows (cast): marks up to two players (one when solo) with 210863.
+class spell_en_twisting_shadows : public SpellScript
+{
+    bool Validate(SpellInfo const* /*spellInfo*/) override
+    {
+        return ValidateSpellInfo({ SPELL_TWISTING_SHADOWS_MARK });
+    }
+
+    void FilterTargets(std::list<WorldObject*>& targets)
+    {
+        targets.remove_if([](WorldObject* target)
+        {
+            Player* player = target->ToPlayer();
+            return !player || !player->IsAlive() || player->IsGameMaster();
+        });
+
+        size_t const wanted = GetLivingPlayers(GetCaster()).size() <= 1 ? 1 : TwistingShadowsMaxTargets;
+        if (targets.size() > wanted)
+            Trinity::Containers::RandomResize(targets, wanted);
+    }
+
+    void HandleDummy(SpellEffIndex /*effIndex*/)
+    {
+        GetCaster()->CastSpell(GetHitUnit(), SPELL_TWISTING_SHADOWS_MARK, CastSpellExtraArgs(TRIGGERED_FULL_MASK));
+    }
+
+    void Register() override
+    {
+        OnObjectAreaTargetSelect += SpellObjectAreaTargetSelectFn(spell_en_twisting_shadows::FilterTargets, EFFECT_0, TARGET_UNIT_SRC_AREA_ENEMY);
+        OnEffectHitTarget += SpellEffectFn(spell_en_twisting_shadows::HandleDummy, EFFECT_0, SPELL_EFFECT_DUMMY);
+    }
+};
+
+// 210863 - Twisting Shadows (the 10 s mark): when it runs out, a tornado forms where the player stands.
+// The aura's own periodic trigger (210877, a summon at the caster) is stopped; the boss summons the
+// tornado at the marked player instead.
+class spell_en_twisting_shadows_mark : public AuraScript
+{
+    void HandlePeriodic(AuraEffect const* /*aurEff*/)
+    {
+        PreventDefaultAction();
+    }
+
+    void HandleRemove(AuraEffect const* /*aurEff*/, AuraEffectHandleModes /*mode*/)
+    {
+        if (GetTargetApplication()->GetRemoveMode() != AURA_REMOVE_BY_EXPIRE)
+            return;
+
+        Unit* target = GetTarget();
+        Unit* caster = GetCaster();
+        if (!target->IsAlive() || !caster || !caster->IsAlive() || !caster->IsEngaged())
+            return;
+
+        caster->SummonCreature(NPC_TWISTING_SHADOWS, target->GetPosition(), TEMPSUMMON_TIMED_DESPAWN, TornadoDuration);
+    }
+
+    void Register() override
+    {
+        OnEffectPeriodic += AuraEffectPeriodicFn(spell_en_twisting_shadows_mark::HandlePeriodic, EFFECT_0, SPELL_AURA_PERIODIC_TRIGGER_SPELL);
+        AfterEffectRemove += AuraEffectRemoveFn(spell_en_twisting_shadows_mark::HandleRemove, EFFECT_0, SPELL_AURA_PERIODIC_TRIGGER_SPELL, AURA_EFFECT_HANDLE_REAL);
+    }
 };
 
 // 108540 - Egg Sac (Task 6)
@@ -770,5 +997,7 @@ void AddSC_boss_elerethe_renferal()
     RegisterCreatureAI(npc_en_elerethe_egg_sac);
     RegisterSpellScript(spell_en_necrotic_venom);
     RegisterSpellScript(spell_en_necrotic_venom_mark);
+    RegisterSpellScript(spell_en_twisting_shadows);
+    RegisterSpellScript(spell_en_twisting_shadows_mark);
     RegisterAreaTriggerAI(at_en_venomous_pool);
 }
