@@ -181,13 +181,13 @@ static std::array<Position, 2> const BridgeMidpoints = { MakePosition(EleretheRo
 
 namespace
 {
-    // Players in the boss's map that are alive.
-    std::vector<Player*> GetLivingPlayers(WorldObject const* source)
+    // The living players she is fighting: on her threat list, GMs excluded. Not every player in the map.
+    std::vector<Player*> GetLivingPlayers(Unit const* source)
     {
         std::vector<Player*> players;
-        for (MapReference const& ref : source->GetMap()->GetPlayers())
-            if (Player* player = ref.GetSource())
-                if (player->IsAlive())
+        for (ThreatReference const* ref : source->GetThreatManager().GetUnsortedThreatList())
+            if (Player* player = ref->GetVictim()->ToPlayer())
+                if (player->IsAlive() && !player->IsGameMaster())
                     players.push_back(player);
         return players;
     }
