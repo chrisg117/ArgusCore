@@ -37,6 +37,7 @@ void AddSC_instance_emerald_nightmare();
 void AddSC_boss_nythendra();
 void AddSC_boss_ilgynoth();
 void AddSC_areatrigger_emerald_nightmare();
+void AddSC_boss_elerethe_renferal();
 
 // Broken Shore scenario
 void AddSC_broken_shore_alliance_forces();
@@ -73,6 +74,7 @@ void AddBrokenIslesScripts()
     AddSC_boss_nythendra();
     AddSC_boss_ilgynoth();
     AddSC_areatrigger_emerald_nightmare();
+    AddSC_boss_elerethe_renferal();
 
     // Broken Shore scenario
     AddSC_broken_shore_alliance_forces();

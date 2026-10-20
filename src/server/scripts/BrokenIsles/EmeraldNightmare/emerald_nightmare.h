@@ -19,6 +19,7 @@
 #define DEF_EMERALD_NIGHTMARE_H_
 
 #include "CreatureAIImpl.h"
+#include <array>
 
 #define DataHeader "EmeraldNightmare"
 #define ENScriptName "instance_emerald_nightmare"
@@ -65,6 +66,12 @@ enum ENCreatureIds
     NPC_CORRUPTOR_TENTACLE          = 105383,
     NPC_NIGHTMARE_HORROR            = 105591,
     NPC_NIGHTMARE_ICHOR             = 105721,
+
+    // Elerethe Renferal
+    NPC_VENOMOUS_SPIDERLING         = 106311,
+    NPC_SKITTERING_SPIDERLING       = 108542,
+    NPC_TWISTING_SHADOWS            = 106350,
+    NPC_ELERETHE_EGG_SAC            = 108540,
 };
 
 enum ENGameObjectIds
@@ -73,6 +80,32 @@ enum ENGameObjectIds
     GO_NYTHENDRA_EXIT_ROOT_WALL     = 254987, // NightmareBoss1DungeonDoor, the way on to Il'gynoth
     GO_EYE_OF_ILGYNOTH_FORCEFIELD   = 251555  // a thin collision wall at the hollow mouth
 };
+
+// Elerethe Renferal's room, from the .gps readings of 2026-10-19 (map 1520). Shared by the
+// instance (the boundary) and the boss script (landings, flight paths).
+namespace EleretheRoom
+{
+    struct Point { float x, y, z; };
+
+    // Where she lands on each of the three platforms (platform circle centres, at the floor z).
+    constexpr std::array<Point, 3> Landings =
+    {{
+        { 11401.604f, 11404.183f, -85.51545f },
+        { 11372.929f, 11223.446f, -101.980934f },
+        { 11540.084f, 11301.364f, -87.167656f }
+    }};
+
+    // The middle of each curved bridge web (P1 to P2, P2 to P3), on the web.
+    constexpr std::array<Point, 2> BridgeMiddles =
+    {{
+        { 11370.096f, 11318.254f, -98.345215f },
+        { 11457.219f, 11233.29f, -93.97142f }
+    }};
+
+    // Calibrate: the platform radii (yd), used by the boss script; the room boundary is
+    // fitted to a walked trail (see the instance script).
+    constexpr std::array<float, 3> PlatformRadii = { 45.0f, 45.0f, 45.0f };
+}
 
 template <class AI, class T>
 inline AI* GetEmeraldNightmareAI(T* obj)
