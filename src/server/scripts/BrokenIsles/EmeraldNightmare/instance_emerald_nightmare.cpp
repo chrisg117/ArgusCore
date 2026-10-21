@@ -25,19 +25,24 @@
 // Elerethe Renferal: fitted 2026-10-20 to a trail walked as a GM (one closed loop per
 // platform and per bridge web, 3 yd margin; fitter: ~/emerald-nightmare/fit_boundary.py).
 // A union of seven pieces, each a polygon (vertices relative to its origin) cut to a z band:
-// the band is the loop's lowest z - 10 up to its highest z + 15, and + 25 on the bridges so
-// the flight over a web (20 yd up) stays inside. The five loops are
-// convex hulls of the walked points (the loops overlapped themselves). Two more pieces are
-// 20 yd wide strips along walked paths: the alternate way P2 to P3 and the bridge P3 to P1
-// (three readings each, ends extended 5 yd into the platforms, z band min - 10 .. max + 15).
+// the band is the loop's lowest z - 10 (falling below the webs still counts as leaving) up to
+// its highest walked z + ElereteBoundaryHeadroom. The headroom covers the flight over a web
+// (20 yd up) and a Shimmering Feather leap (212986), whose peak went 1.6 yd over P1's old
+// +15 yd top and made her evade. The five loops are convex hulls of the walked points (the loops
+// overlapped themselves). Two more pieces are 20 yd wide strips along walked paths: the
+// alternate way P2 to P3 and the bridge P3 to P1 (three readings each, ends extended 5 yd into
+// the platforms).
 namespace
 {
     struct BoundaryPiece
     {
         float originX, originY;
-        float minZ, maxZ;
+        float minZ, topZ;  // the loop's lowest z - 10, and its highest walked z
         std::vector<Position> vertices;
     };
+
+    // Yards of air allowed above each piece's highest walked point.
+    constexpr float ElereteBoundaryHeadroom = 40.0f;
 }
 
 static AreaBoundary const* MakeElereteBoundary()
@@ -45,7 +50,7 @@ static AreaBoundary const* MakeElereteBoundary()
     static std::array<BoundaryPiece, 7> const pieces =
     {{
         // P1, 21 vertices
-        { 11405.62f, 11389.69f, -100.21f, -66.70f,
+        { 11405.62f, 11389.69f, -100.21f, -81.70f,
           { Position(-59.44f, -3.99f), Position(-59.18f, -12.96f), Position(-51.45f, -26.41f),
             Position(-46.62f, -32.91f), Position(-5.03f, -35.08f), Position(1.74f, -35.30f),
             Position(8.85f, -35.22f), Position(15.11f, -34.96f), Position(23.71f, -32.04f),
@@ -54,7 +59,7 @@ static AreaBoundary const* MakeElereteBoundary()
             Position(11.08f, 48.09f), Position(5.05f, 48.86f), Position(-3.31f, 48.66f),
             Position(-31.33f, 29.35f), Position(-36.81f, 25.03f), Position(-41.44f, 21.04f) } },
         // P2, 22 vertices
-        { 11375.87f, 11227.80f, -111.99f, -82.34f,
+        { 11375.87f, 11227.80f, -111.99f, -97.34f,
           { Position(-50.58f, 5.36f), Position(-49.53f, -4.73f), Position(-38.15f, -28.45f),
             Position(-35.12f, -34.76f), Position(-31.80f, -41.66f), Position(-12.05f, -57.94f),
             Position(1.95f, -49.78f), Position(11.69f, -44.08f), Position(33.51f, -27.17f),
@@ -64,7 +69,7 @@ static AreaBoundary const* MakeElereteBoundary()
             Position(-30.58f, 32.01f), Position(-35.10f, 28.54f), Position(-42.83f, 22.26f),
             Position(-49.66f, 12.28f) } },
         // P3, 19 vertices
-        { 11532.66f, 11289.11f, -103.87f, -61.63f,
+        { 11532.66f, 11289.11f, -103.87f, -76.63f,
           { Position(-46.29f, 1.68f), Position(-43.72f, -34.06f), Position(-41.30f, -38.47f),
             Position(-33.33f, -45.03f), Position(-24.12f, -50.38f), Position(-17.24f, -53.35f),
             Position(-2.89f, -56.37f), Position(5.60f, -56.10f), Position(11.39f, -51.60f),
@@ -73,22 +78,22 @@ static AreaBoundary const* MakeElereteBoundary()
             Position(18.80f, 55.74f), Position(-27.09f, 62.47f), Position(-35.88f, 59.11f),
             Position(-41.82f, 51.51f) } },
         // B12, 11 vertices
-        { 11362.71f, 11308.93f, -112.93f, -65.86f,
+        { 11362.71f, 11308.93f, -112.93f, -90.86f,
           { Position(-21.63f, -46.95f), Position(-19.30f, -54.43f), Position(-11.77f, -56.70f),
             Position(-5.00f, -54.78f), Position(15.70f, -7.51f), Position(21.38f, 5.52f),
             Position(22.92f, 11.17f), Position(7.87f, 48.85f), Position(2.88f, 50.65f),
             Position(-2.92f, 51.73f), Position(-10.11f, 52.46f) } },
         // B23, 8 vertices
-        { 11454.98f, 11237.07f, -110.70f, -65.97f,
+        { 11454.98f, 11237.07f, -110.70f, -90.97f,
           { Position(-40.31f, 5.11f), Position(-40.30f, -7.01f), Position(-9.77f, -15.68f),
             Position(-2.52f, -17.42f), Position(5.97f, -17.24f), Position(10.61f, -13.12f),
             Position(36.40f, 24.36f), Position(39.93f, 41.00f) } },
         // S23, 6 vertices
-        { 11451.25f, 11262.16f, -109.65f, -78.00f,
+        { 11451.25f, 11262.16f, -109.65f, -93.00f,
           { Position(-39.77f, 0.98f), Position(-5.36f, 8.64f), Position(38.23f, 19.57f),
             Position(43.09f, 0.17f), Position(-0.75f, -10.82f), Position(-35.43f, -18.54f) } },
         // S31, 6 vertices
-        { 11478.71f, 11365.47f, -104.10f, -72.30f,
+        { 11478.71f, 11365.47f, -104.10f, -87.30f,
           { Position(11.98f, -31.18f), Position(-5.03f, -8.51f), Position(-30.33f, 20.90f),
             Position(-15.16f, 33.94f), Position(10.57f, 4.03f), Position(27.98f, -19.17f) } }
     }};
@@ -98,7 +103,7 @@ static AreaBoundary const* MakeElereteBoundary()
     {
         AreaBoundary const* part = new BoundaryIntersectionBoundary(
             new PolygonBoundary(Position(piece.originX, piece.originY), std::vector<Position>(piece.vertices)),
-            new ZRangeBoundary(piece.minZ, piece.maxZ));
+            new ZRangeBoundary(piece.minZ, piece.topZ + ElereteBoundaryHeadroom));
         result = result ? new BoundaryUnionBoundary(result, part) : part;
     }
 

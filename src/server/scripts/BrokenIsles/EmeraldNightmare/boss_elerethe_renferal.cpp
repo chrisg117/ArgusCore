@@ -31,6 +31,7 @@
 #include "ScriptMgr.h"
 #include "SpellAuras.h"
 #include "SpellMgr.h"
+#include "SmartEnum.h"
 #include "SpellScript.h"
 #include "TemporarySummon.h"
 #include "emerald_nightmare.h"
@@ -60,6 +61,7 @@ enum EleretheSpells
     SPELL_WEB_OF_PAIN_SOURCE        = 215300,
     SPELL_WEB_OF_PAIN_TARGET        = 215307,
     SPELL_DRIPPING_FANGS            = 210229, // spiderling passive
+    SPELL_WEB_VISUAL                = 213023, // self aura: spells/webspin.m2 (a silk strand), while a spiderling drops
     SPELL_VENOMOUS_POOL_CREATE      = 213123, // spiderling death: creates area trigger 7078
     SPELL_VENOMOUS_POOL_DAMAGE      = 213124, // aura on a unit standing in a pool
 
@@ -69,6 +71,7 @@ enum EleretheSpells
     SPELL_TWISTING_SHADOWS_AURA     = 210850, // 4 s stun and damage, put on a player the tornado reaches
     SPELL_TWISTING_SHADOWS_FIXATE   = 221877, // the tornado's target
     SPELL_GATHERING_CLOUDS          = 212707, // 2.5 s cast, 8 s wind that pushes players back
+    SPELL_GATHERING_CLOUDS_WIND     = 212708, // the 8 s aura it triggers on her; the push hangs on it
     SPELL_RAKING_TALONS             = 215582, // 2 s cast, a stacking debuff
     SPELL_RAKING_TALONS_REPEAT      = 222037, // the quick second hit
     SPELL_RAZOR_WING                = 210547, // 4.5 s cast, a cone in front of her
@@ -111,7 +114,8 @@ enum EleretheEvents
 enum ElerethePoints
 {
     POINT_FEEDING_TIME_RISE = 1,
-    POINT_FLIGHT
+    POINT_FLIGHT,
+    POINT_SPIDERLING_LANDED
 };
 
 enum EleretheGroups
@@ -163,7 +167,10 @@ static constexpr Milliseconds VileAmbushFailsafe = 9s;     // after the cast; th
 static constexpr Milliseconds WebOfPainRepeat = 30s;
 static constexpr float FeedingTimeRise = 15.0f;            // yards straight up
 static constexpr uint8 SpiderlingsPerFeedingTime = 5;
-static constexpr float SpiderlingSpread = 6.0f;            // radius around the players' centroid
+static constexpr float SpiderlingSpread = 30.0f;           // radius around the landing of the platform she is on
+static constexpr float SpiderlingDropHeight = 20.0f;       // they come down from the ceiling on a web
+static constexpr uint8 SpiderlingSpotTries = 10;           // random points outside the boundary are retried
+static constexpr uint32 SpiderlingFallFailsafeMs = 4000;   // a 20 yd fall takes about 2 s
 static constexpr uint32 NecroticVenomMaxTargets = 2;       // 1 when a single player is in the fight
 
 // Calibrate: Roc form abilities (DBM 7.3.31 times from the form's transform; see global-constraints.md).
@@ -185,6 +192,26 @@ static constexpr Milliseconds TornadoDuration = 4s;          // = the 4 s of 210
 static constexpr float TornadoSpeedRate = 0.5f;              // "slowly"
 static constexpr float TornadoReach = 5.0f;                  // yards: a player this close gets 210850
 static constexpr float TornadoFixateRange = 100.0f;
+// 106350's two template models are both invisible (169, and 11686 = invisiblestalker.m2): retail draws the whirl
+// with an area-trigger visual (210792, AT 6833), which this server does not render. The tornado instead plays the
+// mark's own aura kit, much larger: 210863 -> SpellXSpellVisual 98673 -> SpellVisual 55466 -> SpellVisualEvent
+// 120814 (aura start to aura end, on the target) -> kit 67305 = model attach 322414, effect 17518
+// spells/voidzone_corrupted_radial_03.m2 (the purple swirl round a marked player). The attach scales with the
+// stalker's object scale. Fallback if the kit does not show: display 32048 (spells/cyclone_nodebris.m2), scale 2.
+static constexpr uint32 TornadoDisplayId = 11686;
+static constexpr float TornadoScale = 4.0f;
+static constexpr uint32 SPELL_VISUAL_KIT_TWISTING_SHADOWS = 67305;
+
+// Calibrate: the Feather's visual (the area trigger has none on the client): custom gameobject 1520001, display
+// 13727 (spells/priest_angelicfeather_state.m2, a glowing feather about 4.7 yd across at scale 1). The retail
+// "Feather" 250538 is display 2630, a 0.8 yd brown doodad feather: at scale 0.5 it could not be seen on the floor.
+static constexpr uint32 GO_SHIMMERING_FEATHER = 1520001;
+static constexpr float FeatherVisualScale = 1.0f;
+
+// Calibrate: the Gathering Clouds push (a movement force for the 8 s of the wind). A Gravity force centred on her;
+// a negative magnitude pushes away (TrinityCore master uses -5 for Aqu'sirr, -20 for Leymor's Arcane Eruption).
+static constexpr float GatheringCloudsPushMagnitude = -6.0f;  // yd/s away from her
+static constexpr float GatheringCloudsRecentre = 2.0f;        // yards she may move before the force's origin follows
 
 // Calibrate: how high above the web she flies over a bridge's middle.
 static constexpr float FlightHeight = 20.0f;
@@ -200,7 +227,9 @@ static constexpr uint8 FeathersPerFlight = 3;
 static constexpr float FeatherRing = 3.0f;                     // yards from the take-off spot; neighbours are about 3.5 apart
 static constexpr uint8 BridgeDropSpiderlings = 2;
 static constexpr uint8 BridgeDropTornadoes = 1;
-static constexpr float BridgeDropSpread = 3.0f;
+static constexpr float BridgeDropSpread = 3.0f;              // the tornado: yards round the bridge's middle
+static constexpr float BridgeDropAlong = 10.0f;              // the spiderlings: +- yards along the bridge
+static constexpr float BridgeDropAcross = 2.0f;              // and +- yards across it
 
 struct PlatformData
 {
@@ -279,6 +308,19 @@ namespace
             }
         }
         return nearest;
+    }
+
+    // The id of the Gathering Clouds push, one per boss, the same everywhere it is applied or removed.
+    ObjectGuid GetCloudsForceId(Unit const* caster)
+    {
+        return ObjectGuid::Create<HighGuid::AreaTrigger>(caster->GetMapId(), SPELL_GATHERING_CLOUDS_WIND, caster->GetGUID().GetCounter());
+    }
+
+    // Takes the push off every player in the map (the end of the wind, death, evade).
+    void RemoveCloudsForce(Unit* caster)
+    {
+        ObjectGuid const id = GetCloudsForceId(caster);
+        caster->GetMap()->DoOnPlayers([id](Player* player) { player->RemoveMovementForce(id); });
     }
 
     bool IsRangedPlayer(Player const* player)
@@ -539,33 +581,45 @@ struct boss_elerethe_renferal : public BossAI
 
     void SummonSpiderlings()
     {
-        // Around the centroid of the players, at ground z.
-        std::vector<Player*> players = GetLivingPlayers(me);
-        float x = me->GetPositionX(), y = me->GetPositionY(), z = me->GetPositionZ();
-        if (!players.empty())
-        {
-            x = y = z = 0.0f;
-            for (Player* player : players)
-            {
-                x += player->GetPositionX();
-                y += player->GetPositionY();
-                z += player->GetPositionZ();
-            }
-            x /= players.size();
-            y /= players.size();
-            z /= players.size();
-        }
-
+        // Scattered over the platform she is on, each dropping from the ceiling.
+        Position const& landing = Platforms[_platform].landing;
         for (uint8 i = 0; i < SpiderlingsPerFeedingTime; ++i)
         {
-            float const angle = frand(0.0f, 2.0f * float(M_PI));
-            float const dist = frand(0.0f, SpiderlingSpread);
-            float sx = x + std::cos(angle) * dist;
-            float sy = y + std::sin(angle) * dist;
-            float sz = z;
-            me->UpdateGroundPositionZ(sx, sy, sz);
-            me->SummonCreature(NPC_VENOMOUS_SPIDERLING, Position(sx, sy, sz, frand(0.0f, 2.0f * float(M_PI))), TEMPSUMMON_CORPSE_TIMED_DESPAWN, 10s);
+            Position spot;
+            if (!FindSpiderlingSpot(landing, spot))
+                continue;
+            DropSpiderling(spot);
         }
+    }
+
+    // A random floor point within SpiderlingSpread of the centre and inside the room; false after the tries.
+    bool FindSpiderlingSpot(Position const& centre, Position& spot)
+    {
+        for (uint8 attempt = 0; attempt < SpiderlingSpotTries; ++attempt)
+        {
+            float const angle = frand(0.0f, 2.0f * float(M_PI));
+            float const dist = SpiderlingSpread * std::sqrt(frand(0.0f, 1.0f));  // even over the disc
+            float x = centre.GetPositionX() + std::cos(angle) * dist;
+            float y = centre.GetPositionY() + std::sin(angle) * dist;
+            // Search down from just above the platform: the floors stacked under it must not be found first.
+            float z = centre.GetPositionZ() + 2.0f;
+            me->UpdateGroundPositionZ(x, y, z);
+            Position const candidate(x, y, z, frand(0.0f, 2.0f * float(M_PI)));
+            if (IsInBoundary(&candidate))
+            {
+                spot = candidate;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // A spiderling SpiderlingDropHeight above a floor spot; its AI lets it fall, then fight.
+    void DropSpiderling(Position const& floor)
+    {
+        Position high(floor);
+        high.m_positionZ += SpiderlingDropHeight;
+        me->SummonCreature(NPC_VENOMOUS_SPIDERLING, high, TEMPSUMMON_CORPSE_TIMED_DESPAWN, 10s);
     }
 
     // Vile Ambush: jump onto a random player's spot. Land() ends the web phase.
@@ -648,12 +702,15 @@ struct boss_elerethe_renferal : public BossAI
         for (uint8 i = 0; i < FeathersPerFlight; ++i)
         {
             float const angle = start + 2.0f * float(M_PI) * float(i) / float(FeathersPerFlight);
-            float x = me->GetPositionX() + std::cos(angle) * FeatherRing;
-            float y = me->GetPositionY() + std::sin(angle) * FeatherRing;
-            float z = me->GetPositionZ();
-            me->UpdateGroundPositionZ(x, y, z);
-            AreaTrigger::CreateAreaTrigger({ AT_SHIMMERING_FEATHER, true }, Position(x, y, z), int32(StormDurationMs), me, nullptr);
+            // At her own z: a ground lookup can snap to a floor of the room below, and the trigger is a 3D sphere.
+            float const x = me->GetPositionX() + std::cos(angle) * FeatherRing;
+            float const y = me->GetPositionY() + std::sin(angle) * FeatherRing;
+            float const z = me->GetPositionZ();
+            AreaTrigger* feather = AreaTrigger::CreateAreaTrigger({ AT_SHIMMERING_FEATHER, true }, Position(x, y, z), int32(StormDurationMs), me, nullptr);
+            if (!_loggedFeathers)
+                TC_LOG_INFO("server.scripts", "boss_elerethe_renferal: Feather {} at ({:.1f}, {:.1f}, {:.1f}): {}", int32(i), x, y, z, feather ? "created" : "NOT created");
         }
+        _loggedFeathers = true;
     }
 
     // The Eye is at the landing spot of the next platform and lasts as long as the storm.
@@ -750,15 +807,26 @@ struct boss_elerethe_renferal : public BossAI
     void DropOnBridge()
     {
         Position const& middle = BridgeMidpoints[_platform - 1];
-        for (uint8 i = 0; i < BridgeDropSpiderlings + BridgeDropTornadoes; ++i)
+        // The bridge runs from the platform she left to the one she landed on.
+        Position const& from = Platforms[_platform - 1].landing;
+        Position const& to = Platforms[_platform].landing;
+        float const bridgeAngle = std::atan2(to.GetPositionY() - from.GetPositionY(), to.GetPositionX() - from.GetPositionX());
+        for (uint8 i = 0; i < BridgeDropSpiderlings; ++i)
+        {
+            float const along = frand(-BridgeDropAlong, BridgeDropAlong);
+            float const across = frand(-BridgeDropAcross, BridgeDropAcross);
+            float x = middle.GetPositionX() + std::cos(bridgeAngle) * along - std::sin(bridgeAngle) * across;
+            float y = middle.GetPositionY() + std::sin(bridgeAngle) * along + std::cos(bridgeAngle) * across;
+            float z = middle.GetPositionZ() + 2.0f;
+            me->UpdateGroundPositionZ(x, y, z);
+            DropSpiderling(Position(x, y, z, frand(0.0f, 2.0f * float(M_PI))));
+        }
+        for (uint8 i = 0; i < BridgeDropTornadoes; ++i)
         {
             float const angle = frand(0.0f, 2.0f * float(M_PI));
             float const dist = frand(0.0f, BridgeDropSpread);
             Position spot(middle.GetPositionX() + std::cos(angle) * dist, middle.GetPositionY() + std::sin(angle) * dist, middle.GetPositionZ() + 0.5f, angle);
-            if (i < BridgeDropSpiderlings)
-                me->SummonCreature(NPC_VENOMOUS_SPIDERLING, spot, TEMPSUMMON_CORPSE_TIMED_DESPAWN, 10s);
-            else
-                me->SummonCreature(NPC_TWISTING_SHADOWS, spot, TEMPSUMMON_TIMED_DESPAWN, TornadoDuration);
+            me->SummonCreature(NPC_TWISTING_SHADOWS, spot, TEMPSUMMON_TIMED_DESPAWN, TornadoDuration);
         }
     }
 
@@ -821,16 +889,20 @@ struct boss_elerethe_renferal : public BossAI
         instance->DoRemoveAurasDueToSpellOnPlayers(SPELL_WEB_OF_PAIN_TARGET);
         instance->DoRemoveAurasDueToSpellOnPlayers(SPELL_VENOMOUS_POOL_DAMAGE);
         me->RemoveAurasDueToSpell(SPELL_GATHERING_CLOUDS);
+        me->RemoveAurasDueToSpell(SPELL_GATHERING_CLOUDS_WIND);
+        RemoveCloudsForce(me);
         instance->DoRemoveAurasDueToSpellOnPlayers(SPELL_TWISTING_SHADOWS_MARK);
         instance->DoRemoveAurasDueToSpellOnPlayers(SPELL_TWISTING_SHADOWS_AURA);
         instance->DoRemoveAurasDueToSpellOnPlayers(SPELL_RAKING_TALONS);
     }
 
-    void EnterEvadeMode(EvadeReason /*why*/) override
+    void EnterEvadeMode(EvadeReason why) override
     {
         // An idle evade (not engaged, or already dead) must not despawn her.
         if (!me->IsEngaged() || !me->IsAlive())
             return;
+
+        LogBoundaryEvade(why);
 
         Talk(TALK_WIPE);
         me->InterruptNonMeleeSpells(false);
@@ -848,6 +920,24 @@ struct boss_elerethe_renferal : public BossAI
         Talk(TALK_DEATH);
         CleanUp();
         _JustDied();
+    }
+
+    // Every engaged evade: her position and each player's, and which are outside the boundary, to fit the room by.
+    // A target outside the boundary cannot be attacked (BossAI::CanAIAttack), so a solo player who steps out makes
+    // her evade with no hostiles; her leaving it is EvadeReason::Boundary.
+    void LogBoundaryEvade(EvadeReason why)
+    {
+        char const* cause = why == EvadeReason::NoHostiles ? "no target inside"
+            : why == EvadeReason::Boundary ? "she left the boundary" : "other";
+        TC_LOG_INFO("server.scripts", "ELERETHE_BOUNDARY evade {} ({}, {}): Elerethe at {:.1f} {:.1f} {:.1f} {} (platform {}, flight {})",
+            EnumUtils::ToConstant(why), uint32(why), cause, me->GetPositionX(), me->GetPositionY(), me->GetPositionZ(),
+            IsInBoundary() ? "inside" : "OUTSIDE", uint32(_platform), _flightActive ? "yes" : "no");
+        me->GetMap()->DoOnPlayers([this](Player* player)
+        {
+            TC_LOG_INFO("server.scripts", "ELERETHE_BOUNDARY   player {} at {:.1f} {:.1f} {:.1f} {}{}{}", player->GetName(),
+                player->GetPositionX(), player->GetPositionY(), player->GetPositionZ(), IsInBoundary(player) ? "inside" : "OUTSIDE",
+                player->IsAlive() ? "" : ", dead", player->IsGameMaster() ? ", GM" : "");
+        });
     }
 
     void UpdateAI(uint32 diff) override
@@ -964,6 +1054,7 @@ private:
     uint8 _twistingCasts;
     uint8 _talonCasts;
     uint8 _razorCasts;
+    bool _loggedFeathers = false;  // the creation result is logged once per boss object
     bool _flightActive;        // Dark Storm went off and she has not landed
     bool _stormActive;
     uint32 _stormElapsed;
@@ -980,6 +1071,42 @@ struct npc_en_venomous_spiderling : public ScriptedAI
     {
         DoCastSelf(SPELL_DRIPPING_FANGS, true);
         DoZoneInCombat();
+
+        // Dropped from the ceiling (Feeding Time, the bridge drop): fall on a web strand, then fight.
+        float ground = me->GetMapHeight(me->GetPositionX(), me->GetPositionY(), me->GetPositionZ());
+        if (ground > INVALID_HEIGHT && me->GetPositionZ() - ground > 2.0f)
+        {
+            _falling = true;
+            _fallTimer = SpiderlingFallFailsafeMs;
+            me->SetReactState(REACT_PASSIVE);
+            DoCastSelf(SPELL_WEB_VISUAL, true);
+            me->GetMotionMaster()->MoveFall(POINT_SPIDERLING_LANDED);
+            return;
+        }
+
+        Engage();
+    }
+
+    void MovementInform(uint32 type, uint32 id) override
+    {
+        if (type == EFFECT_MOTION_TYPE && id == POINT_SPIDERLING_LANDED)
+            Land();
+    }
+
+    // Once, at the end of the fall or by the failsafe (MoveFall does nothing if it finds no floor).
+    void Land()
+    {
+        if (!_falling)
+            return;
+
+        _falling = false;
+        me->RemoveAurasDueToSpell(SPELL_WEB_VISUAL);
+        me->SetReactState(REACT_AGGRESSIVE);
+        Engage();
+    }
+
+    void Engage()
+    {
         if (Player* nearest = FindNearestLivingPlayer(me, 200.0f))
         {
             AddThreat(nearest, 1000.0f);
@@ -993,12 +1120,24 @@ struct npc_en_venomous_spiderling : public ScriptedAI
         DoCastSelf(SPELL_VENOMOUS_POOL_CREATE, true);
     }
 
-    void UpdateAI(uint32 /*diff*/) override
+    void UpdateAI(uint32 diff) override
     {
+        if (_falling)
+        {
+            if (_fallTimer <= diff)
+                Land();
+            else
+                _fallTimer -= diff;
+            return;
+        }
         if (!me->IsEngaged())
             DoZoneInCombat();
         UpdateVictim();
     }
+
+private:
+    bool _falling = false;
+    uint32 _fallTimer = 0;
 };
 
 // 215443 - Necrotic Venom: one target when a single player is in the fight, else two; ranged first.
@@ -1066,7 +1205,13 @@ class spell_en_necrotic_venom_mark : public AuraScript
 
         if (Unit* caster = GetCaster())
             if (caster->IsAlive() && caster->IsEngaged())
-                caster->CastSpell(target, SPELL_NECROTIC_VENOM_DOT, CastSpellExtraArgs(TRIGGERED_FULL_MASK));
+            {
+                // The player casts it on themselves, Elerethe is the original caster: the pools (225519, at the
+                // caster) form under the player, the damage and the splash (215459) still count as hers.
+                CastSpellExtraArgs args(TRIGGERED_FULL_MASK);
+                args.SetOriginalCaster(caster->GetGUID());
+                target->CastSpell(target, SPELL_NECROTIC_VENOM_DOT, args);
+            }
     }
 
     void Register() override
@@ -1087,6 +1232,13 @@ struct at_en_venomous_pool : AreaTriggerAI
     {
         if (!unit->IsPlayer() || !unit->IsAlive() || unit->HasAura(SPELL_VENOMOUS_POOL_DAMAGE))
             return;
+
+        // A player carrying the Twisting Shadows mark disperses the pool they walk into.
+        if (unit->HasAura(SPELL_TWISTING_SHADOWS_MARK))
+        {
+            at->Remove();
+            return;
+        }
 
         CastSpellExtraArgs args(TRIGGERED_FULL_MASK);
         if (InstanceScript* instance = at->GetInstanceScript())
@@ -1125,11 +1277,15 @@ struct npc_en_skittering_spiderling : public ScriptedAI
 // original caster. The boss summons the tornado, so JustSummoned puts it in her summons.
 struct npc_en_twisting_shadows : public ScriptedAI
 {
-    npc_en_twisting_shadows(Creature* creature) : ScriptedAI(creature), _checkTimer(0) { }
+    npc_en_twisting_shadows(Creature* creature) : ScriptedAI(creature), _checkTimer(0), _visualShown(false) { }
 
     void JustAppeared() override
     {
         me->SetReactState(REACT_PASSIVE);
+        // An invisible stalker, scaled up: the mark's kit (played on the first update) is the visible tornado.
+        me->SetObjectScale(TornadoScale);
+        me->SetDisplayId(TornadoDisplayId);
+        TC_LOG_INFO("server.scripts", "Elerethe tornado appeared at ({:.1f}, {:.1f}, {:.1f}), display {}", me->GetPositionX(), me->GetPositionY(), me->GetPositionZ(), me->GetDisplayId());
         me->SetSpeedRate(MOVE_WALK, TornadoSpeedRate);
         me->SetSpeedRate(MOVE_RUN, TornadoSpeedRate);
     }
@@ -1153,6 +1309,14 @@ struct npc_en_twisting_shadows : public ScriptedAI
 
     void UpdateAI(uint32 diff) override
     {
+        // Not in JustAppeared: the clients only learn of the tornado when it is added to the map, after that hook,
+        // and a kit for a unit a client does not know is dropped. It lasts the tornado's whole life.
+        if (!_visualShown)
+        {
+            _visualShown = true;
+            me->SendPlaySpellVisualKit(SPELL_VISUAL_KIT_TWISTING_SHADOWS, 0, uint32(TornadoDuration.count()));
+        }
+
         if (_checkTimer > diff)
         {
             _checkTimer -= diff;
@@ -1184,6 +1348,7 @@ struct npc_en_twisting_shadows : public ScriptedAI
 
 private:
     uint32 _checkTimer;
+    bool _visualShown;
     ObjectGuid _target;
 };
 
@@ -1206,10 +1371,12 @@ class spell_en_twisting_shadows : public SpellScript
         size_t const wanted = GetLivingPlayers(GetCaster()).size() <= 1 ? 1 : TwistingShadowsMaxTargets;
         if (targets.size() > wanted)
             Trinity::Containers::RandomResize(targets, wanted);
+        TC_LOG_INFO("server.scripts", "Elerethe Twisting Shadows cast: {} player(s) to mark (wanted {})", targets.size(), wanted);
     }
 
     void HandleDummy(SpellEffIndex /*effIndex*/)
     {
+        TC_LOG_INFO("server.scripts", "Elerethe Twisting Shadows cast: marking {}", GetHitUnit()->GetName());
         GetCaster()->CastSpell(GetHitUnit(), SPELL_TWISTING_SHADOWS_MARK, CastSpellExtraArgs(TRIGGERED_FULL_MASK));
     }
 
@@ -1225,13 +1392,22 @@ class spell_en_twisting_shadows : public SpellScript
 // tornado at the marked player instead.
 class spell_en_twisting_shadows_mark : public AuraScript
 {
+    void HandleApply(AuraEffect const* /*aurEff*/, AuraEffectHandleModes /*mode*/)
+    {
+        TC_LOG_INFO("server.scripts", "Elerethe mark 210863 applied to {} (caster {})", GetTarget()->GetName(), GetCaster() ? GetCaster()->GetName() : "none");
+    }
+
+    // The aura's own trigger (210877, a summon at the caster) would put the tornado at the boss: stopped.
+    // The tornado comes from the expiry below, which does not depend on a periodic tick at the aura's last instant.
     void HandlePeriodic(AuraEffect const* /*aurEff*/)
     {
+        TC_LOG_INFO("server.scripts", "Elerethe mark 210863 on {}: periodic tick (210877 suppressed)", GetTarget()->GetName());
         PreventDefaultAction();
     }
 
     void HandleRemove(AuraEffect const* /*aurEff*/, AuraEffectHandleModes /*mode*/)
     {
+        TC_LOG_INFO("server.scripts", "Elerethe mark 210863 removed from {}, mode {}", GetTarget()->GetName(), uint32(GetTargetApplication()->GetRemoveMode()));
         if (GetTargetApplication()->GetRemoveMode() != AURA_REMOVE_BY_EXPIRE)
             return;
 
@@ -1241,13 +1417,16 @@ class spell_en_twisting_shadows_mark : public AuraScript
             return;
 
         // The tornado chases the player whose mark made it.
-        if (TempSummon* tornado = caster->SummonCreature(NPC_TWISTING_SHADOWS, target->GetPosition(), TEMPSUMMON_TIMED_DESPAWN, TornadoDuration))
+        TempSummon* tornado = caster->SummonCreature(NPC_TWISTING_SHADOWS, target->GetPosition(), TEMPSUMMON_TIMED_DESPAWN, TornadoDuration);
+        TC_LOG_INFO("server.scripts", "Elerethe tornado for {}: {}", target->GetName(), tornado ? "summoned" : "SUMMON FAILED");
+        if (tornado)
             if (CreatureAI* ai = tornado->AI())
                 ai->SetGUID(target->GetGUID(), 0);
     }
 
     void Register() override
     {
+        AfterEffectApply += AuraEffectApplyFn(spell_en_twisting_shadows_mark::HandleApply, EFFECT_0, SPELL_AURA_PERIODIC_TRIGGER_SPELL, AURA_EFFECT_HANDLE_REAL);
         OnEffectPeriodic += AuraEffectPeriodicFn(spell_en_twisting_shadows_mark::HandlePeriodic, EFFECT_0, SPELL_AURA_PERIODIC_TRIGGER_SPELL);
         AfterEffectRemove += AuraEffectRemoveFn(spell_en_twisting_shadows_mark::HandleRemove, EFFECT_0, SPELL_AURA_PERIODIC_TRIGGER_SPELL, AURA_EFFECT_HANDLE_REAL);
     }
@@ -1287,6 +1466,28 @@ struct at_en_shimmering_feather : AreaTriggerAI
 {
     at_en_shimmering_feather(AreaTrigger* at) : AreaTriggerAI(at), _taken(false) { }
 
+    // Custom area triggers draw nothing on the client: the Feather gameobject is the visual. It goes with the
+    // trigger (picked up, storm over, death or wipe: the trigger's removal runs OnRemove).
+    void OnCreate(Spell const* /*creatingSpell*/) override
+    {
+        Unit* caster = at->GetCaster();
+        GameObject* feather = caster ? caster->SummonGameObject(GO_SHIMMERING_FEATHER, at->GetPosition(), QuaternionData(), Seconds(StormDurationMs / 1000)) : nullptr;
+        if (feather)
+        {
+            feather->SetObjectScale(FeatherVisualScale);
+            _visual = feather->GetGUID();
+        }
+        TC_LOG_INFO("server.scripts", "Elerethe feather visual {} at ({:.1f}, {:.1f}, {:.1f}): {}", GO_SHIMMERING_FEATHER,
+            at->GetPositionX(), at->GetPositionY(), at->GetPositionZ(), feather ? "spawned" : (caster ? "SUMMON FAILED" : "NO CASTER"));
+    }
+
+    void OnRemove() override
+    {
+        if (GameObject* feather = ObjectAccessor::GetGameObject(*at, _visual))
+            feather->DespawnOrUnsummon();
+        _visual.Clear();
+    }
+
     void OnUnitEnter(Unit* unit) override
     {
         Player* player = unit->ToPlayer();
@@ -1304,6 +1505,7 @@ struct at_en_shimmering_feather : AreaTriggerAI
 
 private:
     bool _taken;
+    ObjectGuid _visual;
 };
 
 // 213936 - Dark Storm (the tick): everyone in the Eye of the Storm is spared. Only players take it.
@@ -1322,6 +1524,74 @@ class spell_en_dark_storm_damage : public SpellScript
     {
         OnObjectAreaTargetSelect += SpellObjectAreaTargetSelectFn(spell_en_dark_storm_damage::FilterTargets, EFFECT_0, TARGET_UNIT_SRC_AREA_ENEMY);
     }
+};
+
+// 212708 - Gathering Clouds (the 8 s wind, periodic dummy every 500 ms): a constant push away from her on every
+// player she is fighting. Retail does it with area trigger 7041 (no data here); the push is the script's, as a
+// Gravity movement force centred on her, which the client applies every frame. A player who joins the fight gets it
+// at the next 500 ms tick, one who leaves it loses it; the origin follows her if she moves.
+class spell_en_gathering_clouds_wind : public AuraScript
+{
+    void HandleApply(AuraEffect const* /*aurEff*/, AuraEffectHandleModes /*mode*/)
+    {
+        if (Unit* caster = GetCaster())
+            _origin = caster->GetPosition();
+        uint32 const pushed = Push(false);
+        TC_LOG_INFO("server.scripts", "Elerethe Gathering Clouds: gravity force {:.1f} on {} player(s)", GatheringCloudsPushMagnitude, pushed);
+    }
+
+    void HandlePeriodic(AuraEffect const* /*aurEff*/)
+    {
+        bool recentre = false;
+        if (Unit* caster = GetCaster())
+            if (caster->GetExactDist2d(_origin) > GatheringCloudsRecentre)
+            {
+                _origin = caster->GetPosition();
+                recentre = true;
+            }
+        Push(recentre);
+    }
+
+    void HandleRemove(AuraEffect const* /*aurEff*/, AuraEffectHandleModes /*mode*/)
+    {
+        if (Unit* caster = GetCaster())
+            RemoveCloudsForce(caster);
+    }
+
+    // Puts the force on each living player she is fighting (a player who already has it keeps it: Add ignores the
+    // same id, so no packet goes out), takes it off everyone else in the map. Returns how many players carry it.
+    uint32 Push(bool recentre)
+    {
+        Unit* caster = GetCaster();
+        if (!caster || !caster->IsAlive())
+            return 0;
+
+        std::vector<Player*> fighting = GetLivingPlayers(caster);
+        ObjectGuid const id = GetCloudsForceId(caster);
+        Position const origin = _origin;
+        uint32 pushed = 0;
+        caster->GetMap()->DoOnPlayers([&](Player* player)
+        {
+            bool const inFight = std::find(fighting.begin(), fighting.end(), player) != fighting.end();
+            if (!inFight || recentre)
+                player->RemoveMovementForce(id);
+            if (!inFight)
+                return;
+
+            player->ApplyMovementForce(id, origin, GatheringCloudsPushMagnitude, MovementForceType::Gravity);
+            ++pushed;
+        });
+        return pushed;
+    }
+
+    void Register() override
+    {
+        AfterEffectApply += AuraEffectApplyFn(spell_en_gathering_clouds_wind::HandleApply, EFFECT_0, SPELL_AURA_PERIODIC_DUMMY, AURA_EFFECT_HANDLE_REAL);
+        OnEffectPeriodic += AuraEffectPeriodicFn(spell_en_gathering_clouds_wind::HandlePeriodic, EFFECT_0, SPELL_AURA_PERIODIC_DUMMY);
+        AfterEffectRemove += AuraEffectRemoveFn(spell_en_gathering_clouds_wind::HandleRemove, EFFECT_0, SPELL_AURA_PERIODIC_DUMMY, AURA_EFFECT_HANDLE_REAL);
+    }
+
+    Position _origin;
 };
 
 // 108540 - Egg Sac (Task 6)
@@ -1345,4 +1615,5 @@ void AddSC_boss_elerethe_renferal()
     RegisterAreaTriggerAI(at_en_eye_of_the_storm);
     RegisterAreaTriggerAI(at_en_shimmering_feather);
     RegisterSpellScript(spell_en_dark_storm_damage);
+    RegisterSpellScript(spell_en_gathering_clouds_wind);
 }
