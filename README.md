@@ -83,7 +83,7 @@ only while two sessions work at once (see `docs/BRANCHING.md`).
 | Broken Shore scenario | The Legion intro scenario, Alliance side, every stage scripted against a retail recording | Playable start to end; polish parked |
 | Shadow priest artifact | The opening quests, the "Blade in Twilight" scenario, the Dalaran turn-in, the way into Netherlight Temple | Playable; polish parked |
 | Priest class hall | Content on top of the engine pieces | Started: the mission table |
-| Emerald Nightmare | The raid, boss by boss on Normal (see below) | Nythendra playable; Il'gynoth playable, in testing; Elerethe Renferal designed |
+| Emerald Nightmare | The raid, boss by boss on Normal (see below) | Nythendra playable; Il'gynoth playable, in testing; Elerethe Renferal in progress |
 
 ### Emerald Nightmare
 
@@ -104,7 +104,7 @@ is measured from retail kill videos.
 |------|--------|-----------|
 | Nythendra | **Playable, tested in game** | Both phases; timers fitted to DBM; enrage; voiced yells; root walls that seal the room |
 | Il'gynoth | **Playable, in testing** | The Eye and its Ichor explosions; tentacle and Horror waves fitted to DBM; heart phases with Dark Reconstitution and Final Torpor; a forcefield over the chamber. Group-only mechanics still to test |
-| Elerethe Renferal | **Designed** | Spec written: Spider and Roc forms on an energy bar fitted to DBM; flights across three platforms with Dark Storm, the Eye of the Storm and Shimmering Feathers; spiderlings, egg sacs and tornadoes; enrage. Not built yet |
+| Elerethe Renferal | **In progress, being tuned** | Spider and Roc form mechanics implemented on an energy bar fitted to DBM; flights across three platforms with Dark Storm, the Eye of the Storm and Shimmering Feathers; spiderlings and tornadoes; enrage. Egg sacs and the Feather crush still to build |
 | Ursoc, Dragons of Nightmare, Cenarius, Xavius | Not started | |
 
 Local only: a Docker setup for running a server (`Dockerfile`,
@@ -113,7 +113,7 @@ scenarios.
 
 ### Roadmap
 
-1. Emerald Nightmare: finish Il'gynoth's in-game testing, build Elerethe Renferal from her spec, then the remaining bosses in journal order.
+1. Emerald Nightmare: finish Il'gynoth's in-game testing, finish and tune Elerethe Renferal, then the remaining bosses in journal order.
 2. Priest class hall content: recruiters, research, troops (the mission table is in place).
 3. Broken Shore polish, after deciding between retail tuning and solo scaling.
 
