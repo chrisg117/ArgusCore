@@ -18,40 +18,19 @@
 | Linux (GCC) | [![Linux Build](../../actions/workflows/build-linux.yml/badge.svg)](../../actions/workflows/build-linux.yml) |
 | Windows x64 | [![Windows Build](../../actions/workflows/build-windows.yml/badge.svg)](../../actions/workflows/build-windows.yml) |
 
-## About
-
-ArgusCore is a C++ server emulator for World of Warcraft patch 7.3.5 (Legion).
-
-It is derived from the [TrinityCore](https://github.com/TrinityCore/TrinityCore) project, with a focus on:
-
-- Long-term stability over fast iteration
-- Incremental modernization of the codebase
-- Maintainability and clean architecture
-- Fully playable gameplay at every step
-
 ## What this fork adds
 
 The fork has two working branches besides `main` (upstream's code, untouched):
 
 - **`engine`**: changes to the core server code and the database schema, and
-  nothing else, kept clean enough to offer upstream. It is merged into `dev`
-  piece by piece.
+  nothing else
 - **`dev`**: the default branch and what the server runs: upstream's `main`
-  plus the engine work, all content (scripts and world data), the Docker setup
-  and the docs.
-
-The full rules are in [docs/BRANCHING.md](docs/BRANCHING.md); every engine
-piece has a design and a plan in [docs/superpowers](docs/superpowers).
+  plus the engine work, all content (scripts and world data)
 
 Sources: client DB2 data, Blizzard's UI source, TrinityCore, WowPacketParser,
 Wowhead and retail videos. No code or data is taken from leaked cores.
 
 ### Legion class halls (engine)
-
-Upstream handles only the Warlords garrison. The fork adds the class hall as
-its own `ClassHall` class (`src/server/game/ClassHall/`, with its own tables),
-built on `engine` one piece at a time and tested in game. All eight pieces are
-in `dev`.
 
 | Piece | What it covers |
 |-------|----------------|
@@ -87,29 +66,12 @@ only while two sessions work at once (see `docs/BRANCHING.md`).
 
 ### Emerald Nightmare
 
-The first Legion raid, built one boss at a time on Normal difficulty. Each boss
-has a design spec and a plan in [docs/superpowers](docs/superpowers) and is
-tested in game before the next one starts. Boss timers follow Deadly Boss Mods
-7.3.31, the Legion-era addon built from retail combat logs: the script is
-fitted to the addon, so its bars line up in the client. What DBM does not time
-is measured from retail kill videos.
-
-**The raid around the bosses**
-
-- Entered through its portal in Val'sharah, with an exit portal and a meeting stone.
-- An instance script that tracks all seven encounters.
-- A graveyard at the raid's entrance.
-
 | Boss | Status | What is in |
 |------|--------|-----------|
 | Nythendra | **Playable, tested in game** | Both phases; timers fitted to DBM; enrage; voiced yells; root walls that seal the room |
 | Il'gynoth | **Playable, in testing** | The Eye and its Ichor explosions; tentacle and Horror waves fitted to DBM; heart phases with Dark Reconstitution and Final Torpor; a forcefield over the chamber. Group-only mechanics still to test |
 | Elerethe Renferal | **In progress, being tuned** | Spider and Roc form mechanics implemented on an energy bar fitted to DBM; flights across three platforms with Dark Storm, the Eye of the Storm and Shimmering Feathers; spiderlings and tornadoes; enrage. Egg sacs and the Feather crush still to build |
 | Ursoc, Dragons of Nightmare, Cenarius, Xavius | Not started | |
-
-Local only: a Docker setup for running a server (`Dockerfile`,
-`docker-compose.yml`) and `.scenario` GM commands for stepping through
-scenarios.
 
 ### Roadmap
 
