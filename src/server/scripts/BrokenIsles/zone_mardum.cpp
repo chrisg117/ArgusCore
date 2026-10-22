@@ -1611,6 +1611,124 @@ public:
     }
 };
 
+// Demon lords killed for "slain & power taken" objectives. On death they cast a spell whose force cast is serverside and
+// missing from the data: it makes everyone who fought them channel Taking Power on the corpse.
+void StartTakingPower(Creature* demonLord, uint32 questId, uint32 takingPowerSpellId)
+{
+    for (ObjectGuid const& tapperGuid : demonLord->GetTapList())
+    {
+        Player* player = ObjectAccessor::GetPlayer(*demonLord, tapperGuid);
+        if (!player || player->GetQuestStatus(questId) != QUEST_STATUS_INCOMPLETE)
+            continue;
+
+        player->CastSpell(demonLord, takingPowerSpellId, TRIGGERED_IGNORE_CAST_IN_PROGRESS);
+    }
+}
+
+// 210093 - Taking Power (Before We're Overrun)
+// 210105 - Taking Power (Hidden No More)
+class spell_mardum_taking_power : public SpellScript
+{
+    void PreventMissingForceCast(SpellEffIndex effIndex)
+    {
+        // The force cast is serverside and missing from the data; the aura below gives its credit
+        PreventHitDefaultEffect(effIndex);
+    }
+
+    void Register() override
+    {
+        OnEffectHitTarget += SpellEffectFn(spell_mardum_taking_power::PreventMissingForceCast, EFFECT_1, SPELL_EFFECT_FORCE_CAST_2);
+    }
+};
+
+template<uint32 KillCreditId>
+class spell_mardum_taking_power_aura : public AuraScript
+{
+    void HandleRemove(AuraEffect const* /*aurEff*/, AuraEffectHandleModes /*mode*/)
+    {
+        if (GetTargetApplication()->GetRemoveMode() != AURA_REMOVE_BY_EXPIRE)
+            return;
+
+        if (Player* player = GetTarget()->ToPlayer())
+            player->KilledMonsterCredit(KillCreditId);
+    }
+
+    void Register() override
+    {
+        AfterEffectRemove += AuraEffectRemoveFn(spell_mardum_taking_power_aura::HandleRemove, EFFECT_0, SPELL_AURA_PERIODIC_TRIGGER_SPELL, AURA_EFFECT_HANDLE_REAL);
+    }
+};
+
+enum BeforeWereOverrunData
+{
+    QUEST_BEFORE_WERE_OVERRUN           = 38766,
+
+    NPC_BELIASH_POWER_KILLCREDIT        = 106003,
+
+    EVENT_BELIASH_SHADOW_BOLT_VOLLEY    = 1,
+    EVENT_BELIASH_SHADOW_RETREAT,
+
+    SPELL_BELIASH_SHADOW_BOLT_VOLLEY    = 196403,
+    SPELL_BELIASH_SHADOW_RETREAT        = 196625,
+    SPELL_BELIASH_SHADOW_RETREAT_AT     = 195402,
+    SPELL_BELIASH_TAKING_POWER          = 210093
+};
+
+// 93221 - Doom Commander Beliash
+struct npc_doom_commander_beliash : public ScriptedAI
+{
+    npc_doom_commander_beliash(Creature* creature) : ScriptedAI(creature) { }
+
+    void JustEngagedWith(Unit* /*who*/) override
+    {
+        _events.ScheduleEvent(EVENT_BELIASH_SHADOW_BOLT_VOLLEY, 8s);
+        _events.ScheduleEvent(EVENT_BELIASH_SHADOW_RETREAT, 12s);
+    }
+
+    void Reset() override
+    {
+        _events.Reset();
+    }
+
+    void JustDied(Unit* /*killer*/) override
+    {
+        StartTakingPower(me, QUEST_BEFORE_WERE_OVERRUN, SPELL_BELIASH_TAKING_POWER);
+    }
+
+    void UpdateAI(uint32 diff) override
+    {
+        if (!UpdateVictim())
+            return;
+
+        _events.Update(diff);
+
+        if (me->HasUnitState(UNIT_STATE_CASTING))
+            return;
+
+        while (uint32 eventId = _events.ExecuteEvent())
+        {
+            switch (eventId)
+            {
+                case EVENT_BELIASH_SHADOW_BOLT_VOLLEY:
+                    DoCastSelf(SPELL_BELIASH_SHADOW_BOLT_VOLLEY);
+                    _events.ScheduleEvent(EVENT_BELIASH_SHADOW_BOLT_VOLLEY, 15s);
+                    break;
+                case EVENT_BELIASH_SHADOW_RETREAT:
+                    // Shadow Blaze (area trigger 5177) is left where he leaps from
+                    me->CastSpell(me->GetPosition(), SPELL_BELIASH_SHADOW_RETREAT_AT, true);
+                    DoCastSelf(SPELL_BELIASH_SHADOW_RETREAT);
+                    _events.ScheduleEvent(EVENT_BELIASH_SHADOW_RETREAT, 20s);
+                    break;
+                default:
+                    break;
+            }
+        }
+    }
+
+private:
+    EventMap _events;
+};
+
 enum GiveMeSightBeyondSightData
 {
     QUEST_GIVE_ME_SIGHT_BEYOND_SIGHT    = 39262,
@@ -1662,6 +1780,8 @@ enum HiddenNoMoreData
     NPC_JAYCE_CRYPTIC_HOLLOW            = 96436,
     NPC_SHIVARRA_CRYPTIC_HOLLOW         = 96504,
     NPC_ROCKSLIDE_KILLCREDIT            = 98755,
+
+    GO_ROCKSLIDE                        = 245045,
 
     SAY_JAYCE_ATTACK_ILLIDARI           = 1,
 
@@ -1825,8 +1945,19 @@ struct npc_jayce_darkweaver_cryptic_hollow_private : public ScriptedAI
             return;
 
         Player* player = me->GetDemonCreatorPlayer();
+        if (!player)
+            return;
 
-        player->KilledMonsterCredit(NPC_ROCKSLIDE_KILLCREDIT);
+        // The rocks fall away for this player only (the door's 6.7 s open animation). The credit waits until they are down,
+        // because a player with the objective done no longer sees the Rockslide, and this clone despawns before then
+        if (GameObject* rockslide = me->FindNearestGameObjectWithOptions(50.0f, { .GameObjectId = GO_ROCKSLIDE, .IgnorePhases = true }))
+            rockslide->SetGoStateFor(GO_STATE_ACTIVE, player);
+
+        player->m_Events.AddEventAtOffset([player]()
+        {
+            player->KilledMonsterCredit(NPC_ROCKSLIDE_KILLCREDIT);
+        }, 7s);
+
         Talk(SAY_JAYCE_ATTACK_ILLIDARI);
         _scheduler.Schedule(1s, [this](TaskContext /*task*/)
         {
@@ -1969,6 +2100,153 @@ CreatureAI* DemonHunterHiddenNoMoreAISelector(Creature* creature)
     return new NullCreatureAI(creature);
 };
 
+enum FelLordCazaData
+{
+    NPC_CAZA_POWER_KILLCREDIT           = 106014,
+
+    EVENT_CAZA_SWEEPING_SLASH           = 1,
+    EVENT_CAZA_FEL_INFUSION,
+
+    SPELL_CAZA_SWEEPING_SLASH           = 197002,
+    SPELL_CAZA_FEL_INFUSION             = 197180,
+    SPELL_CAZA_VIOLENT_FEL_ENERGY       = 196989,
+    SPELL_CAZA_TAKING_POWER             = 210105
+};
+
+// 96441 - Fel Lord Caza
+struct npc_fel_lord_caza : public ScriptedAI
+{
+    npc_fel_lord_caza(Creature* creature) : ScriptedAI(creature) { }
+
+    void JustEngagedWith(Unit* /*who*/) override
+    {
+        _events.ScheduleEvent(EVENT_CAZA_SWEEPING_SLASH, 6s);
+        _events.ScheduleEvent(EVENT_CAZA_FEL_INFUSION, 12s);
+    }
+
+    void Reset() override
+    {
+        _events.Reset();
+    }
+
+    void JustDied(Unit* /*killer*/) override
+    {
+        StartTakingPower(me, QUEST_HIDDEN_NO_MORE, SPELL_CAZA_TAKING_POWER);
+    }
+
+    void UpdateAI(uint32 diff) override
+    {
+        if (!UpdateVictim())
+            return;
+
+        _events.Update(diff);
+
+        if (me->HasUnitState(UNIT_STATE_CASTING))
+            return;
+
+        while (uint32 eventId = _events.ExecuteEvent())
+        {
+            switch (eventId)
+            {
+                case EVENT_CAZA_SWEEPING_SLASH:
+                    DoCastVictim(SPELL_CAZA_SWEEPING_SLASH);
+                    _events.ScheduleEvent(EVENT_CAZA_SWEEPING_SLASH, 10s);
+                    break;
+                case EVENT_CAZA_FEL_INFUSION:
+                    DoCastSelf(SPELL_CAZA_FEL_INFUSION);
+                    _events.ScheduleEvent(EVENT_CAZA_FEL_INFUSION, 20s);
+                    break;
+                default:
+                    break;
+            }
+        }
+    }
+
+private:
+    EventMap _events;
+};
+
+// 197181 - Fel Infusion
+class spell_mardum_caza_fel_infusion : public SpellScript
+{
+    void HandleDummy(SpellEffIndex /*effIndex*/)
+    {
+        // The effect is serverside; the description says the infused axe deals Violent Fel Energy, so hit whoever stands where the fel lands
+        WorldLocation const* dest = GetHitDest();
+        if (!dest)
+            return;
+
+        Unit* caster = GetCaster();
+        std::list<Player*> players;
+        caster->GetPlayerListInGrid(players, 30.0f);
+        for (Player* player : players)
+            if (player->GetExactDist2d(dest) <= 3.0f && caster->IsValidAttackTarget(player))
+                caster->CastSpell(player, SPELL_CAZA_VIOLENT_FEL_ENERGY, true);
+    }
+
+    void Register() override
+    {
+        OnEffectHit += SpellEffectFn(spell_mardum_caza_fel_infusion::HandleDummy, EFFECT_0, SPELL_EFFECT_DUMMY);
+    }
+};
+
+constexpr std::string_view CRYPTIC_HOLLOW_SQUAD_STRING_ID = "CrypticHollowSquad";
+
+// Illidari squads and the demons they hold off inside Cryptic Hollow (spawns with StringId CrypticHollowSquad)
+struct npc_cryptic_hollow_squad_fighter : public ScriptedAI
+{
+    npc_cryptic_hollow_squad_fighter(Creature* creature) : ScriptedAI(creature), _findOpponentTimer(0s) { }
+
+    void Reset() override
+    {
+        // Busy with the squad fight, so the player is left alone unless they join in
+        me->SetReactState(REACT_DEFENSIVE);
+        _findOpponentTimer = 2s;
+    }
+
+    void DamageTaken(Unit* attacker, uint32& damage, DamageEffectType /*damageType*/, SpellInfo const* /*spellInfo = nullptr*/) override
+    {
+        // The squad fights never end on their own: damage from other creatures stops at 30% health
+        if (!attacker || attacker->IsControlledByPlayer() || !me->HealthBelowPctDamaged(30, damage))
+            return;
+
+        uint64 floorHealth = me->CountPctFromMaxHealth(30);
+        damage = me->GetHealth() > floorHealth ? uint32(me->GetHealth() - floorHealth) : 0;
+    }
+
+    void UpdateAI(uint32 diff) override
+    {
+        if (UpdateVictim())
+            return;
+
+        if (me->IsInEvadeMode())
+            return;
+
+        _findOpponentTimer -= Milliseconds(diff);
+        if (_findOpponentTimer > 0s)
+            return;
+
+        _findOpponentTimer = 3s;
+        if (Creature* opponent = FindOpponent())
+            AttackStart(opponent);
+    }
+
+private:
+    Creature* FindOpponent() const
+    {
+        std::list<Creature*> fighters;
+        me->GetCreatureListWithOptionsInGrid(fighters, 15.0f, { .StringId = CRYPTIC_HOLLOW_SQUAD_STRING_ID, .IsAlive = FindCreatureAliveState::EffectivelyAlive });
+        fighters.remove_if([this](Creature const* fighter) { return !me->IsValidAttackTarget(fighter); });
+        if (fighters.empty())
+            return nullptr;
+
+        fighters.sort(Trinity::ObjectDistanceOrderPred(me));
+        return fighters.front();
+    }
+
+    Milliseconds _findOpponentTimer;
+};
+
 void AddSC_zone_mardum()
 {
     // Creature
@@ -1981,6 +2259,9 @@ void AddSC_zone_mardum()
     RegisterCreatureAI(npc_illidari_fighting_invasion_begins);
     RegisterCreatureAI(npc_inquisitor_baleful_molten_shore);
     RegisterCreatureAI(npc_baleful_beaming_eye);
+    RegisterCreatureAI(npc_doom_commander_beliash);
+    RegisterCreatureAI(npc_fel_lord_caza);
+    RegisterCreatureAI(npc_cryptic_hollow_squad_fighter);
     RegisterCreatureAI(npc_sevis_brightflame_shivarra_gateway);
 
     // AISelector
@@ -2022,6 +2303,9 @@ void AddSC_zone_mardum()
     RegisterSpellScript(spell_mardum_coloss_infernal_smash_selector);
     RegisterSpellScript(spell_mardum_baleful_beaming_gaze_selector);
     RegisterSpellScript(spell_give_me_sight_beyond_sight_periodic);
+    RegisterSpellAndAuraScriptPairWithArgs(spell_mardum_taking_power, spell_mardum_taking_power_aura<NPC_BELIASH_POWER_KILLCREDIT>, "spell_before_were_overrun_taking_power");
+    RegisterSpellAndAuraScriptPairWithArgs(spell_mardum_taking_power, spell_mardum_taking_power_aura<NPC_CAZA_POWER_KILLCREDIT>, "spell_hidden_no_more_taking_power");
+    RegisterSpellScript(spell_mardum_caza_fel_infusion);
     RegisterSpellScriptWithArgs(spell_freed_killcredit_set_them_free<NPC_CYANA_NIGHTGLAIVE_FREED>, "spell_cyana_nightglaive_killcredit_set_them_free");
     RegisterSpellScriptWithArgs(spell_freed_killcredit_set_them_free<NPC_IZAL_WHITEMOON_FREED>, "spell_izal_whitemoon_killcredit_set_them_free");
     RegisterSpellScriptWithArgs(spell_freed_killcredit_set_them_free<NPC_BELATH_DAWNBLADE_FREED>, "spell_belath_dawnblade_killcredit_set_them_free");
