@@ -115,11 +115,13 @@ public:
         if (!player)
             return false;
 
+        // The command may log the player out (and free it), so keep the name.
+        std::string const charName = player->GetName();
         ForwardingHandler forward(player->GetSession(), handler);
         bool parsed = forward._ParseCommands(cmd);
         bool ok = parsed && !forward.HasSentErrorMessage();
         handler->SendSysMessage(ok ? "-> ok" : "-> failed");
-        DevTrace::Write("agent", player->GetName(), "cmd",
+        DevTrace::Write("agent", charName, "cmd",
             { DevTrace::Str("command", cmd), DevTrace::Bool("ok", ok), DevTrace::Num("lines", forward.lines) });
         if (!ok)
             handler->SetSentErrorMessage(true);
