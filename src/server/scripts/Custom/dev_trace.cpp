@@ -13,17 +13,25 @@
 #include "Util.h"
 #include <chrono>
 #include <cstdio>
+#include <filesystem>
 #include <mutex>
 
 namespace
 {
     std::mutex traceLock;
     FILE* traceFile = nullptr;
+    std::string tracePath;
     bool traceFailed = false;
 
     // Opened on first use, in append mode; a failure is logged once and tracing stays off.
+    // If the file was deleted or moved away, it is reopened so lines don't vanish into it.
     FILE* OpenTrace()
     {
+        if (traceFile && !std::filesystem::exists(tracePath))
+        {
+            fclose(traceFile);
+            traceFile = nullptr;
+        }
         if (traceFile || traceFailed)
             return traceFile;
 
@@ -31,6 +39,7 @@ namespace
         if (!dir.empty() && dir.back() != '/' && dir.back() != '\\')
             dir.push_back('/');
         std::string path = dir + "devtrace.jsonl";
+        tracePath = path;
 
         traceFile = fopen(path.c_str(), "a");
         if (!traceFile)
@@ -47,7 +56,7 @@ namespace
         time_t seconds = std::chrono::system_clock::to_time_t(now);
         int ms = int(std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count() % 1000);
         tm parts = TimeBreakdown(seconds);
-        char buffer[32];
+        char buffer[64];
         snprintf(buffer, sizeof(buffer), "%04d-%02d-%02d %02d:%02d:%02d.%03d",
             parts.tm_year + 1900, parts.tm_mon + 1, parts.tm_mday, parts.tm_hour, parts.tm_min, parts.tm_sec, ms);
         return buffer;
