@@ -2465,6 +2465,37 @@ struct go_stop_the_bombardment_illidari_banner : public GameObjectAI
     }
 };
 
+enum FelSecretsData
+{
+    QUEST_FEL_SECRETS                               = 40051,
+
+    PLAYERCHOICE_RESPONSE_FEL_SECRETS_HAVOC         = 2311,
+    PLAYERCHOICE_RESPONSE_FEL_SECRETS_VENGEANCE     = 2312,
+
+    SPELL_FEL_SECRETS_HAVOC_SPEC_CHOSEN             = 194939,
+    SPELL_FEL_SECRETS_VENGEANCE_SPEC_CHOSEN         = 194940
+};
+
+// 231 - Fel Secrets: Choice - Havoc/Vengeance
+class playerchoice_fel_secrets : public PlayerChoiceScript
+{
+public:
+    playerchoice_fel_secrets() : PlayerChoiceScript("playerchoice_fel_secrets") { }
+
+    void OnResponse(WorldObject* /*object*/, Player* player, PlayerChoice const* /*choice*/, PlayerChoiceResponse const* response) override
+    {
+        // The tome is consumed by the first pick; a late click on it must not pick the other spec as well
+        if (player->GetQuestStatus(QUEST_FEL_SECRETS) != QUEST_STATUS_INCOMPLETE)
+            return;
+
+        // Each gives the Fel Secrets credit and completes the tracking quest that decides which quest Kayn offers next
+        if (response->ResponseId == PLAYERCHOICE_RESPONSE_FEL_SECRETS_HAVOC)
+            player->CastSpell(player, SPELL_FEL_SECRETS_HAVOC_SPEC_CHOSEN, CastSpellExtraArgsInit{ .TriggerFlags = TRIGGERED_FULL_MASK });
+        else if (response->ResponseId == PLAYERCHOICE_RESPONSE_FEL_SECRETS_VENGEANCE)
+            player->CastSpell(player, SPELL_FEL_SECRETS_VENGEANCE_SPEC_CHOSEN, CastSpellExtraArgsInit{ .TriggerFlags = TRIGGERED_FULL_MASK });
+    }
+};
+
 void AddSC_zone_mardum()
 {
     // Creature
@@ -2517,6 +2548,7 @@ void AddSC_zone_mardum()
     // Quests
     new quest_enter_the_illidari_shivarra();
     new quest_hidden_no_more();
+    new playerchoice_fel_secrets();
 
     // Spells
     RegisterSpellScript(spell_demon_hunter_intro_aura);
