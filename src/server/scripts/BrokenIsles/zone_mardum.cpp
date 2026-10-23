@@ -2192,12 +2192,11 @@ class spell_mardum_caza_fel_infusion : public SpellScript
     }
 };
 
-constexpr std::string_view CRYPTIC_HOLLOW_SQUAD_STRING_ID = "CrypticHollowSquad";
-
-// Illidari squads and the demons they hold off inside Cryptic Hollow (spawns with StringId CrypticHollowSquad)
-struct npc_cryptic_hollow_squad_fighter : public ScriptedAI
+// Illidari and the demons they hold off: in Cryptic Hollow (spawns with StringId CrypticHollowSquad) and in Tyranna's
+// command chamber (FelHammerCommandChamber). Each fights the nearest enemy that shares its spawn StringId.
+struct npc_mardum_squad_fighter : public ScriptedAI
 {
-    npc_cryptic_hollow_squad_fighter(Creature* creature) : ScriptedAI(creature), _findOpponentTimer(0s) { }
+    npc_mardum_squad_fighter(Creature* creature) : ScriptedAI(creature), _findOpponentTimer(0s) { }
 
     void Reset() override
     {
@@ -2236,8 +2235,12 @@ struct npc_cryptic_hollow_squad_fighter : public ScriptedAI
 private:
     Creature* FindOpponent() const
     {
+        std::string_view squad = me->GetStringId(StringIdType::Spawn);
+        if (squad.empty())
+            return nullptr;
+
         std::list<Creature*> fighters;
-        me->GetCreatureListWithOptionsInGrid(fighters, 15.0f, { .StringId = CRYPTIC_HOLLOW_SQUAD_STRING_ID, .IsAlive = FindCreatureAliveState::EffectivelyAlive });
+        me->GetCreatureListWithOptionsInGrid(fighters, 15.0f, { .StringId = squad, .IsAlive = FindCreatureAliveState::EffectivelyAlive });
         fighters.remove_if([this](Creature const* fighter) { return !me->IsValidAttackTarget(fighter); });
         if (fighters.empty())
             return nullptr;
@@ -2496,6 +2499,161 @@ public:
     }
 };
 
+enum TheKeystoneData
+{
+    SAY_TYRANNA_INTRO                       = 0,
+    SAY_TYRANNA_KEYSTONE                    = 1,
+    SAY_TYRANNA_QUEENS_BITE                 = 2,
+    SAY_TYRANNA_INTO_THE_SHADOWS            = 3,
+    SAY_TYRANNA_DEATH                       = 4,
+
+    SAY_KAYN_GRAB_THE_KEYSTONE              = 0,
+
+    NPC_KAYN_SUNFURY_COMMAND_CHAMBER        = 97244,
+
+    EVENT_TYRANNA_QUEENS_BITE               = 1,
+    EVENT_TYRANNA_BROOD_SWARM,
+
+    SPELL_TYRANNA_INTO_THE_SHADOWS          = 197414,
+    SPELL_TYRANNA_QUEENS_BITE               = 197486,
+    SPELL_TYRANNA_BROOD_SWARM               = 197627
+};
+
+static constexpr float TyrannaIntroRange = 30.0f;
+// Kayn's group cannot kill her before a demon hunter joins in
+static constexpr uint8 TyrannaIllidariDamageFloorPct = 60;
+static constexpr uint8 TyrannaIntoTheShadowsPct = 50;
+
+// 93802 - Brood Queen Tyranna
+// Already fighting Kayn, Jace and Allari when the player arrives (all spawned with StringId FelHammerCommandChamber)
+struct npc_brood_queen_tyranna : public ScriptedAI
+{
+    npc_brood_queen_tyranna(Creature* creature) : ScriptedAI(creature), _findOpponentTimer(0s), _introDone(false), _wentIntoTheShadows(false) { }
+
+    void Reset() override
+    {
+        _events.Reset();
+        _findOpponentTimer = 2s;
+        _wentIntoTheShadows = false;
+    }
+
+    void JustEngagedWith(Unit* /*who*/) override
+    {
+        _events.ScheduleEvent(EVENT_TYRANNA_QUEENS_BITE, 6s, 9s);
+    }
+
+    void MoveInLineOfSight(Unit* who) override
+    {
+        if (!_introDone && who->IsPlayer() && me->IsWithinDist(who, TyrannaIntroRange) && me->IsValidAttackTarget(who))
+        {
+            _introDone = true;
+            Talk(SAY_TYRANNA_INTRO, who);
+            // Said while she keeps fighting, so not on her combat events
+            me->m_Events.AddEventAtOffset([this] { Talk(SAY_TYRANNA_KEYSTONE); }, 5s);
+        }
+
+        ScriptedAI::MoveInLineOfSight(who);
+    }
+
+    void DamageTaken(Unit* attacker, uint32& damage, DamageEffectType /*damageType*/, SpellInfo const* /*spellInfo = nullptr*/) override
+    {
+        if (!_wentIntoTheShadows && me->HealthBelowPctDamaged(TyrannaIntoTheShadowsPct, damage) && attacker && attacker->IsControlledByPlayer())
+        {
+            _wentIntoTheShadows = true;
+            Talk(SAY_TYRANNA_INTO_THE_SHADOWS);
+            DoCastSelf(SPELL_TYRANNA_INTO_THE_SHADOWS);
+            _events.ScheduleEvent(EVENT_TYRANNA_BROOD_SWARM, 2s);
+        }
+
+        if (!attacker || attacker->IsControlledByPlayer() || !me->HealthBelowPctDamaged(TyrannaIllidariDamageFloorPct, damage))
+            return;
+
+        uint64 floorHealth = me->CountPctFromMaxHealth(TyrannaIllidariDamageFloorPct);
+        damage = me->GetHealth() > floorHealth ? uint32(me->GetHealth() - floorHealth) : 0;
+    }
+
+    void JustDied(Unit* /*killer*/) override
+    {
+        Talk(SAY_TYRANNA_DEATH);
+        if (Creature* kayn = me->FindNearestCreature(NPC_KAYN_SUNFURY_COMMAND_CHAMBER, 40.0f))
+            kayn->AI()->Talk(SAY_KAYN_GRAB_THE_KEYSTONE);
+
+        // Fresh lines for whoever comes after her respawn
+        _introDone = false;
+    }
+
+    void UpdateAI(uint32 diff) override
+    {
+        if (!UpdateVictim())
+        {
+            if (me->IsInEvadeMode())
+                return;
+
+            _findOpponentTimer -= Milliseconds(diff);
+            if (_findOpponentTimer > 0s)
+                return;
+
+            _findOpponentTimer = 3s;
+            if (Creature* opponent = FindOpponent())
+                AttackStart(opponent);
+            return;
+        }
+
+        _events.Update(diff);
+
+        if (me->HasUnitState(UNIT_STATE_CASTING))
+            return;
+
+        while (uint32 eventId = _events.ExecuteEvent())
+        {
+            switch (eventId)
+            {
+                case EVENT_TYRANNA_QUEENS_BITE:
+                    // Spell target conditions limit the bite to the Illidari fighting her
+                    if (me->CastSpell(nullptr, SPELL_TYRANNA_QUEENS_BITE) == SPELL_CAST_OK)
+                        Talk(SAY_TYRANNA_QUEENS_BITE);
+                    _events.Repeat(14s, 18s);
+                    break;
+                case EVENT_TYRANNA_BROOD_SWARM:
+                    // Her swarm keeps biting while she hides
+                    if (me->HasAura(SPELL_TYRANNA_INTO_THE_SHADOWS))
+                    {
+                        DoCastSelf(SPELL_TYRANNA_BROOD_SWARM, CastSpellExtraArgsInit{ .TriggerFlags = TRIGGERED_FULL_MASK });
+                        _events.Repeat(3s);
+                    }
+                    break;
+                default:
+                    break;
+            }
+
+            if (me->HasUnitState(UNIT_STATE_CASTING))
+                return;
+        }
+    }
+
+private:
+    Creature* FindOpponent() const
+    {
+        std::string_view squad = me->GetStringId(StringIdType::Spawn);
+        if (squad.empty())
+            return nullptr;
+
+        std::list<Creature*> fighters;
+        me->GetCreatureListWithOptionsInGrid(fighters, 15.0f, { .StringId = squad, .IsAlive = FindCreatureAliveState::EffectivelyAlive });
+        fighters.remove_if([this](Creature const* fighter) { return !me->IsValidAttackTarget(fighter); });
+        if (fighters.empty())
+            return nullptr;
+
+        fighters.sort(Trinity::ObjectDistanceOrderPred(me));
+        return fighters.front();
+    }
+
+    EventMap _events;
+    Milliseconds _findOpponentTimer;
+    bool _introDone;
+    bool _wentIntoTheShadows;
+};
+
 void AddSC_zone_mardum()
 {
     // Creature
@@ -2510,7 +2668,8 @@ void AddSC_zone_mardum()
     RegisterCreatureAI(npc_baleful_beaming_eye);
     RegisterCreatureAI(npc_doom_commander_beliash);
     RegisterCreatureAI(npc_fel_lord_caza);
-    RegisterCreatureAI(npc_cryptic_hollow_squad_fighter);
+    RegisterCreatureAI(npc_mardum_squad_fighter);
+    RegisterCreatureAI(npc_brood_queen_tyranna);
     RegisterCreatureAI(npc_prolifica);
 
     // GameObject
