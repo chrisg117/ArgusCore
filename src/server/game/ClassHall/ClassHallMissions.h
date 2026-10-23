@@ -36,7 +36,8 @@ enum ClassHallMissionState : uint32
 {
     CLASS_HALL_MISSION_STATE_OFFERED        = 0,
     CLASS_HALL_MISSION_STATE_IN_PROGRESS    = 1,
-    CLASS_HALL_MISSION_STATE_COMPLETED      = 2
+    CLASS_HALL_MISSION_STATE_COMPLETED      = 2,
+    CLASS_HALL_MISSION_STATE_COMPLETED_BONUS = 3    // only in the complete reply, for a won bonus
 };
 
 // The missions of a character's class hall: those on offer at its mission table, those its
