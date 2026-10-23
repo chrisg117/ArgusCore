@@ -15493,6 +15493,10 @@ void Player::SendQuestUpdate(uint32 questId, bool updateInteractions /*= true*/,
 
     if (updateInteractions)
         UpdateVisibleObjectInteractions(true, false, updateGameObjectQuestGiverStatus, true);
+
+    // Objects can be shown or hidden by quest state (CONDITION_SOURCE_TYPE_OBJECT_ENTRY_VISIBILITY);
+    // look at them again now instead of when the player next moves
+    UpdateObjectVisibility(false);
 }
 
 QuestGiverStatus Player::GetQuestDialogStatus(Object const* questgiver) const
@@ -16437,6 +16441,9 @@ void Player::SetQuestObjectiveData(QuestObjective const& objective, int32 data)
 
     if (Quest const* quest = sObjectMgr->GetQuestTemplate(objective.QuestID))
         sScriptMgr->OnQuestObjectiveChange(this, quest, objective, oldData, data);
+
+    // Visibility conditions can depend on objective progress too
+    UpdateObjectVisibility(false);
 }
 
 bool Player::IsQuestObjectiveCompletable(uint16 slot, Quest const* quest, QuestObjective const& objective) const
