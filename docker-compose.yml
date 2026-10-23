@@ -55,8 +55,12 @@ services:
     environment:
       <<: *database-env
       TC_DATA_DIR: /srv/arguscore/data
+      # SOAP for local dev tooling (dev.sh); published on the host loopback only
+      TC_SOAP_ENABLED: "1"
+      TC_SOAP_IP: "0.0.0.0"
     ports:
       - "8085:8085"
+      - "127.0.0.1:7878:7878"
 
   bnetserver:
     <<: *server
