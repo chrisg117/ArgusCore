@@ -723,9 +723,8 @@ void ClassHallMissions::CompleteMission(ObjectGuid npcGuid, uint32 garrMissionId
     {
         mission.PacketInfo.MissionState = CLASS_HALL_MISSION_STATE_COMPLETED;
 
-        // the chance over 100 is the chance of the bonus rewards, as the client shows it. The complete
-        // reply has no place for the result and what tells the 7.3.5 client of it is not known, so it shows
-        // the bonus as failed
+        // the chance over 100 is the chance of the bonus rewards, as the client shows it; the result is
+        // told to the client in the state of the mission in the complete reply, below
         if (sGarrisonMgr.GetClassHallMissionOvermaxRewards(garrMissionId))
             mission.BonusWon = roll_chance_i(std::clamp(int32(mission.PacketInfo.SuccessChance) - 100, 0, 100));
 
@@ -765,6 +764,12 @@ void ClassHallMissions::CompleteMission(ObjectGuid npcGuid, uint32 garrMissionId
     }
 
     completeMissionResult.Mission = mission.PacketInfo;
+
+    // the 7.3.5 client takes a won bonus (its overmaxSucceeded) from the state of the mission in this reply
+    // being 3; the stored mission stays completed, and the next message about it puts that state back
+    if (completeMissionResult.Succeeded && mission.BonusWon)
+        completeMissionResult.Mission.MissionState = CLASS_HALL_MISSION_STATE_COMPLETED_BONUS;
+
     _owner->SendDirectMessage(completeMissionResult.Write());
 }
 
