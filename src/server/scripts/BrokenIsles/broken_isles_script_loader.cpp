@@ -19,6 +19,7 @@
 
 void AddSC_zone_dalaran_broken_isle();
 void AddSC_zone_mardum();
+void AddSC_zone_vault_of_the_wardens();
 
 // Maw of Souls
 void AddSC_boss_ymiron_the_fallen_king();
@@ -56,6 +57,7 @@ void AddBrokenIslesScripts()
 {
     AddSC_zone_dalaran_broken_isle();
     AddSC_zone_mardum();
+    AddSC_zone_vault_of_the_wardens();
 
     // Maw of Souls
     AddSC_boss_ymiron_the_fallen_king();
