@@ -2654,6 +2654,29 @@ private:
     bool _wentIntoTheShadows;
 };
 
+enum ReturnToTheBlackTempleData
+{
+    MOVIE_RETURN_TO_THE_BLACK_TEMPLE            = 471,
+
+    SPELL_RETURN_TO_THE_BLACK_TEMPLE_TELEPORT   = 192141
+};
+
+// The quest's reward spell (192140) plays the cinematic of the Illidari's return to the Black Temple, which ends with
+// them imprisoned: the player wakes in the Vault of the Wardens (192141 also binds their hearthstone there)
+class player_return_to_the_black_temple : public PlayerScript
+{
+public:
+    player_return_to_the_black_temple() : PlayerScript("player_return_to_the_black_temple") { }
+
+    void OnMovieComplete(Player* player, uint32 movieId) override
+    {
+        if (movieId != MOVIE_RETURN_TO_THE_BLACK_TEMPLE)
+            return;
+
+        player->CastSpell(player, SPELL_RETURN_TO_THE_BLACK_TEMPLE_TELEPORT, true);
+    }
+};
+
 void AddSC_zone_mardum()
 {
     // Creature
@@ -2708,6 +2731,9 @@ void AddSC_zone_mardum()
     new quest_enter_the_illidari_shivarra();
     new quest_hidden_no_more();
     new playerchoice_fel_secrets();
+
+    // Player
+    new player_return_to_the_black_temple();
 
     // Spells
     RegisterSpellScript(spell_demon_hunter_intro_aura);
