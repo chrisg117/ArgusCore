@@ -23,6 +23,8 @@
 #include "ConversationAI.h"
 #include "CreatureAIImpl.h"
 #include "EventProcessor.h"
+#include "GameObject.h"
+#include "GameObjectAI.h"
 #include "GridNotifiersImpl.h"
 #include "MapUtils.h"
 #include "MotionMaster.h"
@@ -2247,6 +2249,222 @@ private:
     Milliseconds _findOpponentTimer;
 };
 
+enum ProlificaData
+{
+    SAY_PROLIFICA_AGGRO                     = 0,
+    SAY_PROLIFICA_MINIONS                   = 1,
+
+    GO_PROLIFICA_TOME                       = 245169,
+
+    POINT_PROLIFICA_RISE                    = 1,
+
+    EVENT_PROLIFICA_GASEOUS_BREATH          = 1,
+    EVENT_PROLIFICA_FEL_GEYSER,
+    EVENT_PROLIFICA_FEL_GEYSER_ERUPTION,
+
+    SPELL_PROLIFICA_GASEOUS_BREATH          = 197240,
+    SPELL_PROLIFICA_FEL_GEYSER_ERUPTION     = 188000
+};
+
+// She waits below the floor of her fel pool, where the client does not draw her, and rises out of it once a player
+// comes near; she fights hovering over the pool (spawn has CREATURE_STATIC_FLAG_FLOATING)
+static constexpr float ProlificaRiseRange = 20.0f;
+static constexpr float ProlificaRiseHeight = 5.7f;
+static constexpr uint8 ProlificaFelGeyserEruptions = 3;
+
+// 98986 - Prolifica
+struct npc_prolifica : public ScriptedAI
+{
+    npc_prolifica(Creature* creature) : ScriptedAI(creature), _tomeSpawnId(0), _rising(false), _eruptions(0), _calledMinions(false) { }
+
+    void Reset() override
+    {
+        _events.Reset();
+        _calledMinions = false;
+
+        // Back down in the pool, out of reach until she rises again
+        _rising = false;
+        me->SetControlled(false, UNIT_STATE_ROOT);
+        me->SetReactState(REACT_PASSIVE);
+        me->SetImmuneToPC(true);
+        me->SetUninteractible(true);
+
+        // The tome is back once she leaves combat
+        if (_tomeSpawnId)
+            me->GetMap()->Respawn(SPAWN_TYPE_GAMEOBJECT, _tomeSpawnId);
+        _tomeSpawnId = 0;
+    }
+
+    void MoveInLineOfSight(Unit* who) override
+    {
+        if (_rising)
+        {
+            ScriptedAI::MoveInLineOfSight(who);
+            return;
+        }
+
+        if (!who->IsPlayer() || me->IsEngaged() || me->GetExactDist2d(who) > ProlificaRiseRange)
+            return;
+
+        _rising = true;
+        _riseTargetGUID = who->GetGUID();
+        Talk(SAY_PROLIFICA_AGGRO, who);
+
+        Position risePos = me->GetHomePosition();
+        risePos.m_positionZ += ProlificaRiseHeight;
+        me->GetMotionMaster()->MovePoint(POINT_PROLIFICA_RISE, risePos, false);
+    }
+
+    void MovementInform(uint32 type, uint32 id) override
+    {
+        if (type != POINT_MOTION_TYPE || id != POINT_PROLIFICA_RISE)
+            return;
+
+        // She fights from above her pool and never leaves it
+        me->SetControlled(true, UNIT_STATE_ROOT);
+        me->SetUninteractible(false);
+        me->SetImmuneToPC(false);
+        me->SetReactState(REACT_AGGRESSIVE);
+
+        if (Unit* target = ObjectAccessor::GetUnit(*me, _riseTargetGUID))
+            if (me->IsValidAttackTarget(target))
+                AttackStart(target);
+    }
+
+    void JustEngagedWith(Unit* /*who*/) override
+    {
+        _events.ScheduleEvent(EVENT_PROLIFICA_GASEOUS_BREATH, 6s);
+        _events.ScheduleEvent(EVENT_PROLIFICA_FEL_GEYSER, 12s);
+
+        // The tome is gone for the fight; if she dies it comes back with her
+        if (GameObject* tome = me->FindNearestGameObject(GO_PROLIFICA_TOME, 40.0f))
+        {
+            _tomeSpawnId = tome->GetSpawnId();
+            tome->DespawnOrUnsummon(0s, Seconds(me->GetRespawnDelay()));
+        }
+    }
+
+    void UpdateAI(uint32 diff) override
+    {
+        if (!UpdateVictim())
+            return;
+
+        _events.Update(diff);
+
+        if (me->HasUnitState(UNIT_STATE_CASTING))
+            return;
+
+        while (uint32 eventId = _events.ExecuteEvent())
+        {
+            switch (eventId)
+            {
+                case EVENT_PROLIFICA_GASEOUS_BREATH:
+                    // Leaves a Gaseous Cloud and spawns her imps where it lands
+                    if (!_calledMinions)
+                    {
+                        Talk(SAY_PROLIFICA_MINIONS);
+                        _calledMinions = true;
+                    }
+                    DoCastVictim(SPELL_PROLIFICA_GASEOUS_BREATH);
+                    _events.ScheduleEvent(EVENT_PROLIFICA_GASEOUS_BREATH, 18s);
+                    break;
+                case EVENT_PROLIFICA_FEL_GEYSER:
+                    _eruptions = 0;
+                    _events.ScheduleEvent(EVENT_PROLIFICA_FEL_GEYSER_ERUPTION, 0s);
+                    _events.ScheduleEvent(EVENT_PROLIFICA_FEL_GEYSER, 20s);
+                    break;
+                case EVENT_PROLIFICA_FEL_GEYSER_ERUPTION:
+                    // Fel Geyser (197217) erupts the cave's geysers through a spell that is missing from the data, and
+                    // no geysers are spawned; a fel geyser (188000, picked by the user in game) erupts around her target
+                    // instead. Her own Fel Explosion (197222) shows nothing unless it hits.
+                    if (Unit* victim = me->GetVictim())
+                        me->CastSpell(victim->GetRandomNearPosition(9.0f), SPELL_PROLIFICA_FEL_GEYSER_ERUPTION);
+                    if (++_eruptions < ProlificaFelGeyserEruptions)
+                        _events.ScheduleEvent(EVENT_PROLIFICA_FEL_GEYSER_ERUPTION, 1500ms);
+                    break;
+                default:
+                    break;
+            }
+        }
+    }
+
+private:
+    EventMap _events;
+    ObjectGuid::LowType _tomeSpawnId;
+    ObjectGuid _riseTargetGUID;
+    bool _rising;
+    uint8 _eruptions;
+    bool _calledMinions;
+};
+
+enum StopTheBombardmentData
+{
+    QUEST_STOP_THE_BOMBARDMENT                  = 38727,
+
+    GO_ILLIDARI_BANNER_DOOM_FORTRESS            = 243965,
+    GO_ILLIDARI_BANNER_FORGE_OF_CORRUPTION      = 243967,
+    GO_ILLIDARI_BANNER_SOUL_ENGINE              = 243968,
+
+    NPC_BROKEN_TROOP                            = 96768,
+    NPC_SHIVAN_TROOP                            = 93764,
+    NPC_NAGA_TROOP                              = 96767,
+
+    POINT_BOMBARDMENT_TROOP_CHARGE              = 1
+};
+
+struct BombardmentSite
+{
+    uint32 BannerCredit;
+    uint32 BannerObjective;
+    uint32 Devastator;
+    uint32 DevastatorObjective;
+    uint32 Troop;
+};
+
+// The captains briefed in Orders for Your Captains send their forces: Gaardoun's Broken, Malevolence's Shivan, S'theno's naga
+std::unordered_map<uint32, BombardmentSite> const BombardmentSites =
+{
+    { GO_ILLIDARI_BANNER_DOOM_FORTRESS,         { 96734, 279861, 96732, 279862, NPC_BROKEN_TROOP } },
+    { GO_ILLIDARI_BANNER_FORGE_OF_CORRUPTION,   { 96733, 279863, 96731, 279864, NPC_SHIVAN_TROOP } },
+    { GO_ILLIDARI_BANNER_SOUL_ENGINE,           { 96692, 278669, 93762, 279857, NPC_NAGA_TROOP } }
+};
+
+// 243965, 243967, 243968 - Illidari Banner
+struct go_stop_the_bombardment_illidari_banner : public GameObjectAI
+{
+    go_stop_the_bombardment_illidari_banner(GameObject* go) : GameObjectAI(go) { }
+
+    bool OnGossipHello(Player* player) override
+    {
+        // The banners' use spells (191480, 191519, 191520) are serverside and missing from the data, so the event is scripted here
+        auto site = BombardmentSites.find(me->GetEntry());
+        if (site == BombardmentSites.end() || player->GetQuestStatus(QUEST_STOP_THE_BOMBARDMENT) != QUEST_STATUS_INCOMPLETE
+            || player->IsQuestObjectiveComplete(QUEST_STOP_THE_BOMBARDMENT, site->second.BannerObjective))
+            return true;
+
+        player->KilledMonsterCredit(site->second.BannerCredit);
+
+        Creature* devastator = me->FindNearestCreatureWithOptions(80.0f, { .CreatureId = site->second.Devastator, .IgnorePhases = true });
+        for (uint8 i = 0; i < 5; ++i)
+        {
+            Position spawnPos = me->GetNearPosition(3.0f, float(M_PI) / 2.5f * i);
+            TempSummon* troop = player->SummonCreature(site->second.Troop, spawnPos, TEMPSUMMON_TIMED_DESPAWN, 25s, 0, 0, player->GetGUID());
+            if (!troop || !devastator)
+                continue;
+
+            troop->SetEmoteState(EMOTE_STATE_ATTACK1H);
+            troop->GetMotionMaster()->MovePoint(POINT_BOMBARDMENT_TROOP_CHARGE, devastator->GetNearPosition(6.0f + frand(0.0f, 4.0f), frand(0.0f, 2 * float(M_PI))));
+        }
+
+        // The troops wreck the devastator; once its objective is done the player no longer sees it
+        player->m_Events.AddEventAtOffset([player, devastatorCredit = site->second.Devastator]()
+        {
+            player->KilledMonsterCredit(devastatorCredit);
+        }, 8s);
+        return true;
+    }
+};
+
 void AddSC_zone_mardum()
 {
     // Creature
@@ -2262,6 +2480,10 @@ void AddSC_zone_mardum()
     RegisterCreatureAI(npc_doom_commander_beliash);
     RegisterCreatureAI(npc_fel_lord_caza);
     RegisterCreatureAI(npc_cryptic_hollow_squad_fighter);
+    RegisterCreatureAI(npc_prolifica);
+
+    // GameObject
+    RegisterGameObjectAI(go_stop_the_bombardment_illidari_banner);
     RegisterCreatureAI(npc_sevis_brightflame_shivarra_gateway);
 
     // AISelector
