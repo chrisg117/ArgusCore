@@ -1629,6 +1629,7 @@ void StartTakingPower(Creature* demonLord, uint32 questId, uint32 takingPowerSpe
 
 // 210093 - Taking Power (Before We're Overrun)
 // 210105 - Taking Power (Hidden No More)
+// 210453 / 210467 - Taking Power (Stop Gul'dan!, in the Vault of the Wardens: Vengeful Retreat / Fiery Brand)
 class spell_mardum_taking_power : public SpellScript
 {
     void PreventMissingForceCast(SpellEffIndex effIndex)
@@ -1659,6 +1660,11 @@ class spell_mardum_taking_power_aura : public AuraScript
     {
         AfterEffectRemove += AuraEffectRemoveFn(spell_mardum_taking_power_aura::HandleRemove, EFFECT_0, SPELL_AURA_PERIODIC_TRIGGER_SPELL, AURA_EFFECT_HANDLE_REAL);
     }
+};
+
+enum StopGuldanTakingPowerData
+{
+    NPC_STOP_GULDAN_POWER_KILLCREDIT    = 106241
 };
 
 enum BeforeWereOverrunData
@@ -2745,6 +2751,7 @@ void AddSC_zone_mardum()
     RegisterSpellScript(spell_give_me_sight_beyond_sight_periodic);
     RegisterSpellAndAuraScriptPairWithArgs(spell_mardum_taking_power, spell_mardum_taking_power_aura<NPC_BELIASH_POWER_KILLCREDIT>, "spell_before_were_overrun_taking_power");
     RegisterSpellAndAuraScriptPairWithArgs(spell_mardum_taking_power, spell_mardum_taking_power_aura<NPC_CAZA_POWER_KILLCREDIT>, "spell_hidden_no_more_taking_power");
+    RegisterSpellAndAuraScriptPairWithArgs(spell_mardum_taking_power, spell_mardum_taking_power_aura<NPC_STOP_GULDAN_POWER_KILLCREDIT>, "spell_stop_guldan_taking_power");
     RegisterSpellScript(spell_mardum_caza_fel_infusion);
     RegisterSpellScriptWithArgs(spell_freed_killcredit_set_them_free<NPC_CYANA_NIGHTGLAIVE_FREED>, "spell_cyana_nightglaive_killcredit_set_them_free");
     RegisterSpellScriptWithArgs(spell_freed_killcredit_set_them_free<NPC_IZAL_WHITEMOON_FREED>, "spell_izal_whitemoon_killcredit_set_them_free");

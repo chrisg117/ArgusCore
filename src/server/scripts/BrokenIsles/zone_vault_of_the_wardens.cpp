@@ -20,7 +20,9 @@
 #include "GameObjectAI.h"
 #include "ObjectMgr.h"
 #include "Player.h"
+#include "ObjectAccessor.h"
 #include "QuestDef.h"
+#include "SceneMgr.h"
 #include "ScriptMgr.h"
 #include "ScriptedCreature.h"
 #include "SpellScript.h"
@@ -288,10 +290,282 @@ class spell_vault_of_the_wardens_destroying_legion_portal : public SpellScript
     }
 };
 
+enum StopGuldanData
+{
+    QUEST_STOP_GULDAN_HAVOC                 = 38723,
+    QUEST_STOP_GULDAN_VENGEANCE             = 40253,
+
+    NPC_CRUSHER                             = 97632,
+    NPC_SLEDGE                              = 92990,
+    NPC_KAYN_SUNFURY_VAULT                  = 96665,
+    NPC_ALTRUIS_THE_SUFFERER_BETRAYER       = 92985,
+
+    SCENE_STOP_GULDAN                       = 14680001,
+
+    SPELL_STOP_GULDAN_QUEST_ACCEPT          = 223661,
+    SPELL_BRUTAL_ATTACKS                    = 199556,
+    SPELL_TAKING_POWER_VENGEFUL_RETREAT     = 210453,
+    SPELL_TAKING_POWER_FIERY_BRAND          = 210467,
+
+    ITEM_MASSIVE_SWORD                      = 128520,
+
+    SAY_BRUTE_EQUIPS_MASSIVE_SWORD          = 0,
+    SAY_BRUTE_ATTACK_THE_OTHER_BRUTE        = 1,
+
+    ACTION_BRUTE_TAKE_SWORD                 = 1,
+    ACTION_BRUTE_BANTER_STARTED,
+
+    EVENT_BRUTE_PASS_SWORD                  = 1,
+    EVENT_BRUTE_BANTER
+};
+
+// Where the scene leaves the player's clone: the stairs up to Illidan's platform in the Vault of the Betrayer
+static constexpr Position VaultOfTheBetrayerStairs = { 4085.05f, -297.99f, -282.44f, 3.2004f };
+// Where the scene's brutes walk to, out of the side portals
+static constexpr Position SledgeFightPosition = { 4048.28f, -307.11f, -281.59f, 0.4536f };
+static constexpr Position CrusherFightPosition = { 4046.49f, -286.22f, -281.59f, 5.9626f };
+// Kayn and Altruis (spawns with this StringId) fight them
+static constexpr std::string_view VaultOfTheBetrayerSquad = "VaultOfTheBetrayerSquad";
+
+// 38723 - Stop Gul'dan! (Havoc), 40253 - Stop Gul'dan! (Vengeance): accepting it plays Gul'dan taking Illidan's body, a
+// client scene nothing in the data starts. Its accept spell gives Face Gul'dan.
+class quest_stop_guldan : public QuestScript
+{
+public:
+    quest_stop_guldan() : QuestScript("quest_stop_guldan") { }
+
+    void OnQuestStatusChange(Player* player, Quest const* /*quest*/, QuestStatus oldStatus, QuestStatus newStatus) override
+    {
+        if (oldStatus != QUEST_STATUS_NONE || newStatus != QUEST_STATUS_INCOMPLETE)
+            return;
+
+        player->CastSpell(player, SPELL_STOP_GULDAN_QUEST_ACCEPT, true);
+        player->GetSceneMgr().PlayScene(SCENE_STOP_GULDAN);
+    }
+};
+
+// Scene package 1423, "Illidan's Chamber - Illidan Breakout": it ends with the Illidari charging into the Vault of the
+// Betrayer, where the player is put. The brutes Gul'dan leaves behind come through the portals for that player only
+// once (they do not respawn), and stay ten minutes, their corpses long enough to take their power.
+class scene_stop_guldan : public SceneScript
+{
+public:
+    scene_stop_guldan() : SceneScript("scene_stop_guldan") { }
+
+    void OnSceneComplete(Player* player, uint32 /*sceneInstanceID*/, SceneTemplate const* /*sceneTemplate*/) override
+    {
+        EnterTheVaultOfTheBetrayer(player);
+    }
+
+    void OnSceneCancel(Player* player, uint32 /*sceneInstanceID*/, SceneTemplate const* /*sceneTemplate*/) override
+    {
+        EnterTheVaultOfTheBetrayer(player);
+    }
+
+private:
+    static void EnterTheVaultOfTheBetrayer(Player* player)
+    {
+        player->NearTeleportTo(VaultOfTheBetrayerStairs);
+
+        for (auto [entry, position] : { std::pair(NPC_SLEDGE, &SledgeFightPosition), std::pair(NPC_CRUSHER, &CrusherFightPosition) })
+            if (TempSummon* brute = player->SummonCreature(entry, *position, TEMPSUMMON_TIMED_DESPAWN, 10min))
+                brute->SetScriptStringId(std::string(VaultOfTheBetrayerSquad));
+    }
+};
+
+// Altruis and Kayn argue while they fight beside the player: speaker, text group, then the wait before the next line
+struct BetrayerBanterLine
+{
+    uint32 Speaker;
+    uint8 TextGroup;
+    Milliseconds Next;
+};
+
+static constexpr std::array<BetrayerBanterLine, 7> BetrayerBanter =
+{{
+    { NPC_ALTRUIS_THE_SUFFERER_BETRAYER, 0, 4s },   // Just like old times, eh Kayn?
+    { NPC_KAYN_SUNFURY_VAULT,            0, 7s },   // Do not speak to me of old times, Altruis...
+    { NPC_ALTRUIS_THE_SUFFERER_BETRAYER, 1, 9s },   // After ten-thousand years of imprisonment...
+    { NPC_KAYN_SUNFURY_VAULT,            1, 7s },   // He was fighting it, as we all do...
+    { NPC_ALTRUIS_THE_SUFFERER_BETRAYER, 2, 6s },   // You followed Illidan blindly, like a dog...
+    { NPC_KAYN_SUNFURY_VAULT,            2, 7s },   // He made the hard choices...
+    { NPC_ALTRUIS_THE_SUFFERER_BETRAYER, 3, 0s }    // I fought as hard as the rest of you!...
+}};
+
+// 97632 - Crusher, 92990 - Sledge: they fight together and pass the Massive Sword between them; its holder has Brutal
+// Attacks. Kayn and Altruis hold them off (damage from creatures stops at 30% health). Once both are dead, the players
+// who killed the last one take their power.
+struct npc_stop_guldan_brute : public ScriptedAI
+{
+    npc_stop_guldan_brute(Creature* creature) : ScriptedAI(creature), _banterStep(0), _banterStarted(false) { }
+
+    void Reset() override
+    {
+        _events.Reset();
+        _warned.clear();
+        _banterStep = 0;
+        _banterStarted = false;
+        DropSword();
+    }
+
+    void JustEngagedWith(Unit* who) override
+    {
+        if (Creature* partner = GetPartner())
+            if (partner->IsAlive() && !partner->IsInCombat())
+                partner->AI()->AttackStart(who);
+
+        // Sledge holds the sword first, as in the scene
+        if (me->GetEntry() == NPC_SLEDGE)
+            TakeSword();
+    }
+
+    void DoAction(int32 action) override
+    {
+        switch (action)
+        {
+            case ACTION_BRUTE_TAKE_SWORD:
+                TakeSword();
+                break;
+            case ACTION_BRUTE_BANTER_STARTED:
+                _banterStarted = true;
+                break;
+            default:
+                break;
+        }
+    }
+
+    void DamageTaken(Unit* attacker, uint32& damage, DamageEffectType /*damageType*/, SpellInfo const* /*spellInfo = nullptr*/) override
+    {
+        if (!attacker)
+            return;
+
+        if (Player* player = attacker->GetCharmerOrOwnerPlayerOrPlayerItself())
+        {
+            StartBanter();
+            if (me->HasAura(SPELL_BRUTAL_ATTACKS) && _warned.insert(player->GetGUID()).second)
+                Talk(SAY_BRUTE_ATTACK_THE_OTHER_BRUTE, player);
+            return;
+        }
+
+        if (!me->HealthBelowPctDamaged(30, damage))
+            return;
+
+        uint64 floorHealth = me->CountPctFromMaxHealth(30);
+        damage = me->GetHealth() > floorHealth ? uint32(me->GetHealth() - floorHealth) : 0;
+    }
+
+    void JustDied(Unit* /*killer*/) override
+    {
+        DropSword();
+
+        if (Creature* partner = GetPartner())
+        {
+            if (partner->IsAlive())
+            {
+                partner->AI()->DoAction(ACTION_BRUTE_TAKE_SWORD);
+                return;
+            }
+        }
+
+        for (ObjectGuid const& tapperGuid : me->GetTapList())
+        {
+            Player* player = ObjectAccessor::GetPlayer(*me, tapperGuid);
+            if (!player)
+                continue;
+
+            if (player->GetQuestStatus(QUEST_STOP_GULDAN_HAVOC) == QUEST_STATUS_INCOMPLETE)
+                player->CastSpell(me, SPELL_TAKING_POWER_VENGEFUL_RETREAT, TRIGGERED_IGNORE_CAST_IN_PROGRESS);
+            else if (player->GetQuestStatus(QUEST_STOP_GULDAN_VENGEANCE) == QUEST_STATUS_INCOMPLETE)
+                player->CastSpell(me, SPELL_TAKING_POWER_FIERY_BRAND, TRIGGERED_IGNORE_CAST_IN_PROGRESS);
+        }
+    }
+
+    void UpdateAI(uint32 diff) override
+    {
+        _events.Update(diff);
+
+        while (uint32 eventId = _events.ExecuteEvent())
+        {
+            switch (eventId)
+            {
+                case EVENT_BRUTE_PASS_SWORD:
+                    if (Creature* partner = GetPartner())
+                    {
+                        if (partner->IsAlive() && partner->IsInCombat())
+                        {
+                            DropSword();
+                            partner->AI()->DoAction(ACTION_BRUTE_TAKE_SWORD);
+                            break;
+                        }
+                    }
+                    _events.ScheduleEvent(EVENT_BRUTE_PASS_SWORD, 20s);
+                    break;
+                case EVENT_BRUTE_BANTER:
+                {
+                    BetrayerBanterLine const& line = BetrayerBanter[_banterStep];
+                    if (Creature* speaker = me->FindNearestCreature(line.Speaker, 60.0f))
+                        speaker->AI()->Talk(line.TextGroup);
+                    if (++_banterStep < BetrayerBanter.size())
+                        _events.ScheduleEvent(EVENT_BRUTE_BANTER, line.Next);
+                    break;
+                }
+                default:
+                    break;
+            }
+        }
+
+        UpdateVictim();
+    }
+
+private:
+    Creature* GetPartner() const
+    {
+        return me->FindNearestCreature(me->GetEntry() == NPC_SLEDGE ? NPC_CRUSHER : NPC_SLEDGE, 50.0f, false);
+    }
+
+    void TakeSword()
+    {
+        if (me->HasAura(SPELL_BRUTAL_ATTACKS))
+            return;
+
+        DoCastSelf(SPELL_BRUTAL_ATTACKS, true);
+        me->SetVirtualItem(0, ITEM_MASSIVE_SWORD);
+        Talk(SAY_BRUTE_EQUIPS_MASSIVE_SWORD);
+        _warned.clear();
+        _events.ScheduleEvent(EVENT_BRUTE_PASS_SWORD, 20s);
+    }
+
+    void DropSword()
+    {
+        me->RemoveAurasDueToSpell(SPELL_BRUTAL_ATTACKS);
+        me->SetVirtualItem(0, 0);
+        _events.CancelEvent(EVENT_BRUTE_PASS_SWORD);
+    }
+
+    // Once per pair of brutes, when a player first strikes one of them
+    void StartBanter()
+    {
+        if (_banterStarted)
+            return;
+
+        _banterStarted = true;
+        if (Creature* partner = GetPartner())
+            partner->AI()->DoAction(ACTION_BRUTE_BANTER_STARTED);
+        _banterStep = 0;
+        _events.ScheduleEvent(EVENT_BRUTE_BANTER, 1s);
+    }
+
+    EventMap _events;
+    GuidUnorderedSet _warned;
+    uint8 _banterStep;
+    bool _banterStarted;
+};
+
 void AddSC_zone_vault_of_the_wardens()
 {
     // Creature
     RegisterCreatureAI(npc_breaking_out_cell);
+    RegisterCreatureAI(npc_stop_guldan_brute);
 
     // GameObject
     RegisterGameObjectAI(go_rise_of_the_illidari_warden_cell);
@@ -299,6 +573,7 @@ void AddSC_zone_vault_of_the_wardens()
     // Quest
     new quest_fel_infusion();
     new quest_vault_of_the_wardens_bonus_objective();
+    new quest_stop_guldan();
 
     // Player
     new player_fel_infusion();
@@ -306,4 +581,7 @@ void AddSC_zone_vault_of_the_wardens()
 
     // Spell
     RegisterSpellScript(spell_vault_of_the_wardens_destroying_legion_portal);
+
+    // Scene
+    new scene_stop_guldan();
 }
