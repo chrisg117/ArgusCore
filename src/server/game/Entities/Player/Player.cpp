@@ -14278,6 +14278,7 @@ void Player::AddQuest(Quest const* quest, Object* questGiver)
     StartCriteria(CriteriaStartEvent::AcceptQuest, quest_id);
 
     SendQuestUpdate(quest_id);
+    SendQuestSpawnTrackingUpdates(quest_id);
 
     bool updateVisibility = false;
     if (quest->HasFlag(QUEST_FLAGS_UPDATE_PHASESHIFT))
@@ -16202,26 +16203,7 @@ void Player::UpdateQuestObjectiveProgress(QuestObjectiveType objectiveType, int3
                     // previously constructed as "QuestPOIUpdateResponse", a duplicate, wrongly-valued
                     // opcode entry - this send was silently failing (WorldSession::SendPacket rejecting
                     // an out-of-range opcode) until that was fixed. See ARGUSCORE_FIXES.md.
-                    for (auto const& [spawnTrackingId, data] : sObjectMgr->GetSpawnMetadataForSpawnTracking(data->spawnTrackingData->SpawnTrackingId))
-                    {
-                        SpawnData const* spawnData = data->ToSpawnData();
-                        if (!spawnData)
-                            continue;
-
-                        WorldPackets::Quest::QuestSpawnTrackingUpdate response;
-
-                        WorldPackets::Quest::SpawnTrackingResponseInfo& responseInfo = response.SpawnTrackingResponses.emplace_back();
-                        responseInfo.SpawnTrackingID = data->spawnTrackingData->SpawnTrackingId;
-                        responseInfo.ObjectID = spawnData->id;
-                        responseInfo.PhaseID = spawnData->phaseId;
-                        responseInfo.PhaseGroupID = spawnData->phaseGroup;
-                        responseInfo.PhaseUseFlags = spawnData->phaseUseFlags;
-
-                        SpawnTrackingState state = GetSpawnTrackingStateByObjectives(data->spawnTrackingData->SpawnTrackingId, data->spawnTrackingQuestObjectives);
-                        responseInfo.Visible = data->spawnTrackingStates[AsUnderlyingType(state)].Visible;
-
-                        SendDirectMessage(response.Write());
-                    }
+                    SendSpawnTrackingUpdate(data->spawnTrackingData->SpawnTrackingId);
 
                     anyObjectiveChangedSpawnTrackingState = true;
                 }
@@ -16886,6 +16868,40 @@ SpawnTrackingState Player::GetSpawnTrackingStateByObjective(uint32 spawnTracking
     }
 
     return SpawnTrackingState::None;
+}
+
+void Player::SendSpawnTrackingUpdate(uint32 spawnTrackingId) const
+{
+    WorldPackets::Quest::QuestSpawnTrackingUpdate response;
+    for (auto const& [_, data] : sObjectMgr->GetSpawnMetadataForSpawnTracking(spawnTrackingId))
+    {
+        SpawnData const* spawnData = data->ToSpawnData();
+        if (!spawnData)
+            continue;
+
+        WorldPackets::Quest::SpawnTrackingResponseInfo& responseInfo = response.SpawnTrackingResponses.emplace_back();
+        responseInfo.SpawnTrackingID = spawnTrackingId;
+        responseInfo.ObjectID = spawnData->id;
+        responseInfo.PhaseID = spawnData->phaseId;
+        responseInfo.PhaseGroupID = spawnData->phaseGroup;
+        responseInfo.PhaseUseFlags = spawnData->phaseUseFlags;
+
+        SpawnTrackingState state = GetSpawnTrackingStateByObjectives(spawnTrackingId, data->spawnTrackingQuestObjectives);
+        responseInfo.Visible = data->spawnTrackingStates[AsUnderlyingType(state)].Visible;
+    }
+
+    if (!response.SpawnTrackingResponses.empty())
+        SendDirectMessage(response.Write());
+}
+
+// The server has no handler for the client's own request for the state of a quest's tracked spawns, so the client is
+// sent it with the quest and with its POIs (a 7.3.5 client only uses it to hide or show POI blobs)
+void Player::SendQuestSpawnTrackingUpdates(uint32 questId) const
+{
+    if (QuestPOIData const* poiData = sObjectMgr->GetQuestPOIData(questId))
+        for (QuestPOIBlobData const& blob : poiData->Blobs)
+            if (blob.SpawnTrackingID)
+                SendSpawnTrackingUpdate(blob.SpawnTrackingID);
 }
 
 /*********************************************************/
