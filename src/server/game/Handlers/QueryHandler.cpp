@@ -298,6 +298,9 @@ void WorldSession::HandleQuestPOIQuery(WorldPackets::Query::QuestPOIQuery& quest
                 response.QuestPOIDataStats.push_back(poiData);
 
     SendPacket(response.Write());
+
+    for (QuestPOIData const* poiData : response.QuestPOIDataStats)
+        _player->SendQuestSpawnTrackingUpdates(poiData->QuestID);
 }
 
 /**

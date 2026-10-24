@@ -695,11 +695,9 @@ void ChoiceResponse::Read()
 
 ByteBuffer& operator<<(ByteBuffer& data, SpawnTrackingResponseInfo const& spawnTrackingResponseInfo)
 {
+    // 7.3.5 has only the id, the object and the visible bit; the phase fields came later
     data << uint32(spawnTrackingResponseInfo.SpawnTrackingID);
     data << int32(spawnTrackingResponseInfo.ObjectID);
-    data << int32(spawnTrackingResponseInfo.PhaseID);
-    data << int32(spawnTrackingResponseInfo.PhaseGroupID);
-    data << int32(spawnTrackingResponseInfo.PhaseUseFlags);
 
     data << Bits<1>(spawnTrackingResponseInfo.Visible);
     data.FlushBits();
