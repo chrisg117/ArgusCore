@@ -16,9 +16,14 @@
  */
 
 #include "CreatureAI.h"
+#include "GameObject.h"
+#include "GameObjectAI.h"
+#include "ObjectMgr.h"
 #include "Player.h"
+#include "QuestDef.h"
 #include "ScriptMgr.h"
 #include "ScriptedCreature.h"
+#include "SpellScript.h"
 
 enum BreakingOutData
 {
@@ -115,8 +120,190 @@ private:
     }
 };
 
+enum RiseOfTheIllidariData
+{
+    QUEST_RISE_OF_THE_ILLIDARI              = 38690,
+
+    SAY_ILLIDARI_PRISONER_FREED             = 0,
+
+    SPELL_FREE_ILLIDARI_PRISONER            = 193119
+};
+
+// The named Illidari held in the clickable cells; each is also an optional objective of the quest
+static constexpr std::array<uint32, 8> RiseOfTheIllidariPrisoners =
+{
+    97614, // Allari the Souleater
+    97615, // Jace Darkweaver
+    97616, // Cyana Nightglaive
+    97617, // Asha Ravensong
+    97618, // Falara Nightsong
+    97619, // Marius Felbane
+    97620, // Lyana Darksorrow
+    97622  // Kor'vas Bloodthorn
+};
+static constexpr float WardenCellPrisonerRange = 5.0f;
+
+// 244588 - Warden Cell
+// Each cell frees one prisoner per player: it opens for that player only and stays open for them, and the Illidari held
+// in it answers
+struct go_rise_of_the_illidari_warden_cell : public GameObjectAI
+{
+    go_rise_of_the_illidari_warden_cell(GameObject* go) : GameObjectAI(go) { }
+
+    bool OnGossipHello(Player* player) override
+    {
+        if (player->GetQuestStatus(QUEST_RISE_OF_THE_ILLIDARI) != QUEST_STATUS_INCOMPLETE || !_freedFor.insert(player->GetGUID()).second)
+            return true;
+
+        me->SetGoStateFor(GO_STATE_ACTIVE, player);
+        // Its effects give the freed-prisoner credit
+        player->CastSpell(player, SPELL_FREE_ILLIDARI_PRISONER, true);
+
+        for (uint32 entry : RiseOfTheIllidariPrisoners)
+        {
+            if (Creature* prisoner = me->FindNearestCreature(entry, WardenCellPrisonerRange))
+            {
+                prisoner->AI()->Talk(SAY_ILLIDARI_PRISONER_FREED, player);
+                player->KilledMonsterCredit(entry);
+                break;
+            }
+        }
+        return true;
+    }
+
+private:
+    GuidUnorderedSet _freedFor;
+};
+
+enum FelInfusionData
+{
+    QUEST_FEL_INFUSION                      = 38689,
+
+    MAP_VAULT_OF_THE_WARDENS_QUESTS         = 1468,
+
+    NPC_FEL_INFUSION_SOUL_FRAGMENT          = 89297,
+
+    SPELL_FEL_INFUSION_BAR                  = 133508
+};
+
+// Each demon killed in the Vault while on Fel Infusion fills this much of the 100-point bar
+static constexpr int32 FelInfusionEnergyPerDemon = 10;
+
+// 38689 - Fel Infusion: the fel energy bar shows while the quest is in the log (its reward spell 133510 removes it)
+class quest_fel_infusion : public QuestScript
+{
+public:
+    quest_fel_infusion() : QuestScript("quest_fel_infusion") { }
+
+    void OnQuestStatusChange(Player* player, Quest const* /*quest*/, QuestStatus oldStatus, QuestStatus newStatus) override
+    {
+        if (oldStatus == QUEST_STATUS_NONE && newStatus == QUEST_STATUS_INCOMPLETE)
+            player->CastSpell(player, SPELL_FEL_INFUSION_BAR, true);
+        else if (newStatus == QUEST_STATUS_NONE)
+            player->RemoveAurasDueToSpell(SPELL_FEL_INFUSION_BAR);
+    }
+};
+
+// Demons killed in the Vault give back fel energy ("Kill them and gather their souls")
+class player_fel_infusion : public PlayerScript
+{
+public:
+    player_fel_infusion() : PlayerScript("player_fel_infusion") { }
+
+    void OnCreatureKill(Player* killer, Creature* killed) override
+    {
+        if (killer->GetQuestStatus(QUEST_FEL_INFUSION) != QUEST_STATUS_INCOMPLETE || killed->GetMapId() != MAP_VAULT_OF_THE_WARDENS_QUESTS
+            || killed->GetCreatureType() != CREATURE_TYPE_DEMON)
+            return;
+
+        killer->ModifyPower(POWER_ALTERNATE_POWER, FelInfusionEnergyPerDemon);
+        killer->UpdateQuestObjectiveProgress(QUEST_OBJECTIVE_MONSTER, NPC_FEL_INFUSION_SOUL_FRAGMENT, FelInfusionEnergyPerDemon, killed->GetGUID());
+    }
+};
+
+enum VaultOfTheWardensBonusObjectiveData
+{
+    QUEST_VAULT_OF_THE_WARDENS              = 39742,
+
+    ZONE_VAULT_OF_THE_WARDENS               = 7814
+};
+
+// 39742 - Vault of the Wardens: the Vault's bonus objective. The core gives task quests to no one, so it is added on
+// entering the Vault
+class player_vault_of_the_wardens_bonus_objective : public PlayerScript
+{
+public:
+    player_vault_of_the_wardens_bonus_objective() : PlayerScript("player_vault_of_the_wardens_bonus_objective") { }
+
+    void OnUpdateZone(Player* player, uint32 newZone, uint32 /*newArea*/) override
+    {
+        if (newZone != ZONE_VAULT_OF_THE_WARDENS || player->GetMapId() != MAP_VAULT_OF_THE_WARDENS_QUESTS
+            || player->GetQuestStatus(QUEST_VAULT_OF_THE_WARDENS) != QUEST_STATUS_NONE)
+            return;
+
+        if (Quest const* quest = sObjectMgr->GetQuestTemplate(QUEST_VAULT_OF_THE_WARDENS))
+            if (player->CanTakeQuest(quest, false))
+                player->AddQuestAndCheckCompletion(quest, nullptr);
+    }
+};
+
+// 39742 - Vault of the Wardens: as on retail, rewarded as soon as its bar is full
+class quest_vault_of_the_wardens_bonus_objective : public QuestScript
+{
+public:
+    quest_vault_of_the_wardens_bonus_objective() : QuestScript("quest_vault_of_the_wardens_bonus_objective") { }
+
+    void OnQuestStatusChange(Player* player, Quest const* quest, QuestStatus /*oldStatus*/, QuestStatus newStatus) override
+    {
+        if (newStatus != QUEST_STATUS_COMPLETE)
+            return;
+
+        // Once the kill that filled the bar is done updating the quest log; the player's own events end with the player
+        player->m_Events.AddEventAtOffset([player, quest]()
+        {
+            if (player->GetQuestStatus(quest->GetQuestId()) == QUEST_STATUS_COMPLETE)
+                player->RewardQuest(quest, LootItemType::Item, 0, player);
+        }, 1ms);
+    }
+};
+
+// 202064 - Destroying Legion Portal (the Legion Portals' spellclick): the channel destroys the portal, a kill for the
+// player who closed it
+class spell_vault_of_the_wardens_destroying_legion_portal : public SpellScript
+{
+    void HandleDummy(SpellEffIndex /*effIndex*/)
+    {
+        Creature* portal = GetHitCreature();
+        if (!portal)
+            return;
+
+        // Kill rewards go to the creature's tappers only, and nothing has struck the portal
+        portal->SetTappedBy(GetCaster());
+        Unit::Kill(GetCaster(), portal);
+    }
+
+    void Register() override
+    {
+        OnEffectHitTarget += SpellEffectFn(spell_vault_of_the_wardens_destroying_legion_portal::HandleDummy, EFFECT_0, SPELL_EFFECT_DUMMY);
+    }
+};
+
 void AddSC_zone_vault_of_the_wardens()
 {
     // Creature
     RegisterCreatureAI(npc_breaking_out_cell);
+
+    // GameObject
+    RegisterGameObjectAI(go_rise_of_the_illidari_warden_cell);
+
+    // Quest
+    new quest_fel_infusion();
+    new quest_vault_of_the_wardens_bonus_objective();
+
+    // Player
+    new player_fel_infusion();
+    new player_vault_of_the_wardens_bonus_objective();
+
+    // Spell
+    RegisterSpellScript(spell_vault_of_the_wardens_destroying_legion_portal);
 }

@@ -2192,8 +2192,9 @@ class spell_mardum_caza_fel_infusion : public SpellScript
     }
 };
 
-// Illidari and the demons they hold off: in Cryptic Hollow (spawns with StringId CrypticHollowSquad) and in Tyranna's
-// command chamber (FelHammerCommandChamber). Each fights the nearest enemy that shares its spawn StringId.
+// Illidari and the demons they hold off: in Cryptic Hollow (spawns with StringId CrypticHollowSquad), in Tyranna's
+// command chamber (FelHammerCommandChamber), and in the Vault of the Wardens' Illidari Ward (IllidariWardSquad). Each
+// fights the nearest enemy that shares its spawn StringId.
 struct npc_mardum_squad_fighter : public ScriptedAI
 {
     npc_mardum_squad_fighter(Creature* creature) : ScriptedAI(creature), _findOpponentTimer(0s) { }
