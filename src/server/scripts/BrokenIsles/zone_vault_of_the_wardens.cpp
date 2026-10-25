@@ -15,9 +15,14 @@
  * with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "AreaTrigger.h"
+#include "AreaTriggerAI.h"
+#include "Conversation.h"
 #include "CreatureAI.h"
 #include "GameObject.h"
 #include "GameObjectAI.h"
+#include "MotionMaster.h"
+#include "MoveSplineInit.h"
 #include "ObjectMgr.h"
 #include "Player.h"
 #include "ObjectAccessor.h"
@@ -26,6 +31,7 @@
 #include "ScriptMgr.h"
 #include "ScriptedCreature.h"
 #include "SpellScript.h"
+#include "Vehicle.h"
 
 enum BreakingOutData
 {
@@ -561,11 +567,417 @@ private:
     bool _banterStarted;
 };
 
+enum GrandTheftFelbatData
+{
+    QUEST_GRAND_THEFT_FELBAT                = 39682,
+
+    NPC_VAMPIRIC_FELBAT_CREDIT              = 96659,
+    NPC_KAYN_SUNFURY_RUNNING_AHEAD          = 97265,
+    NPC_ALTRUIS_THE_SUFFERER_RUNNING_AHEAD  = 97267,
+
+    CONVERSATION_BASTILLAX_EVERY_FLOOR      = 14680001,
+
+    SAY_KAYN_YOU_HEARD_THE_WARDEN           = 0,
+    SAY_KAYN_LEADER_WITH_NO_FOLLOWERS       = 1,
+    SAY_ALTRUIS_YOU_WOULD_TRUST_THE_WARDEN  = 0,
+
+    POINT_FELBAT_DEMON_WARD                 = 1,
+    POINT_RUNNING_AHEAD_TOMB                = 1,
+
+    EVENT_FELBAT_TAKE_OFF                   = 1,
+    EVENT_FELBAT_BASTILLAX
+};
+
+// Where Kayn and Altruis wait in the Tomb of the Penitent (the scene's places)
+static constexpr Position KaynInTheTomb = { 4238.04f, -290.14f, -281.39f, 3.3685f };
+static constexpr Position AltruisInTheTomb = { 4238.93f, -295.14f, -281.39f, 3.2987f };
+
+// 39682 - Grand Theft Felbat: Kayn and Altruis run ahead to the Tomb of the Penitent, arguing about the Warden. The two
+// in the Vault of the Betrayer are gone for the player once it is taken; these are the player's own.
+class quest_grand_theft_felbat : public QuestScript
+{
+public:
+    quest_grand_theft_felbat() : QuestScript("quest_grand_theft_felbat") { }
+
+    void OnQuestStatusChange(Player* player, Quest const* /*quest*/, QuestStatus oldStatus, QuestStatus newStatus) override
+    {
+        if (oldStatus != QUEST_STATUS_NONE || newStatus != QUEST_STATUS_INCOMPLETE)
+            return;
+
+        Creature* kayn = player->FindNearestCreature(NPC_KAYN_SUNFURY_VAULT, 30.0f);
+        Creature* altruis = player->FindNearestCreature(NPC_ALTRUIS_THE_SUFFERER_BETRAYER, 30.0f);
+        if (!kayn || !altruis)
+            return;
+
+        TempSummon* kaynAhead = player->SummonCreature(NPC_KAYN_SUNFURY_RUNNING_AHEAD, kayn->GetPosition(), TEMPSUMMON_TIMED_DESPAWN, 2min, 0, 0, player->GetGUID());
+        TempSummon* altruisAhead = player->SummonCreature(NPC_ALTRUIS_THE_SUFFERER_RUNNING_AHEAD, altruis->GetPosition(), TEMPSUMMON_TIMED_DESPAWN, 2min, 0, 0, player->GetGUID());
+        if (!kaynAhead || !altruisAhead)
+            return;
+
+        kaynAhead->GetMotionMaster()->MovePoint(POINT_RUNNING_AHEAD_TOMB, KaynInTheTomb, true, KaynInTheTomb.GetOrientation());
+        altruisAhead->GetMotionMaster()->MovePoint(POINT_RUNNING_AHEAD_TOMB, AltruisInTheTomb, true, AltruisInTheTomb.GetOrientation());
+
+        kaynAhead->AI()->Talk(SAY_KAYN_YOU_HEARD_THE_WARDEN, player);
+        ObjectGuid kaynGuid = kaynAhead->GetGUID();
+        ObjectGuid altruisGuid = altruisAhead->GetGUID();
+        player->m_Events.AddEventAtOffset([player, altruisGuid]()
+        {
+            if (Creature* altruis = ObjectAccessor::GetCreature(*player, altruisGuid))
+                altruis->AI()->Talk(SAY_ALTRUIS_YOU_WOULD_TRUST_THE_WARDEN, player);
+        }, 6s);
+        player->m_Events.AddEventAtOffset([player, kaynGuid]()
+        {
+            if (Creature* kayn = ObjectAccessor::GetCreature(*player, kaynGuid))
+                kayn->AI()->Talk(SAY_KAYN_LEADER_WITH_NO_FOLLOWERS, player);
+        }, 12s);
+    }
+};
+
+// 97265 - Kayn Sunfury, 97267 - Altruis the Sufferer (Grand Theft Felbat): gone once they reach the Tomb, where the
+// player finds the Tomb's own Kayn and Altruis
+struct npc_grand_theft_felbat_running_ahead : public ScriptedAI
+{
+    npc_grand_theft_felbat_running_ahead(Creature* creature) : ScriptedAI(creature) { }
+
+    void MovementInform(uint32 type, uint32 id) override
+    {
+        if (type == POINT_MOTION_TYPE && id == POINT_RUNNING_AHEAD_TOMB)
+            me->DespawnOrUnsummon();
+    }
+};
+
+// The felbat's way up: off the landing by the elevator, over the elevator resting at the bottom of the shaft and up its
+// middle to the round hall the shaft rises through, then along the walkway from there into the Demon Ward (z 126) and
+// down beside Kor'vas. The shaft's bottom legs were checked for line of sight with the agent character; the walkway is
+// one straight stretch of the navmesh.
+static constexpr std::array<Position, 11> FelbatFlightToTheDemonWard =
+{{
+    { 4436.0f, -284.1f, -243.0f },
+    { 4444.0f, -303.0f, -236.0f },
+    { 4451.0f, -321.5f, -230.0f },
+    { 4451.0f, -321.5f, -200.0f },
+    { 4451.0f, -321.5f,    0.0f },
+    { 4451.0f, -321.5f,  120.0f },
+    { 4451.0f, -321.5f,  129.5f },
+    { 4451.0f, -342.0f,  129.0f },
+    { 4451.0f, -365.0f,  128.5f },
+    { 4451.3f, -380.0f,  127.2f },
+    { 4451.5f, -383.0f,  126.6f }
+}};
+
+// 99443 - Vampiric Felbat (195537, from the felbat by the elevator shaft): flies its rider up to the Demon Ward, where the
+// ride counts for Grand Theft Felbat. Bastillax taunts on the way up.
+struct npc_grand_theft_felbat_vampiric_felbat : public ScriptedAI
+{
+    npc_grand_theft_felbat_vampiric_felbat(Creature* creature) : ScriptedAI(creature) { }
+
+    void InitializeAI() override
+    {
+        me->SetReactState(REACT_PASSIVE);
+        me->SetDisableGravity(true);
+    }
+
+    void PassengerBoarded(Unit* passenger, int8 /*seatId*/, bool apply) override
+    {
+        if (!apply || !passenger->IsPlayer())
+            return;
+
+        _riderGuid = passenger->GetGUID();
+        _events.ScheduleEvent(EVENT_FELBAT_TAKE_OFF, 1s);
+    }
+
+    void MovementInform(uint32 type, uint32 id) override
+    {
+        if (type != EFFECT_MOTION_TYPE || id != POINT_FELBAT_DEMON_WARD)
+            return;
+
+        if (Player* rider = ObjectAccessor::GetPlayer(*me, _riderGuid))
+            rider->KilledMonsterCredit(NPC_VAMPIRIC_FELBAT_CREDIT);
+
+        if (Vehicle* vehicle = me->GetVehicleKit())
+            vehicle->RemoveAllPassengers();
+        me->DespawnOrUnsummon(2s);
+    }
+
+    void UpdateAI(uint32 diff) override
+    {
+        _events.Update(diff);
+
+        while (uint32 eventId = _events.ExecuteEvent())
+        {
+            switch (eventId)
+            {
+                case EVENT_FELBAT_TAKE_OFF:
+                    me->GetMotionMaster()->LaunchMoveSpline([](Movement::MoveSplineInit& init)
+                    {
+                        Movement::PointsArray path;
+                        for (Position const& point : FelbatFlightToTheDemonWard)
+                            path.emplace_back(point.GetPositionX(), point.GetPositionY(), point.GetPositionZ());
+                        init.MovebyPath(path);
+                        init.SetFly();
+                        init.SetVelocity(28.0f);
+                    }, POINT_FELBAT_DEMON_WARD);
+                    _events.ScheduleEvent(EVENT_FELBAT_BASTILLAX, 6s);
+                    break;
+                case EVENT_FELBAT_BASTILLAX:
+                    if (Player* rider = ObjectAccessor::GetPlayer(*me, _riderGuid))
+                        Conversation::CreateConversation(CONVERSATION_BASTILLAX_EVERY_FLOOR, rider, *rider, rider->GetGUID());
+                    break;
+                default:
+                    break;
+            }
+        }
+    }
+
+private:
+    EventMap _events;
+    ObjectGuid _riderGuid;
+};
+
+enum FrozenInTimeData
+{
+    QUEST_FROZEN_IN_TIME                    = 39685,
+
+    NPC_KORVAS_BLOODTHORN_DEMON_WARD        = 97643,
+    NPC_KAYN_SUNFURY_VAULT_OF_ICE           = 99228,
+
+    GO_VAULT_OF_ICE_ICICLES                 = 246418,
+
+    SAY_KORVAS_MOST_POWERFUL_PRISONERS      = 1,
+    SAY_KORVAS_HELP_THEM_QUICKLY            = 2,
+    SAY_KAYN_TOO_STRONG                     = 0,
+    SAY_KAYN_HOLD_HIM                       = 1,
+    SAY_KAYN_MONSTER_CONTAINED              = 2,
+
+    SPELL_LAVA_WREATH                       = 192631,
+    SPELL_LAVA_WREATH_PATCH                 = 192571,
+    SPELL_LAVA                              = 192519,
+
+    EVENT_ASHGOLM_FIND_OPPONENT             = 1,
+    EVENT_ASHGOLM_KAYN_CALLS_OUT,
+    EVENT_ASHGOLM_LAVA_WREATH
+};
+
+// The Vault of Ice's squad fight: Ash'golm against Kayn and the Freed Illidari
+static constexpr std::string_view VaultOfIceSquad = "VaultOfIceSquad";
+static constexpr float VaultOfIceRange = 40.0f;
+// Each Lava Wreath drops this many patches of lava within this distance of Ash'golm, on his platform
+static constexpr uint8 LavaWreathPatches = 3;
+static constexpr float LavaWreathRadius = 18.0f;
+// The patches last this long; the spell's own ten minutes would cover the platform
+static constexpr Milliseconds LavaPatchDuration = 30s;
+// Lava burns this share of the player's health every tick: the dungeon's flat amount is for level 110
+static constexpr int32 LavaDamagePct = 4;
+
+// 39685 - Frozen in Time: Kor'vas sends the player down to the Vault of Ice
+class quest_frozen_in_time : public QuestScript
+{
+public:
+    quest_frozen_in_time() : QuestScript("quest_frozen_in_time") { }
+
+    void OnQuestStatusChange(Player* player, Quest const* /*quest*/, QuestStatus oldStatus, QuestStatus newStatus) override
+    {
+        if (oldStatus != QUEST_STATUS_NONE || newStatus != QUEST_STATUS_INCOMPLETE)
+            return;
+
+        Creature* korvas = player->FindNearestCreature(NPC_KORVAS_BLOODTHORN_DEMON_WARD, 30.0f);
+        if (!korvas)
+            return;
+
+        korvas->AI()->Talk(SAY_KORVAS_MOST_POWERFUL_PRISONERS, player);
+        ObjectGuid korvasGuid = korvas->GetGUID();
+        player->m_Events.AddEventAtOffset([player, korvasGuid]()
+        {
+            if (Creature* korvas = ObjectAccessor::GetCreature(*player, korvasGuid))
+                korvas->AI()->Talk(SAY_KORVAS_HELP_THEM_QUICKLY, player);
+        }, 8s);
+    }
+};
+
+// 96681 - Ash'golm (Frozen in Time): holds the middle of the Vault of Ice against Kayn and the Freed Illidari, where
+// he is frozen later, and cannot be brought down ("He is too strong!"). While players are near, his Lava Wreath drops
+// patches of lava around him for them to dodge. Kayn calls out to the players on the quest who come in.
+struct npc_frozen_in_time_ashgolm : public ScriptedAI
+{
+    npc_frozen_in_time_ashgolm(Creature* creature) : ScriptedAI(creature) { }
+
+    void Reset() override
+    {
+        me->SetReactState(REACT_DEFENSIVE);
+        // Chasing would take him off his platform, and moving breaks his Lava Wreath
+        me->SetControlled(true, UNIT_STATE_ROOT);
+        _events.Reset();
+        _events.ScheduleEvent(EVENT_ASHGOLM_FIND_OPPONENT, 2s);
+        _events.ScheduleEvent(EVENT_ASHGOLM_KAYN_CALLS_OUT, 25s, 35s);
+        _events.ScheduleEvent(EVENT_ASHGOLM_LAVA_WREATH, 8s);
+    }
+
+    void OnSpellCast(SpellInfo const* spellInfo) override
+    {
+        if (spellInfo->Id != SPELL_LAVA_WREATH)
+            return;
+
+        for (uint8 i = 0; i < LavaWreathPatches; ++i)
+            me->CastSpell(me->GetRandomNearPosition(LavaWreathRadius), SPELL_LAVA_WREATH_PATCH, true);
+    }
+
+    void MoveInLineOfSight(Unit* who) override
+    {
+        ScriptedAI::MoveInLineOfSight(who);
+
+        Player* player = who->ToPlayer();
+        if (!player || player->GetQuestStatus(QUEST_FROZEN_IN_TIME) != QUEST_STATUS_INCOMPLETE || !me->IsWithinDist(player, VaultOfIceRange)
+            || !_greeted.insert(player->GetGUID()).second)
+            return;
+
+        if (Creature* kayn = me->FindNearestCreature(NPC_KAYN_SUNFURY_VAULT_OF_ICE, VaultOfIceRange))
+            kayn->AI()->Talk(SAY_KAYN_TOO_STRONG, player);
+    }
+
+    void DamageTaken(Unit* /*attacker*/, uint32& damage, DamageEffectType /*damageType*/, SpellInfo const* /*spellInfo = nullptr*/) override
+    {
+        // Players cannot bring him down either: only the countermeasures stop him
+        if (!me->HealthBelowPctDamaged(30, damage))
+            return;
+
+        uint64 floorHealth = me->CountPctFromMaxHealth(30);
+        damage = me->GetHealth() > floorHealth ? uint32(me->GetHealth() - floorHealth) : 0;
+    }
+
+    void UpdateAI(uint32 diff) override
+    {
+        _events.Update(diff);
+
+        while (uint32 eventId = _events.ExecuteEvent())
+        {
+            switch (eventId)
+            {
+                case EVENT_ASHGOLM_FIND_OPPONENT:
+                    if (!me->IsEngaged())
+                        if (Creature* opponent = FindOpponent())
+                            AttackStart(opponent);
+                    _events.Repeat(3s);
+                    break;
+                case EVENT_ASHGOLM_KAYN_CALLS_OUT:
+                    if (Player* player = me->SelectNearestPlayer(VaultOfIceRange))
+                        if (player->GetQuestStatus(QUEST_FROZEN_IN_TIME) == QUEST_STATUS_INCOMPLETE)
+                            if (Creature* kayn = me->FindNearestCreature(NPC_KAYN_SUNFURY_VAULT_OF_ICE, VaultOfIceRange))
+                                kayn->AI()->Talk(SAY_KAYN_HOLD_HIM, player);
+                    _events.Repeat(25s, 35s);
+                    break;
+                case EVENT_ASHGOLM_LAVA_WREATH:
+                    if (me->IsEngaged() && me->SelectNearestPlayer(VaultOfIceRange))
+                        DoCastSelf(SPELL_LAVA_WREATH);
+                    _events.Repeat(12s, 16s);
+                    break;
+                default:
+                    break;
+            }
+        }
+
+        UpdateVictim();
+    }
+
+private:
+    Creature* FindOpponent() const
+    {
+        std::list<Creature*> fighters;
+        me->GetCreatureListWithOptionsInGrid(fighters, 15.0f, { .StringId = VaultOfIceSquad, .IsAlive = FindCreatureAliveState::EffectivelyAlive });
+        fighters.remove_if([this](Creature const* fighter) { return !me->IsValidAttackTarget(fighter); });
+        if (fighters.empty())
+            return nullptr;
+
+        fighters.sort(Trinity::ObjectDistanceOrderPred(me));
+        return fighters.front();
+    }
+
+    EventMap _events;
+    GuidUnorderedSet _greeted;
+};
+
+// The platform's icicles close over Ash'golm, for this player only
+static void FreezeAshgolmFor(WorldObject const* searcher, Player const* player)
+{
+    if (GameObject* icicles = searcher->FindNearestGameObject(GO_VAULT_OF_ICE_ICICLES, 80.0f))
+        if (icicles->GetGoStateFor(player->GetGUID()) != GO_STATE_ACTIVE)
+            icicles->SetGoStateFor(GO_STATE_ACTIVE, player);
+}
+
+// 101591 - Ash'golm (frozen): who has frozen him sees him in the icicles whenever they come back
+struct npc_frozen_in_time_ashgolm_frozen : public ScriptedAI
+{
+    npc_frozen_in_time_ashgolm_frozen(Creature* creature) : ScriptedAI(creature) { }
+
+    void MoveInLineOfSight(Unit* who) override
+    {
+        Player* player = who->ToPlayer();
+        if (!player)
+            return;
+
+        QuestStatus status = player->GetQuestStatus(QUEST_FROZEN_IN_TIME);
+        if (status == QUEST_STATUS_COMPLETE || status == QUEST_STATUS_REWARDED)
+            FreezeAshgolmFor(me, player);
+    }
+};
+
+// 4919 - Lava Wreath's patch of lava: walking into it burns the player (Lava stacks)
+struct at_frozen_in_time_lava : AreaTriggerAI
+{
+    at_frozen_in_time_lava(AreaTrigger* areatrigger) : AreaTriggerAI(areatrigger) { }
+
+    void OnCreate(Spell const* /*creatingSpell*/) override
+    {
+        at->SetDuration(int32(LavaPatchDuration.count()));
+    }
+
+    void OnUnitEnter(Unit* unit) override
+    {
+        Player* player = unit->ToPlayer();
+        Unit* caster = at->GetCaster();
+        if (!player || !caster)
+            return;
+
+        caster->CastSpell(player, SPELL_LAVA, CastSpellExtraArgs(TRIGGERED_FULL_MASK)
+            .AddSpellMod(SPELLVALUE_BASE_POINT0, int32(player->CountPctFromMaxHealth(LavaDamagePct))));
+    }
+};
+
+// 204588 - Activate Countermeasure (the spellclick of 99709 - Eastern, 99731 - Southern, 99732 - Western
+// Countermeasures): once its cast is done the countermeasure is on, its own objective's credit. With all three on, the
+// icicles close and the quest's visibility conditions show Ash'golm frozen to the player, and Kayn leaves.
+class spell_frozen_in_time_activate_countermeasure : public SpellScript
+{
+    void HandleDummy(SpellEffIndex /*effIndex*/)
+    {
+        Player* player = GetCaster()->ToPlayer();
+        Creature* countermeasure = GetHitCreature();
+        if (!player || !countermeasure || player->GetQuestStatus(QUEST_FROZEN_IN_TIME) != QUEST_STATUS_INCOMPLETE)
+            return;
+
+        player->KilledMonsterCredit(countermeasure->GetEntry());
+        if (player->GetQuestStatus(QUEST_FROZEN_IN_TIME) != QUEST_STATUS_COMPLETE)
+            return;
+
+        FreezeAshgolmFor(countermeasure, player);
+        if (Creature* kayn = countermeasure->FindNearestCreature(NPC_KAYN_SUNFURY_VAULT_OF_ICE, 80.0f))
+            kayn->AI()->Talk(SAY_KAYN_MONSTER_CONTAINED, player);
+    }
+
+    void Register() override
+    {
+        OnEffectHitTarget += SpellEffectFn(spell_frozen_in_time_activate_countermeasure::HandleDummy, EFFECT_0, SPELL_EFFECT_DUMMY);
+    }
+};
+
 void AddSC_zone_vault_of_the_wardens()
 {
     // Creature
     RegisterCreatureAI(npc_breaking_out_cell);
     RegisterCreatureAI(npc_stop_guldan_brute);
+    RegisterCreatureAI(npc_grand_theft_felbat_vampiric_felbat);
+    RegisterCreatureAI(npc_grand_theft_felbat_running_ahead);
+    RegisterCreatureAI(npc_frozen_in_time_ashgolm);
+    RegisterCreatureAI(npc_frozen_in_time_ashgolm_frozen);
 
     // GameObject
     RegisterGameObjectAI(go_rise_of_the_illidari_warden_cell);
@@ -574,6 +986,8 @@ void AddSC_zone_vault_of_the_wardens()
     new quest_fel_infusion();
     new quest_vault_of_the_wardens_bonus_objective();
     new quest_stop_guldan();
+    new quest_grand_theft_felbat();
+    new quest_frozen_in_time();
 
     // Player
     new player_fel_infusion();
@@ -581,6 +995,10 @@ void AddSC_zone_vault_of_the_wardens()
 
     // Spell
     RegisterSpellScript(spell_vault_of_the_wardens_destroying_legion_portal);
+    RegisterSpellScript(spell_frozen_in_time_activate_countermeasure);
+
+    // AreaTrigger
+    RegisterAreaTriggerAI(at_frozen_in_time_lava);
 
     // Scene
     new scene_stop_guldan();
