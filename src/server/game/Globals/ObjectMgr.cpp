@@ -5227,7 +5227,58 @@ void ObjectMgr::LoadQuests()
         if (Quest const* quest = GetQuestTemplate(paragonReputation->QuestID))
             const_cast<Quest*>(quest)->SetSpecialFlag(QUEST_SPECIAL_FLAGS_REPEATABLE);
 
+    LoadTaskQuestIndex();
+
     TC_LOG_INFO("server.loading", ">> Loaded {} quests definitions in {} ms", _questTemplates.size(), GetMSTimeDiffToNow(oldMSTime));
+}
+
+// Bonus objectives by area: the areas of the quest's AreaGroupID, else its QuestSortID zone.
+void ObjectMgr::LoadTaskQuestIndex()
+{
+    _taskQuestsByArea.clear();
+    _taskQuestAreas.clear();
+
+    for (auto const& [questId, quest] : _questTemplates)
+    {
+        if (!quest->IsBonusObjective() || quest->IsUnavailable())
+            continue;
+
+        std::vector<uint32> areas;
+        if (quest->GetAreaGroupID())
+            areas = sDB2Manager.GetAreasForGroup(quest->GetAreaGroupID());
+        if (areas.empty() && quest->GetZoneOrSort() > 0)
+            areas.push_back(uint32(quest->GetZoneOrSort()));
+        if (areas.empty())
+        {
+            TC_LOG_WARN("server.loading", "Task quest {} has no area group members and no zone, not indexed", questId);
+            continue;
+        }
+
+        std::sort(areas.begin(), areas.end());
+        for (uint32 areaId : areas)
+            _taskQuestsByArea[areaId].push_back(quest.get());
+        _taskQuestAreas[questId] = std::move(areas);
+    }
+
+    TC_LOG_INFO("server.loading", ">> Indexed {} task quests over {} areas", _taskQuestAreas.size(), _taskQuestsByArea.size());
+}
+
+std::vector<Quest const*> const& ObjectMgr::GetTaskQuestsForArea(uint32 areaId) const
+{
+    static std::vector<Quest const*> const empty;
+    auto itr = _taskQuestsByArea.find(areaId);
+    return itr != _taskQuestsByArea.end() ? itr->second : empty;
+}
+
+std::vector<uint32> const* ObjectMgr::GetTaskQuestAreas(uint32 questId) const
+{
+    return Trinity::Containers::MapGetValuePtr(_taskQuestAreas, questId);
+}
+
+bool ObjectMgr::IsTaskQuestArea(uint32 questId, uint32 areaId) const
+{
+    std::vector<uint32> const* areas = GetTaskQuestAreas(questId);
+    return areas && std::binary_search(areas->begin(), areas->end(), areaId);
 }
 
 void ObjectMgr::LoadQuestStartersAndEnders()

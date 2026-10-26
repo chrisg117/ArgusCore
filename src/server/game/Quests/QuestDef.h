@@ -526,6 +526,8 @@ class TC_GAME_API Quest
 
         bool IsAutoPush() const { return HasFlagEx(QUEST_FLAGS_EX_AUTO_PUSH); }
         bool IsWorldQuest() const { return HasFlagEx(QUEST_FLAGS_EX_IS_WORLD_QUEST); }
+        bool IsTask() const { return _type == QUEST_TYPE_TASK || _type == QUEST_TYPE_TASK_IN_PROGRESS; }
+        bool IsBonusObjective() const { return IsTask() && _questInfoID == 0; }
 
         // Possibly deprecated flag
         bool IsUnavailable() const { return HasFlag(QUEST_FLAGS_DEPRECATED); }

@@ -1062,6 +1062,9 @@ class TC_GAME_API ObjectMgr
 
         QuestContainer const& GetQuestTemplates() const { return _questTemplates; }
         std::vector<Quest const*> const& GetQuestTemplatesAutoPush() const { return _questTemplatesAutoPush; }
+        std::vector<Quest const*> const& GetTaskQuestsForArea(uint32 areaId) const;
+        std::vector<uint32> const* GetTaskQuestAreas(uint32 questId) const;
+        bool IsTaskQuestArea(uint32 questId, uint32 areaId) const;
 
         QuestObjective const* GetQuestObjective(uint32 questObjectiveId) const
         {
@@ -1691,6 +1694,8 @@ class TC_GAME_API ObjectMgr
         std::map<HighGuid, ObjectGuidGenerator> _guidGenerators;
         QuestContainer _questTemplates;
         std::vector<Quest const*> _questTemplatesAutoPush;
+        std::unordered_map<uint32, std::vector<Quest const*>> _taskQuestsByArea;
+        std::unordered_map<uint32, std::vector<uint32>> _taskQuestAreas;
         QuestObjectivesByIdContainer _questObjectives;
 
         using NpcTextContainer = std::unordered_map<uint32, NpcText>;
@@ -1772,6 +1777,7 @@ class TC_GAME_API ObjectMgr
         void LoadEventSet();
         void LoadScripts(ScriptsType type);
         void LoadQuestRelationsHelper(QuestRelations& map, QuestRelationsReverse* reverseMap, std::string const& table);
+        void LoadTaskQuestIndex();
         QuestRelationResult GetQuestRelationsFrom(QuestRelations const& map, uint32 key, bool onlyActive) const { return { map.equal_range(key), onlyActive }; }
         void PlayerCreateInfoAddItemHelper(uint32 race_, uint32 class_, uint32 itemId, int32 count);
 
