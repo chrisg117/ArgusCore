@@ -139,17 +139,23 @@ struct boss_nythendra : public BossAI
         _volatileRotCount = 0;
         events.Reset();
         events.SetPhase(PHASE_ONE);
-        events.ScheduleEvent(EVENT_ROT, afterSwarm ? 12s : 5s, 0, PHASE_ONE);
+        events.ScheduleEvent(EVENT_ROT, afterSwarm ? 12s : 5s); // phase 0: keeps going until the Swarm cast
         events.ScheduleEvent(EVENT_VOLATILE_ROT, afterSwarm ? 29s : 20s, 0, PHASE_ONE);
-        events.ScheduleEvent(EVENT_INFESTED_BREATH, afterSwarm ? 43s : 37s, 0, PHASE_ONE);
+        events.ScheduleEvent(EVENT_INFESTED_BREATH, afterSwarm ? 43s : 35s, 0, PHASE_ONE);
+        _afterSwarm = afterSwarm;
     }
 
     // Energy is 0: once the last breath has finished she collapses into Heart of the Swarm.
     void StartPhaseTwo()
     {
-        events.Reset();
+        // Rot keeps its timer through the collapse (DBM runs the bar until the Swarm
+        // cast starts); only the breath and Volatile Rot stop here.
+        events.CancelEvent(EVENT_VOLATILE_ROT);
+        events.CancelEvent(EVENT_INFESTED_BREATH);
         events.SetPhase(PHASE_TWO);
-        events.ScheduleEvent(EVENT_HEART_OF_THE_SWARM, 10s, 0, PHASE_TWO);
+        // DBM: Heart of the Swarm 86 s after the pull (12 s after the second breath ends)
+        // and 98 s after the previous one ends (16 s after that cycle's second breath).
+        events.ScheduleEvent(EVENT_HEART_OF_THE_SWARM, _afterSwarm ? 16s : 12s, 0, PHASE_TWO);
     }
 
     // The channel has begun: every pool slides into her, the vermin appear,
@@ -251,13 +257,13 @@ struct boss_nythendra : public BossAI
         if (spell->Id != SPELL_INFESTED_BREATH)
             return;
 
-        // Each breath costs 50 energy.
-        int32 energy = std::max<int32>(me->GetPower(POWER_ENERGY) - ENERGY_PER_BREATH, 0);
-        me->SetPower(POWER_ENERGY, energy);
+        // Each breath costs 50 energy: the breath's trigger 202968 carries that cost in
+        // the data and is cast for real now, so the power is already paid here.
+        int32 energy = me->GetPower(POWER_ENERGY);
 
-        // DBM: 36-42 s from one breath's start to the next; this is the cast's end.
+        // DBM: 36 s from one breath's start to the next; this is the cast's end, 3 s later.
         if (energy > 0)
-            events.ScheduleEvent(EVENT_INFESTED_BREATH, 36s, 0, PHASE_ONE);
+            events.ScheduleEvent(EVENT_INFESTED_BREATH, 33s, 0, PHASE_ONE);
         else
             StartPhaseTwo();
     }
@@ -273,9 +279,8 @@ struct boss_nythendra : public BossAI
         scheduler.Update(diff);
         events.Update(diff);
 
-        // Phase 2 runs its events through her channel.
-        if (events.IsInPhase(PHASE_ONE) && me->HasUnitState(UNIT_STATE_CASTING))
-            return;
+        // Rot and Volatile Rot are cast through a breath (DBM keeps their bars running
+        // and Rot allows casting while casting); only the breath itself waits.
 
         while (uint32 eventId = events.ExecuteEvent())
         {
@@ -290,7 +295,9 @@ struct boss_nythendra : public BossAI
                         if (Unit* victim = me->GetVictim())
                             targets.push_back(victim); // solo: the tank is the only raider
 
-                    DoCastSelf(SPELL_ROT_CAST, true);
+                    // Not triggered: the dummy has no visual, and the core only sends a
+                    // triggered cast with none to the client, so DBM never saw it.
+                    me->CastSpell(me, SPELL_ROT_CAST); // Unit::CastSpell: UnitAI::DoCast refuses it during a breath
                     for (Unit* target : targets)
                     {
                         Talk(TALK_ROT, target);
@@ -307,7 +314,7 @@ struct boss_nythendra : public BossAI
                         DoCast(victim, SPELL_VOLATILE_ROT, true);
                     }
                     if (++_volatileRotCount < VOLATILE_ROTS_PER_PHASE)
-                        events.Repeat(22s); // DBM: 20.5-24 s
+                        events.Repeat(20500ms); // DBM: 20.5 s on Normal
                     break;
                 case EVENT_STAND_UP:
                     me->SetControlled(false, UNIT_STATE_ROOT);
@@ -316,6 +323,11 @@ struct boss_nythendra : public BossAI
                         AttackStart(target);
                     break;
                 case EVENT_INFESTED_BREATH:
+                    if (me->HasUnitState(UNIT_STATE_CASTING))
+                    {
+                        events.Repeat(500ms);
+                        break;
+                    }
                     if (Unit* target = SelectTarget(SelectTargetMethod::Random, 0, 0.0f, true))
                     {
                         Talk(TALK_INFESTED_BREATH);
@@ -324,7 +336,7 @@ struct boss_nythendra : public BossAI
                         // turn after the target; UpdateAI frees her once the channel ends.
                         me->SetFacingToObject(target);
                         me->SetUnitFlag2(UNIT_FLAG2_CANNOT_TURN);
-                        DoCastSelf(SPELL_INFESTED_BREATH_CAST, true);
+                        DoCastSelf(SPELL_INFESTED_BREATH_CAST); // not triggered: see Rot
                         DoCast(target, SPELL_INFESTED_BREATH);
                     }
                     break;
@@ -344,6 +356,7 @@ struct boss_nythendra : public BossAI
                     me->GetMotionMaster()->Clear();
                     me->GetMotionMaster()->MoveIdle();
                     me->SetControlled(true, UNIT_STATE_ROOT);
+                    events.CancelEvent(EVENT_ROT);
                     Talk(TALK_SWARM_YELL);
                     SpellCastResult result = DoCastSelf(SPELL_HEART_OF_THE_SWARM);
                     if (result != SPELL_CAST_OK)
@@ -402,6 +415,7 @@ struct boss_nythendra : public BossAI
 
 private:
     uint32 _volatileRotCount;
+    bool _afterSwarm = false;
     std::unordered_map<ObjectGuid, uint32> _swelling; // vermin -> bursts left
 };
 
