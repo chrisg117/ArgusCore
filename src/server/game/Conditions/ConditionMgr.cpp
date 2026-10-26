@@ -620,8 +620,8 @@ bool Condition::Meets(ConditionSourceInfo& sourceInfo) const
                 if (!quest)
                     break;
 
-                uint16 slot = player->FindQuestSlot(obj->QuestID);
-                if (slot >= MAX_QUEST_LOG_SIZE)
+                uint16 slot = player->FindAnyQuestSlot(obj->QuestID);
+                if (slot == QUEST_SLOT_NONE)
                     break;
 
                 condMeets = player->GetQuestSlotObjectiveData(slot, *obj) == int32(ConditionValue3);
@@ -3028,7 +3028,7 @@ bool ConditionMgr::IsPlayerMeetingCondition(Player const* player, PlayerConditio
         results.fill(true);
         for (std::size_t i = 0; i < condition->CurrQuestID.size(); ++i)
             if (condition->CurrQuestID[i])
-                results[i] = player->FindQuestSlot(condition->CurrQuestID[i]) != MAX_QUEST_LOG_SIZE;
+                results[i] = player->FindAnyQuestSlot(condition->CurrQuestID[i]) != QUEST_SLOT_NONE;
 
         if (!PlayerConditionLogic(condition->CurrQuestLogic, results))
             return false;
@@ -3226,8 +3226,8 @@ bool ConditionMgr::IsPlayerMeetingCondition(Player const* player, PlayerConditio
     if (condition->QuestKillID)
     {
         Quest const* quest = sObjectMgr->GetQuestTemplate(condition->QuestKillID);
-        uint16 questSlot = player->FindQuestSlot(condition->QuestKillID);
-        if (quest && player->GetQuestStatus(condition->QuestKillID) != QUEST_STATUS_COMPLETE && questSlot < MAX_QUEST_LOG_SIZE)
+        uint16 questSlot = player->FindAnyQuestSlot(condition->QuestKillID);
+        if (quest && player->GetQuestStatus(condition->QuestKillID) != QUEST_STATUS_COMPLETE && questSlot != QUEST_SLOT_NONE)
         {
             std::array<bool, std::tuple_size_v<decltype(condition->QuestKillMonster)>> results;
             results.fill(true);

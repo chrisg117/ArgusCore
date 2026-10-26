@@ -1677,6 +1677,8 @@ class TC_GAME_API Player final : public Unit, public GridObject<Player>
         void ResetSeasonalQuestStatus(uint16 event_id, time_t eventStartTime);
 
         uint16 FindQuestSlot(uint32 quest_id) const;
+        uint16 FindTaskQuestSlot(uint32 quest_id) const;
+        uint16 FindAnyQuestSlot(uint32 quest_id) const;
         uint32 GetQuestSlotQuestId(uint16 slot) const;
         uint32 GetQuestSlotState(uint16 slot) const;
         uint16 GetQuestSlotCounter(uint16 slot, uint8 counter) const;

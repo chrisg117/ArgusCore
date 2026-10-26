@@ -45,6 +45,9 @@ namespace WorldPackets
 }
 
 #define MAX_QUEST_LOG_SIZE 25
+#define TASK_QUEST_SLOT_BEGIN 25                            // task quests (bonus objectives) use slots 25..49
+#define MAX_TASK_QUEST_LOG_SIZE 50
+#define QUEST_SLOT_NONE 0xFFFF
 
 #define QUEST_ITEM_DROP_COUNT 4
 #define QUEST_REWARD_CHOICES_COUNT 6
@@ -766,7 +769,7 @@ class TC_GAME_API Quest
 
 struct QuestStatusData
 {
-    uint16 Slot = MAX_QUEST_LOG_SIZE;
+    uint16 Slot = QUEST_SLOT_NONE;
     QuestStatus Status = QUEST_STATUS_NONE;
     uint32 Timer = 0;
     bool Explored = false;

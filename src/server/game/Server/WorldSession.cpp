@@ -1481,7 +1481,7 @@ uint32 WorldSession::DosProtection::GetMaxPacketCounterAllowed(uint16 opcode) co
 
         case CMSG_QUEST_POI_QUERY:                      //   0              25         very high upload bandwidth usage
         {
-            maxPacketCounterAllowed = MAX_QUEST_LOG_SIZE;
+            maxPacketCounterAllowed = MAX_TASK_QUEST_LOG_SIZE;
             break;
         }
 

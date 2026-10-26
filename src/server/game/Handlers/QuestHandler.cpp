@@ -554,7 +554,7 @@ void WorldSession::HandleQuestgiverCompleteQuest(WorldPackets::Quest::QuestGiver
 
 void WorldSession::HandleQuestgiverCloseQuest(WorldPackets::Quest::QuestGiverCloseQuest& questGiverCloseQuest)
 {
-    if (_player->FindQuestSlot(questGiverCloseQuest.QuestID) >= MAX_QUEST_LOG_SIZE)
+    if (_player->FindAnyQuestSlot(questGiverCloseQuest.QuestID) == QUEST_SLOT_NONE)
         return;
 
     Quest const* quest = sObjectMgr->GetQuestTemplate(questGiverCloseQuest.QuestID);

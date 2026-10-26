@@ -521,8 +521,8 @@ void WorldSession::HandleAreaTriggerOpcode(WorldPackets::AreaTrigger::AreaTrigge
             for (uint32 questId : *quests)
             {
                 Quest const* qInfo = sObjectMgr->GetQuestTemplate(questId);
-                uint16 slot = player->FindQuestSlot(questId);
-                if (qInfo && slot < MAX_QUEST_LOG_SIZE && player->GetQuestStatus(questId) == QUEST_STATUS_INCOMPLETE)
+                uint16 slot = player->FindAnyQuestSlot(questId);
+                if (qInfo && slot != QUEST_SLOT_NONE && player->GetQuestStatus(questId) == QUEST_STATUS_INCOMPLETE)
                 {
                     for (QuestObjective const& obj : qInfo->Objectives)
                     {

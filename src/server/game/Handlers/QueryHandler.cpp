@@ -282,7 +282,7 @@ void WorldSession::HandleQueryQuestCompletionNPCs(WorldPackets::Query::QueryQues
 
 void WorldSession::HandleQuestPOIQuery(WorldPackets::Query::QuestPOIQuery& questPoiQuery)
 {
-    if (questPoiQuery.MissingQuestCount > MAX_QUEST_LOG_SIZE)
+    if (questPoiQuery.MissingQuestCount > MAX_TASK_QUEST_LOG_SIZE)
         return;
 
     // Read quest ids and add the in a unordered_set so we don't send POIs for the same quest multiple times
@@ -293,7 +293,7 @@ void WorldSession::HandleQuestPOIQuery(WorldPackets::Query::QuestPOIQuery& quest
     WorldPackets::Query::QuestPOIQueryResponse response;
 
     for (uint32 questId : questIds)
-        if (_player->FindQuestSlot(questId) != MAX_QUEST_LOG_SIZE)
+        if (_player->FindAnyQuestSlot(questId) != QUEST_SLOT_NONE)
             if (QuestPOIData const* poiData = sObjectMgr->GetQuestPOIData(questId))
                 response.QuestPOIDataStats.push_back(poiData);
 
