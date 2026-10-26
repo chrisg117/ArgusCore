@@ -879,6 +879,7 @@ struct npc_frozen_in_time_ashgolm : public ScriptedAI
     }
 
 private:
+    GuidUnorderedSet _greeted;
     Creature* FindOpponent() const
     {
         std::list<Creature*> fighters;
@@ -892,7 +893,6 @@ private:
     }
 
     EventMap _events;
-    GuidUnorderedSet _greeted;
 };
 
 // The platform's icicles close over Ash'golm, for this player only
@@ -969,6 +969,148 @@ class spell_frozen_in_time_activate_countermeasure : public SpellScript
     }
 };
 
+enum BeamMeUpData
+{
+    QUEST_BEAM_ME_UP                        = 39684,
+
+    NPC_GLAZER_SHIELD_BROKEN_CREDIT         = 96680,
+    NPC_GLAZER_STUNNED                      = 99865,
+    NPC_ALTRUIS_THE_SUFFERER_VAULT_OF_MIRRORS = 99229,
+
+    GO_REFLECTIVE_MIRROR                    = 244449,
+
+    SAY_ALTRUIS_BEAM_FOCUSED_UPON_ME        = 0,
+    SAY_ALTRUIS_SHIELD_BROKEN               = 1,
+
+    SPELL_EYE_BEAM                          = 191916,
+    SPELL_EYE_BEAM_REFLECTED                = 191934,
+    SPELL_X_SPELL_VISUAL_EYE_BEAM           = 88080,
+    SPELL_X_SPELL_VISUAL_EYE_BEAM_REFLECTED = 88110,
+
+    EVENT_GLAZER_EYE_BEAM                   = 1,
+    EVENT_GLAZER_MIRROR_TURNS_BACK,
+
+    ACTION_GLAZER_BEAM_REDIRECTED           = 1
+};
+
+static constexpr float VaultOfMirrorsRange = 40.0f;
+// The Reflective Mirror at rest faces the second lens; once turned it sends the beam back at Glazer for this long
+static constexpr float ReflectiveMirrorRestingOrientation = 5.7551f;
+static constexpr Milliseconds ReflectiveMirrorTurnedTime = 30s;
+// The mirrors (98082 - Lens, spawns with this StringId) that bounce Glazer's beam on its way to Altruis, nearest first
+static constexpr std::string_view VaultOfMirrorsLens = "VaultOfMirrorsLens";
+
+// Eye Beam is a channel nothing lets its caster aim at a unit (its nearby-entry target never lands), so the channels
+// are set up by hand: the client draws the beam from the channel's visual to its object
+static void ChannelEyeBeam(Unit* from, Unit const* to, uint32 spellId, uint32 spellXSpellVisualId)
+{
+    DynamicFieldStructuredView<ObjectGuid> channelObjects = from->GetChannelObjects();
+    if (from->GetChannelSpellId() == spellId && channelObjects.size() == 1 && *channelObjects.begin() == to->GetGUID())
+        return;
+
+    from->ClearChannelObjects();
+    from->AddChannelObject(to->GetGUID());
+    from->SetChannelSpellId(spellId);
+    from->SetChannelSpellXSpellVisualId({ .SpellXSpellVisualID = spellXSpellVisualId });
+}
+
+// A gameobject's facing only reaches a client when the object is created for them, so the turned mirror is sent again
+static void TurnReflectiveMirror(GameObject* mirror, float orientation)
+{
+    mirror->Relocate(mirror->GetPositionX(), mirror->GetPositionY(), mirror->GetPositionZ(), orientation);
+    mirror->RelocateStationaryPosition(mirror->GetPositionX(), mirror->GetPositionY(), mirror->GetPositionZ(), orientation);
+    mirror->SetLocalRotationAngles(orientation, 0.0f, 0.0f);
+    mirror->DestroyForNearbyPlayers();
+    mirror->UpdateObjectVisibility();
+}
+
+// 96680 - Glazer (Beam Me Up): his shield (Focusing) holds off Altruis and the Freed Illidari while his Eye Beam,
+// bounced off the room's mirrors, burns Altruis. The quest's data does the rest: the Reflective Mirror's own spell
+// (191917, cast by the player) gives the credit and sends event 46447, whose SmartAI turns the beam on Glazer
+// (action 1) and has Altruis call everyone out; a server-side area trigger has Altruis call the arriving player.
+struct npc_beam_me_up_glazer : public ScriptedAI
+{
+    npc_beam_me_up_glazer(Creature* creature) : ScriptedAI(creature), _beamRedirected(false) { }
+
+    void Reset() override
+    {
+        me->SetReactState(REACT_PASSIVE);
+        _events.Reset();
+        _events.ScheduleEvent(EVENT_GLAZER_EYE_BEAM, 2s);
+        _beamRedirected = false;
+    }
+
+    void DoAction(int32 action) override
+    {
+        if (action != ACTION_GLAZER_BEAM_REDIRECTED)
+            return;
+
+        if (!_beamRedirected)
+            if (GameObject* mirror = me->FindNearestGameObject(GO_REFLECTIVE_MIRROR, VaultOfMirrorsRange))
+                TurnReflectiveMirror(mirror, mirror->GetAbsoluteAngle(me));
+
+        _beamRedirected = true;
+        _events.RescheduleEvent(EVENT_GLAZER_EYE_BEAM, 1ms);
+        _events.RescheduleEvent(EVENT_GLAZER_MIRROR_TURNS_BACK, ReflectiveMirrorTurnedTime);
+    }
+
+    void DamageTaken(Unit* /*attacker*/, uint32& damage, DamageEffectType /*damageType*/, SpellInfo const* /*spellInfo = nullptr*/) override
+    {
+        // Only the reflected beam breaks his shield
+        damage = 0;
+    }
+
+    void UpdateAI(uint32 diff) override
+    {
+        _events.Update(diff);
+
+        while (uint32 eventId = _events.ExecuteEvent())
+        {
+            switch (eventId)
+            {
+                case EVENT_GLAZER_EYE_BEAM:
+                    if (Creature* altruis = me->FindNearestCreature(NPC_ALTRUIS_THE_SUFFERER_VAULT_OF_MIRRORS, VaultOfMirrorsRange))
+                    {
+                        std::list<Creature*> lenses;
+                        me->GetCreatureListWithOptionsInGrid(lenses, VaultOfMirrorsRange, { .StringId = VaultOfMirrorsLens });
+                        lenses.sort(Trinity::ObjectDistanceOrderPred(me));
+
+                        Unit* from = me;
+                        for (Creature* lens : lenses)
+                        {
+                            ChannelEyeBeam(from, lens, from == me ? SPELL_EYE_BEAM : SPELL_EYE_BEAM_REFLECTED,
+                                from == me ? SPELL_X_SPELL_VISUAL_EYE_BEAM : SPELL_X_SPELL_VISUAL_EYE_BEAM_REFLECTED);
+                            from = lens;
+                        }
+                        // Sent back at Glazer, the beam ends on him (who sees him stunned sees that one, in the same place)
+                        Unit* end = altruis;
+                        if (_beamRedirected)
+                            if (Creature* stunned = me->FindNearestCreature(NPC_GLAZER_STUNNED, 5.0f))
+                                end = stunned;
+                        ChannelEyeBeam(from, end, from == me ? SPELL_EYE_BEAM : SPELL_EYE_BEAM_REFLECTED,
+                            from == me ? SPELL_X_SPELL_VISUAL_EYE_BEAM : SPELL_X_SPELL_VISUAL_EYE_BEAM_REFLECTED);
+                        if (!lenses.empty())
+                            me->SetFacingToObject(lenses.front());
+                    }
+                    _events.Repeat(5s);
+                    break;
+                case EVENT_GLAZER_MIRROR_TURNS_BACK:
+                    _beamRedirected = false;
+                    if (GameObject* mirror = me->FindNearestGameObject(GO_REFLECTIVE_MIRROR, VaultOfMirrorsRange))
+                        TurnReflectiveMirror(mirror, ReflectiveMirrorRestingOrientation);
+                    _events.RescheduleEvent(EVENT_GLAZER_EYE_BEAM, 1ms);
+                    break;
+                default:
+                    break;
+            }
+        }
+    }
+
+private:
+    EventMap _events;
+    bool _beamRedirected;
+};
+
 void AddSC_zone_vault_of_the_wardens()
 {
     // Creature
@@ -978,6 +1120,7 @@ void AddSC_zone_vault_of_the_wardens()
     RegisterCreatureAI(npc_grand_theft_felbat_running_ahead);
     RegisterCreatureAI(npc_frozen_in_time_ashgolm);
     RegisterCreatureAI(npc_frozen_in_time_ashgolm_frozen);
+    RegisterCreatureAI(npc_beam_me_up_glazer);
 
     // GameObject
     RegisterGameObjectAI(go_rise_of_the_illidari_warden_cell);
