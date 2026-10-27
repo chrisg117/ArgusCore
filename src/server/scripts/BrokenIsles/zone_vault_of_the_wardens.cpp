@@ -230,52 +230,6 @@ public:
     }
 };
 
-enum VaultOfTheWardensBonusObjectiveData
-{
-    QUEST_VAULT_OF_THE_WARDENS              = 39742,
-
-    ZONE_VAULT_OF_THE_WARDENS               = 7814
-};
-
-// 39742 - Vault of the Wardens: the Vault's bonus objective. The core gives task quests to no one, so it is added on
-// entering the Vault
-class player_vault_of_the_wardens_bonus_objective : public PlayerScript
-{
-public:
-    player_vault_of_the_wardens_bonus_objective() : PlayerScript("player_vault_of_the_wardens_bonus_objective") { }
-
-    void OnUpdateZone(Player* player, uint32 newZone, uint32 /*newArea*/) override
-    {
-        if (newZone != ZONE_VAULT_OF_THE_WARDENS || player->GetMapId() != MAP_VAULT_OF_THE_WARDENS_QUESTS
-            || player->GetQuestStatus(QUEST_VAULT_OF_THE_WARDENS) != QUEST_STATUS_NONE)
-            return;
-
-        if (Quest const* quest = sObjectMgr->GetQuestTemplate(QUEST_VAULT_OF_THE_WARDENS))
-            if (player->CanTakeQuest(quest, false))
-                player->AddQuestAndCheckCompletion(quest, nullptr);
-    }
-};
-
-// 39742 - Vault of the Wardens: as on retail, rewarded as soon as its bar is full
-class quest_vault_of_the_wardens_bonus_objective : public QuestScript
-{
-public:
-    quest_vault_of_the_wardens_bonus_objective() : QuestScript("quest_vault_of_the_wardens_bonus_objective") { }
-
-    void OnQuestStatusChange(Player* player, Quest const* quest, QuestStatus /*oldStatus*/, QuestStatus newStatus) override
-    {
-        if (newStatus != QUEST_STATUS_COMPLETE)
-            return;
-
-        // Once the kill that filled the bar is done updating the quest log; the player's own events end with the player
-        player->m_Events.AddEventAtOffset([player, quest]()
-        {
-            if (player->GetQuestStatus(quest->GetQuestId()) == QUEST_STATUS_COMPLETE)
-                player->RewardQuest(quest, LootItemType::Item, 0, player);
-        }, 1ms);
-    }
-};
-
 // 202064 - Destroying Legion Portal (the Legion Portals' spellclick): the channel destroys the portal, a kill for the
 // player who closed it
 class spell_vault_of_the_wardens_destroying_legion_portal : public SpellScript
@@ -1765,7 +1719,6 @@ void AddSC_zone_vault_of_the_wardens()
 
     // Quest
     new quest_fel_infusion();
-    new quest_vault_of_the_wardens_bonus_objective();
     new quest_stop_guldan();
     new quest_grand_theft_felbat();
     new quest_frozen_in_time();
@@ -1776,7 +1729,6 @@ void AddSC_zone_vault_of_the_wardens()
 
     // Player
     new player_fel_infusion();
-    new player_vault_of_the_wardens_bonus_objective();
 
     // Spell
     RegisterSpellScript(spell_vault_of_the_wardens_destroying_legion_portal);
