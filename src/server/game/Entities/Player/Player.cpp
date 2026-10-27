@@ -18895,8 +18895,14 @@ void Player::_LoadQuestStatus(PreparedQueryResult result)
 
             TC_LOG_DEBUG("entities.player.loading", "Player::_LoadQuestStatus: Quest status is {{{}}} for quest {{{}}} for player ({})", questStatusData.Status, quest_id, GetGUID().ToString());
 
+            // task quests take no slot at login: the first area update grants the ones of the player's area
+            if (quest->IsTask() && questStatusData.Status != QUEST_STATUS_NONE)
+            {
+                questStatusData.Slot = QUEST_SLOT_NONE;
+                m_QuestStatus.emplace(quest_id, std::move(questStatusData));
+            }
             // add to quest log
-            if (slot < MAX_QUEST_LOG_SIZE && questStatusData.Status != QUEST_STATUS_NONE)
+            else if (slot < MAX_QUEST_LOG_SIZE && questStatusData.Status != QUEST_STATUS_NONE)
             {
                 questStatusData.Slot = slot;
 
@@ -18940,7 +18946,16 @@ void Player::_LoadQuestStatusObjectives(PreparedQueryResult result)
                 continue;
 
             auto itr = m_QuestStatus.find(questID);
-            if (itr != m_QuestStatus.end() && itr->second.Slot != QUEST_SLOT_NONE)
+            if (itr != m_QuestStatus.end() && itr->second.Slot == QUEST_SLOT_NONE && quest->IsTask())
+            {
+                uint8 storageIndex = fields[1].GetUInt8();
+                auto objectiveItr = std::find_if(quest->Objectives.begin(), quest->Objectives.end(), [=](QuestObjective const& objective) { return uint8(objective.StorageIndex) == storageIndex; });
+                if (objectiveItr != quest->Objectives.end())
+                    _taskQuests->SetOffLogObjectiveData(questID, *objectiveItr, fields[2].GetInt32());
+                else
+                    TC_LOG_ERROR("entities.player", "Player::_LoadQuestStatusObjectives: Player '{}' ({}) has quest {} out of range objective index {}.", GetName(), GetGUID().ToString(), questID, storageIndex);
+            }
+            else if (itr != m_QuestStatus.end() && itr->second.Slot != QUEST_SLOT_NONE)
             {
                 QuestStatusData& questStatusData = itr->second;
                 uint8 storageIndex = fields[1].GetUInt8();
@@ -20438,7 +20453,7 @@ void Player::_SaveQuestStatus(CharacterDatabaseTransaction trans)
 
                 for (QuestObjective const& obj : quest->GetObjectives())
                 {
-                    int32 count = qData.Slot != QUEST_SLOT_NONE ? GetQuestSlotObjectiveData(qData.Slot, obj) : 0;
+                    int32 count = GetQuestSlotObjectiveData(qData.Slot, obj);  // QUEST_SLOT_NONE reads the off-log store
                     if (!count)
                         continue;
 
