@@ -14369,6 +14369,17 @@ void Player::IncompleteQuest(uint32 quest_id)
     }
 }
 
+// A task quest with AUTO_COMPLETE rewards itself the moment it is complete; never call this from inside
+// the objective loop of UpdateQuestObjectiveProgress (RewardQuest erases the entries it iterates)
+void Player::RewardAutoCompleteTask(uint32 questId)
+{
+    Quest const* quest = sObjectMgr->GetQuestTemplate(questId);
+    if (!quest || !quest->IsTask() || !quest->HasFlag(QUEST_FLAGS_AUTO_COMPLETE) || GetQuestStatus(questId) != QUEST_STATUS_COMPLETE)
+        return;
+
+    RewardQuest(quest, LootItemType::Item, 0, this, true);
+}
+
 uint32 Player::GetQuestMoneyReward(Quest const* quest) const
 {
     return quest->MoneyValue(this) * sWorld->getRate(RATE_MONEY_QUEST);
@@ -16103,6 +16114,7 @@ void Player::UpdateQuestObjectiveProgress(QuestObjectiveType objectiveType, int3
     bool updateZoneAuras = false;
 
     bool anyObjectiveChangedSpawnTrackingState = false;
+    std::vector<uint32> autoCompletedTasks;
     bool isObjectiveTypeForSpawnTracking = [&]() -> bool
     {
         if (objectiveType == QUEST_OBJECTIVE_MONSTER ||
@@ -16280,7 +16292,11 @@ void Player::UpdateQuestObjectiveProgress(QuestObjectiveType objectiveType, int3
         if (objectiveIsNowComplete)
         {
             if (CanCompleteQuest(questId, objective->ID))
+            {
                 CompleteQuest(questId);
+                if (quest->IsTask() && quest->HasFlag(QUEST_FLAGS_AUTO_COMPLETE))
+                    autoCompletedTasks.push_back(questId);
+            }
         }
         else if (!(objective->Flags & QUEST_OBJECTIVE_FLAG_OPTIONAL) && objectiveItr.second.QuestStatusItr->second.Status == QUEST_STATUS_COMPLETE)
             IncompleteQuest(questId);
@@ -16303,6 +16319,10 @@ void Player::UpdateQuestObjectiveProgress(QuestObjectiveType objectiveType, int3
         UpdateZoneDependentAuras(GetZoneId());
         UpdateAreaDependentAuras(GetAreaId());
     }
+
+    // after the loop: RewardQuest removes the quest's objective entries
+    for (uint32 questId : autoCompletedTasks)
+        RewardAutoCompleteTask(questId);
 }
 
 bool Player::HasQuestForItem(uint32 itemid) const

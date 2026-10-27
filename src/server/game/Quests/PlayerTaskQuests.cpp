@@ -135,8 +135,12 @@ void PlayerTaskQuests::OnAreaChanged(uint32 /*oldArea*/, uint32 newArea)
         if (!_owner.m_QuestStatus.contains(quest->GetQuestId()) && IsEligible(quest))
             grant.push_back(quest);
 
+    // a bar that filled as the player crossed the area line is rewarded, not carried off-log
     for (uint32 questId : revoke)
+    {
+        _owner.RewardAutoCompleteTask(questId);
         Revoke(questId);
+    }
 
     for (Quest const* quest : grant)
         Grant(quest);
@@ -152,7 +156,10 @@ void PlayerTaskQuests::Grant(Quest const* quest)
         return;
     }
 
-    _owner.AddQuestInternal(quest, nullptr, slot, _owner.m_QuestStatus.contains(quest->GetQuestId()));
+    bool held = _owner.m_QuestStatus.contains(quest->GetQuestId());
+    _owner.AddQuestInternal(quest, nullptr, slot, held);
+    if (held)
+        _owner.RewardAutoCompleteTask(quest->GetQuestId());
 }
 
 void PlayerTaskQuests::Revoke(uint32 questId)

@@ -1626,6 +1626,7 @@ class TC_GAME_API Player final : public Unit, public GridObject<Player>
         void AddQuestInternal(Quest const* quest, Object* questGiver, uint16 slot, bool keepStatus);
         void AbandonQuest(uint32 quest_id);
         void CompleteQuest(uint32 quest_id);
+        void RewardAutoCompleteTask(uint32 questId);
         void IncompleteQuest(uint32 quest_id);
         uint32 GetQuestMoneyReward(Quest const* quest) const;
         uint32 GetQuestXPReward(Quest const* quest);
