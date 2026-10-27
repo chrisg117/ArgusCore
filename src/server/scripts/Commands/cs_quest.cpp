@@ -232,7 +232,12 @@ public:
             CharacterDatabase.Execute(stmt);
         }
 
-        player->CompleteQuest(quest->GetQuestId());
+        // an AUTO_COMPLETE task is already rewarded by its last objective; completing it again would recreate its status
+        if (player->GetQuestStatus(quest->GetQuestId()) != QUEST_STATUS_REWARDED)
+        {
+            player->CompleteQuest(quest->GetQuestId());
+            player->RewardAutoCompleteTask(quest->GetQuestId());
+        }
         return true;
     }
 

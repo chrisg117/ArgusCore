@@ -74,6 +74,7 @@ class Battleground;
 class Channel;
 class CinematicMgr;
 class ClassHall;
+class PlayerTaskQuests;
 class Creature;
 class DynamicObject;
 class Garrison;
@@ -1177,6 +1178,7 @@ class TC_GAME_API Player final : public Unit, public GridObject<Player>
     friend class WorldSession;
     friend class CinematicMgr;
     friend class RestMgr;
+    friend class PlayerTaskQuests;
     friend void AddItemToUpdateQueueOf(Item* item, Player* player);
     friend void RemoveItemFromUpdateQueueOf(Item* item, Player* player);
     public:
@@ -1621,8 +1623,10 @@ class TC_GAME_API Player final : public Unit, public GridObject<Player>
         bool CanRewardQuest(Quest const* quest, LootItemType rewardType, uint32 rewardId, bool msg) const;
         void AddQuestAndCheckCompletion(Quest const* quest, Object* questGiver);
         void AddQuest(Quest const* quest, Object* questGiver);
+        void AddQuestInternal(Quest const* quest, Object* questGiver, uint16 slot, bool keepStatus);
         void AbandonQuest(uint32 quest_id);
         void CompleteQuest(uint32 quest_id);
+        void RewardAutoCompleteTask(uint32 questId);
         void IncompleteQuest(uint32 quest_id);
         uint32 GetQuestMoneyReward(Quest const* quest) const;
         uint32 GetQuestXPReward(Quest const* quest);
@@ -1677,6 +1681,8 @@ class TC_GAME_API Player final : public Unit, public GridObject<Player>
         void ResetSeasonalQuestStatus(uint16 event_id, time_t eventStartTime);
 
         uint16 FindQuestSlot(uint32 quest_id) const;
+        uint16 FindTaskQuestSlot(uint32 quest_id) const;
+        uint16 FindAnyQuestSlot(uint32 quest_id) const;
         uint32 GetQuestSlotQuestId(uint16 slot) const;
         uint32 GetQuestSlotState(uint16 slot) const;
         uint16 GetQuestSlotCounter(uint16 slot, uint8 counter) const;
@@ -2788,6 +2794,7 @@ class TC_GAME_API Player final : public Unit, public GridObject<Player>
 
         void CreateClassHall(uint32 garrSiteId);
         ClassHall* GetClassHall() const { return _classHall.get(); }
+        PlayerTaskQuests* GetTaskQuests() const { return _taskQuests.get(); }
 
         bool IsAdvancedCombatLoggingEnabled() const { return _advancedCombatLoggingEnabled; }
         void SetAdvancedCombatLogging(bool enabled) { _advancedCombatLoggingEnabled = enabled; }
@@ -3252,6 +3259,7 @@ class TC_GAME_API Player final : public Unit, public GridObject<Player>
 
         std::unique_ptr<Garrison> _garrison;
         std::unique_ptr<ClassHall> _classHall;
+        std::unique_ptr<PlayerTaskQuests> _taskQuests;
 
         bool _advancedCombatLoggingEnabled;
 

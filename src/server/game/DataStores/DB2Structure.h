@@ -3040,6 +3040,34 @@ struct QuestSortEntry
     int8 UiOrderIndex;
 };
 
+struct QuestV2CliTaskEntry
+{
+    Trinity::RaceMask<int64> FiltRaces;
+    LocalizedString QuestTitle;
+    LocalizedString BulletText;
+    int32 StartItem;
+    uint16 UniqueBitFlag;
+    uint16 ConditionID;
+    int16 FiltClasses;
+    std::array<uint16, 3> FiltCompletedQuest;
+    uint16 FiltMinSkillID;
+    int16 WorldStateExpressionID;
+    uint8 FiltActiveQuest;
+    uint8 FiltCompletedQuestLogic;
+    uint8 FiltMaxFactionID;
+    uint8 FiltMaxFactionValue;
+    uint8 FiltMaxLevel;
+    uint8 FiltMinFactionID;
+    uint8 FiltMinFactionValue;
+    uint8 FiltMinLevel;
+    uint8 FiltMinSkillValue;
+    uint8 FiltNonActiveQuest;
+    uint32 ID;
+    uint32 BreadCrumbID;
+    uint32 QuestInfoID;
+    int32 SandboxScalingID;
+};
+
 struct QuestV2Entry
 {
     uint32 ID;

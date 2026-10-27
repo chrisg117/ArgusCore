@@ -2148,7 +2148,7 @@ bool CriteriaHandler::ModifierSatisfied(ModifierTreeEntry const* modifier, uint6
         case ModifierTreeType::ChallengeModeMedal: // 83
             return false; // OBSOLETE
         case ModifierTreeType::PlayerOnQuest: // 84
-            if (referencePlayer->FindQuestSlot(reqValue) == MAX_QUEST_LOG_SIZE)
+            if (referencePlayer->FindAnyQuestSlot(reqValue) == QUEST_SLOT_NONE)
                 return false;
             break;
         case ModifierTreeType::ExaltedWithFaction: // 85
@@ -2284,8 +2284,8 @@ bool CriteriaHandler::ModifierSatisfied(ModifierTreeEntry const* modifier, uint6
             Quest const* quest = sObjectMgr->GetQuestTemplate(objective->QuestID);
             if (!quest)
                 return false;
-            uint16 slot = referencePlayer->FindQuestSlot(objective->QuestID);
-            if (slot >= MAX_QUEST_LOG_SIZE || referencePlayer->GetQuestRewardStatus(objective->QuestID) || !referencePlayer->IsQuestObjectiveComplete(slot, quest, *objective))
+            uint16 slot = referencePlayer->FindAnyQuestSlot(objective->QuestID);
+            if (slot == QUEST_SLOT_NONE || referencePlayer->GetQuestRewardStatus(objective->QuestID) || !referencePlayer->IsQuestObjectiveComplete(slot, quest, *objective))
                 return false;
             break;
         }
@@ -3247,7 +3247,7 @@ bool CriteriaHandler::ModifierSatisfied(ModifierTreeEntry const* modifier, uint6
             {
                 isOnQuest = std::any_of(questLineQuests->begin(), questLineQuests->end(), [referencePlayer](QuestLineXQuestEntry const* questLineQuest)
                 {
-                    return referencePlayer->FindQuestSlot(questLineQuest->QuestID) < MAX_QUEST_LOG_SIZE;
+                    return referencePlayer->FindAnyQuestSlot(questLineQuest->QuestID) != QUEST_SLOT_NONE;
                 });
             }
             if (!isOnQuest)

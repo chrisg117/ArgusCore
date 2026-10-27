@@ -4149,6 +4149,41 @@ struct QuestSortLoadInfo
     static constexpr DB2LoadInfo Instance{ Fields, 3, &QuestSortMeta::Instance, HOTFIX_SEL_QUEST_SORT };
 };
 
+struct QuestV2CliTaskLoadInfo
+{
+    static constexpr DB2FieldMeta Fields[26] =
+    {
+        { .IsSigned = true, .Type = FT_LONG, .Name = "FiltRaces" },
+        { .IsSigned = false, .Type = FT_STRING, .Name = "QuestTitle" },
+        { .IsSigned = false, .Type = FT_STRING, .Name = "BulletText" },
+        { .IsSigned = true, .Type = FT_INT, .Name = "StartItem" },
+        { .IsSigned = false, .Type = FT_SHORT, .Name = "UniqueBitFlag" },
+        { .IsSigned = false, .Type = FT_SHORT, .Name = "ConditionID" },
+        { .IsSigned = true, .Type = FT_SHORT, .Name = "FiltClasses" },
+        { .IsSigned = false, .Type = FT_SHORT, .Name = "FiltCompletedQuest1" },
+        { .IsSigned = false, .Type = FT_SHORT, .Name = "FiltCompletedQuest2" },
+        { .IsSigned = false, .Type = FT_SHORT, .Name = "FiltCompletedQuest3" },
+        { .IsSigned = false, .Type = FT_SHORT, .Name = "FiltMinSkillID" },
+        { .IsSigned = true, .Type = FT_SHORT, .Name = "WorldStateExpressionID" },
+        { .IsSigned = false, .Type = FT_BYTE, .Name = "FiltActiveQuest" },
+        { .IsSigned = false, .Type = FT_BYTE, .Name = "FiltCompletedQuestLogic" },
+        { .IsSigned = false, .Type = FT_BYTE, .Name = "FiltMaxFactionID" },
+        { .IsSigned = false, .Type = FT_BYTE, .Name = "FiltMaxFactionValue" },
+        { .IsSigned = false, .Type = FT_BYTE, .Name = "FiltMaxLevel" },
+        { .IsSigned = false, .Type = FT_BYTE, .Name = "FiltMinFactionID" },
+        { .IsSigned = false, .Type = FT_BYTE, .Name = "FiltMinFactionValue" },
+        { .IsSigned = false, .Type = FT_BYTE, .Name = "FiltMinLevel" },
+        { .IsSigned = false, .Type = FT_BYTE, .Name = "FiltMinSkillValue" },
+        { .IsSigned = false, .Type = FT_BYTE, .Name = "FiltNonActiveQuest" },
+        { .IsSigned = false, .Type = FT_INT, .Name = "ID" },
+        { .IsSigned = false, .Type = FT_INT, .Name = "BreadCrumbID" },
+        { .IsSigned = false, .Type = FT_INT, .Name = "QuestInfoID" },
+        { .IsSigned = true, .Type = FT_INT, .Name = "SandboxScalingID" },
+    };
+
+    static constexpr DB2LoadInfo Instance{ Fields, 26, &QuestV2CliTaskMeta::Instance, HOTFIX_SEL_QUEST_V2_CLI_TASK };
+};
+
 struct QuestV2LoadInfo
 {
     static constexpr DB2FieldMeta Fields[2] =
