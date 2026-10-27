@@ -1667,6 +1667,16 @@ enum StopGuldanTakingPowerData
     NPC_STOP_GULDAN_POWER_KILLCREDIT    = 106241
 };
 
+enum ForgedInFireTakingPowerData
+{
+    NPC_FORGED_IN_FIRE_POWER_KILLCREDIT = 106254
+};
+
+enum BetweenUsAndFreedomTakingPowerData
+{
+    NPC_BETWEEN_US_AND_FREEDOM_POWER_KILLCREDIT = 106255
+};
+
 enum BeforeWereOverrunData
 {
     QUEST_BEFORE_WERE_OVERRUN           = 38766,
@@ -2752,6 +2762,8 @@ void AddSC_zone_mardum()
     RegisterSpellAndAuraScriptPairWithArgs(spell_mardum_taking_power, spell_mardum_taking_power_aura<NPC_BELIASH_POWER_KILLCREDIT>, "spell_before_were_overrun_taking_power");
     RegisterSpellAndAuraScriptPairWithArgs(spell_mardum_taking_power, spell_mardum_taking_power_aura<NPC_CAZA_POWER_KILLCREDIT>, "spell_hidden_no_more_taking_power");
     RegisterSpellAndAuraScriptPairWithArgs(spell_mardum_taking_power, spell_mardum_taking_power_aura<NPC_STOP_GULDAN_POWER_KILLCREDIT>, "spell_stop_guldan_taking_power");
+    RegisterSpellAndAuraScriptPairWithArgs(spell_mardum_taking_power, spell_mardum_taking_power_aura<NPC_FORGED_IN_FIRE_POWER_KILLCREDIT>, "spell_forged_in_fire_taking_power");
+    RegisterSpellAndAuraScriptPairWithArgs(spell_mardum_taking_power, spell_mardum_taking_power_aura<NPC_BETWEEN_US_AND_FREEDOM_POWER_KILLCREDIT>, "spell_between_us_and_freedom_taking_power");
     RegisterSpellScript(spell_mardum_caza_fel_infusion);
     RegisterSpellScriptWithArgs(spell_freed_killcredit_set_them_free<NPC_CYANA_NIGHTGLAIVE_FREED>, "spell_cyana_nightglaive_killcredit_set_them_free");
     RegisterSpellScriptWithArgs(spell_freed_killcredit_set_them_free<NPC_IZAL_WHITEMOON_FREED>, "spell_izal_whitemoon_killcredit_set_them_free");

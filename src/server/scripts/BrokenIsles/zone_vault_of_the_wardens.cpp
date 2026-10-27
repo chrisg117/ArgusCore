@@ -30,6 +30,7 @@
 #include "SceneMgr.h"
 #include "ScriptMgr.h"
 #include "ScriptedCreature.h"
+#include "SpellAuraEffects.h"
 #include "SpellScript.h"
 #include "Vehicle.h"
 
@@ -1111,6 +1112,639 @@ private:
     bool _beamRedirected;
 };
 
+enum ForgedInFireData
+{
+    QUEST_FORGED_IN_FIRE_HAVOC              = 39683,
+    QUEST_FORGED_IN_FIRE_VENGEANCE          = 40254,
+
+    NPC_CYANA_NIGHTGLAIVE_VAULT_OF_LAW      = 96672,
+
+    SAY_IMMOLANTH_BURN_THIS_WORLD           = 0,
+    SAY_IMMOLANTH_JOIN_ME                   = 1,
+    SAY_IMMOLANTH_ROTTING_HERE              = 2,
+    SAY_CYANA_DEMONS_POWER_IS_YOURS         = 0,
+
+    SPELL_IMMOLANTH_CHAOS_NOVA              = 199828,
+    SPELL_IMMOLANTH_BURNING_FEL             = 199758,
+    SPELL_BURNING_FEL_FONT                  = 199761,
+    SPELL_BURNING_FEL_DAMAGE                = 199773,
+    SPELL_TAKING_POWER_CHAOS_NOVA           = 210485,
+    SPELL_TAKING_POWER_IMMOLATION_AURA      = 210489,
+
+    EVENT_IMMOLANTH_JOIN_ME                 = 1,
+    EVENT_IMMOLANTH_ROTTING_HERE,
+    EVENT_IMMOLANTH_CHAOS_NOVA,
+    EVENT_IMMOLANTH_BURNING_FEL
+};
+
+// Each Burning Fel raises this many fonts of fel around the players fighting him
+static constexpr uint8 BurningFelFonts = 4;
+static constexpr float BurningFelFontSpread = 8.0f;
+// A font burns whoever stands in it this often
+static constexpr Milliseconds BurningFelFontTick = 1500ms;
+
+// 96682 - Immolanth (Forged in Fire): fights with Chaos Nova (a 25 yd burst that stuns) and Burning Fel (fonts of fel
+// from the floor) and taunts the demon hunters who fight him, as in the retail video. Cyana Nightglaive fights beside the
+// player, but no creature can bring him down. Those who killed him channel Taking Power on his corpse, for Chaos Nova
+// (Havoc) or Immolation Aura (Vengeance); its end gives the credit (spell_forged_in_fire_taking_power).
+struct npc_forged_in_fire_immolanth : public ScriptedAI
+{
+    npc_forged_in_fire_immolanth(Creature* creature) : ScriptedAI(creature) { }
+
+    void Reset() override
+    {
+        _events.Reset();
+    }
+
+    void JustEngagedWith(Unit* /*who*/) override
+    {
+        Talk(SAY_IMMOLANTH_BURN_THIS_WORLD);
+        _events.ScheduleEvent(EVENT_IMMOLANTH_JOIN_ME, 11s);
+        _events.ScheduleEvent(EVENT_IMMOLANTH_ROTTING_HERE, 25s);
+        _events.ScheduleEvent(EVENT_IMMOLANTH_BURNING_FEL, 6s);
+        _events.ScheduleEvent(EVENT_IMMOLANTH_CHAOS_NOVA, 15s);
+
+        if (Creature* cyana = me->FindNearestCreature(NPC_CYANA_NIGHTGLAIVE_VAULT_OF_LAW, 40.0f))
+            if (!cyana->IsEngaged())
+                cyana->AI()->AttackStart(me);
+    }
+
+    void DamageTaken(Unit* attacker, uint32& damage, DamageEffectType /*damageType*/, SpellInfo const* /*spellInfo = nullptr*/) override
+    {
+        // Cyana helps, but the kill and its power belong to the players
+        if (!attacker || attacker->IsControlledByPlayer() || !me->HealthBelowPctDamaged(30, damage))
+            return;
+
+        uint64 floorHealth = me->CountPctFromMaxHealth(30);
+        damage = me->GetHealth() > floorHealth ? uint32(me->GetHealth() - floorHealth) : 0;
+    }
+
+    void OnSpellCast(SpellInfo const* spellInfo) override
+    {
+        if (spellInfo->Id != SPELL_IMMOLANTH_BURNING_FEL)
+            return;
+
+        // The fonts rise under and around the players fighting him
+        std::vector<Unit*> targets;
+        for (ThreatReference const* ref : me->GetThreatManager().GetUnsortedThreatList())
+            if (Player* player = ref->GetVictim()->ToPlayer())
+                targets.push_back(player);
+        if (targets.empty())
+            return;
+
+        for (uint8 i = 0; i < BurningFelFonts; ++i)
+        {
+            Unit* target = targets[i % targets.size()];
+            Position pos = i < targets.size() ? target->GetPosition() : target->GetRandomNearPosition(BurningFelFontSpread);
+            me->CastSpell(pos, SPELL_BURNING_FEL_FONT, true);
+        }
+    }
+
+    void JustDied(Unit* /*killer*/) override
+    {
+        Creature* cyana = me->FindNearestCreature(NPC_CYANA_NIGHTGLAIVE_VAULT_OF_LAW, 60.0f);
+
+        for (ObjectGuid const& tapperGuid : me->GetTapList())
+        {
+            Player* player = ObjectAccessor::GetPlayer(*me, tapperGuid);
+            if (!player)
+                continue;
+
+            if (player->GetQuestStatus(QUEST_FORGED_IN_FIRE_HAVOC) == QUEST_STATUS_INCOMPLETE)
+                player->CastSpell(me, SPELL_TAKING_POWER_CHAOS_NOVA, TRIGGERED_IGNORE_CAST_IN_PROGRESS);
+            else if (player->GetQuestStatus(QUEST_FORGED_IN_FIRE_VENGEANCE) == QUEST_STATUS_INCOMPLETE)
+                player->CastSpell(me, SPELL_TAKING_POWER_IMMOLATION_AURA, TRIGGERED_IGNORE_CAST_IN_PROGRESS);
+            else
+                continue;
+
+            if (cyana)
+                cyana->AI()->Talk(SAY_CYANA_DEMONS_POWER_IS_YOURS, player);
+        }
+
+        if (cyana)
+            cyana->AI()->EnterEvadeMode();
+    }
+
+    void UpdateAI(uint32 diff) override
+    {
+        if (!UpdateVictim())
+            return;
+
+        _events.Update(diff);
+
+        if (me->HasUnitState(UNIT_STATE_CASTING))
+            return;
+
+        while (uint32 eventId = _events.ExecuteEvent())
+        {
+            switch (eventId)
+            {
+                case EVENT_IMMOLANTH_JOIN_ME:
+                    Talk(SAY_IMMOLANTH_JOIN_ME);
+                    break;
+                case EVENT_IMMOLANTH_ROTTING_HERE:
+                    Talk(SAY_IMMOLANTH_ROTTING_HERE);
+                    break;
+                case EVENT_IMMOLANTH_BURNING_FEL:
+                    DoCastSelf(SPELL_IMMOLANTH_BURNING_FEL, TRIGGERED_IGNORE_POWER_COST);
+                    _events.Repeat(14s, 18s);
+                    break;
+                case EVENT_IMMOLANTH_CHAOS_NOVA:
+                    // His energy fills over the fight on retail; here the nova simply comes round on a timer
+                    DoCastSelf(SPELL_IMMOLANTH_CHAOS_NOVA, TRIGGERED_IGNORE_POWER_COST);
+                    _events.Repeat(24s, 28s);
+                    break;
+                default:
+                    break;
+            }
+
+            if (me->HasUnitState(UNIT_STATE_CASTING))
+                return;
+        }
+    }
+
+private:
+    EventMap _events;
+};
+
+// 5572 - Burning Fel's font of fel: burns the players standing in it
+struct at_forged_in_fire_burning_fel : AreaTriggerAI
+{
+    at_forged_in_fire_burning_fel(AreaTrigger* areatrigger) : AreaTriggerAI(areatrigger), _tick(BurningFelFontTick) { }
+
+    void OnUnitEnter(Unit* unit) override
+    {
+        Burn(unit);
+    }
+
+    void OnUpdate(uint32 diff) override
+    {
+        _tick -= Milliseconds(diff);
+        if (_tick > 0s)
+            return;
+
+        _tick = BurningFelFontTick;
+        for (ObjectGuid const& guid : at->GetInsideUnits())
+            if (Unit* unit = ObjectAccessor::GetUnit(*at, guid))
+                Burn(unit);
+    }
+
+private:
+    void Burn(Unit* unit) const
+    {
+        Unit* caster = at->GetCaster();
+        if (caster && unit->IsPlayer() && caster->IsValidAttackTarget(unit))
+            caster->CastSpell(unit, SPELL_BURNING_FEL_DAMAGE, true);
+    }
+
+    Milliseconds _tick;
+};
+
+enum AllTheWayUpData
+{
+    QUEST_ALL_THE_WAY_UP                    = 39686,
+
+    NPC_USE_ELEVATOR_CREDIT                 = 96814
+};
+
+// 1468002 - the top landing of the elevator up from the Demon Ward (server side): arriving in the Hall of Judgment
+// credits All The Way Up
+struct at_all_the_way_up_hall_of_judgment : AreaTriggerAI
+{
+    at_all_the_way_up_hall_of_judgment(AreaTrigger* areatrigger) : AreaTriggerAI(areatrigger) { }
+
+    void OnUnitEnter(Unit* unit) override
+    {
+        Player* player = unit->ToPlayer();
+        if (!player || player->GetQuestStatus(QUEST_ALL_THE_WAY_UP) != QUEST_STATUS_INCOMPLETE)
+            return;
+
+        player->KilledMonsterCredit(NPC_USE_ELEVATOR_CREDIT);
+    }
+};
+
+// 246047 - Doodad_7WD_Warden_Elevator004: on the quest map, the elevator between the Demon Ward and the Hall of Judgment
+// runs up and down by itself. It starts held at its first stop, the top: sent to its other stop, the Demon Ward, it then
+// keeps cycling between the two. (A transport gets its AI before its spawn is known, so this is the template's script;
+// the dungeon's copy is left alone.)
+struct go_all_the_way_up_elevator : public GameObjectAI
+{
+    go_all_the_way_up_elevator(GameObject* go) : GameObjectAI(go), _started(false) { }
+
+    void UpdateAI(uint32 /*diff*/) override
+    {
+        if (_started)
+            return;
+
+        _started = true;
+        if (me->GetMapId() != MAP_VAULT_OF_THE_WARDENS_QUESTS)
+            return;
+
+        me->SetGoState(GO_STATE_TRANSPORT_STOPPED);
+        me->HandleCustomTypeCommand(GameObjectType::SetTransportAutoCycleBetweenStopFrames(true));
+    }
+
+private:
+    bool _started;
+};
+
+enum ANewDirectionData
+{
+    QUEST_A_NEW_DIRECTION                   = 40373,
+
+    OBJECTIVE_POOL_OF_JUDGMENT_VIEWED       = 286169,
+    OBJECTIVE_CHOOSE_KAYN_OR_ALTRUIS        = 280763,
+
+    NPC_POOL_OF_JUDGMENT_CREDIT             = 100166,
+    NPC_KAYN_SUNFURY_POOL_OF_JUDGMENT       = 96666,
+    NPC_ALTRUIS_THE_SUFFERER_POOL_OF_JUDGMENT = 96669,
+    NPC_KORVAS_BLOODTHORN_HALL_OF_JUDGMENT  = 97644,
+
+    SAY_KAYN_COWARDS_PATH                   = 0,
+    SAY_KAYN_IMPASSE                        = 1,
+    SAY_ALTRUIS_BETTER_LEADER               = 0,
+    SAY_ALTRUIS_TAKE_MY_LEAVE               = 1,
+    SAY_KORVAS_FOOLISH_BICKERING            = 0,
+
+    SPELL_POOL_OF_JUDGEMENT_HARBINGERS      = 192739,
+    SPELL_A_NEW_DIRECTION_CHOICE            = 196650,
+    SPELL_A_NEW_DIRECTION_CHOSE_KAYN        = 196661,
+    SPELL_A_NEW_DIRECTION_CHOSE_ALTRUIS     = 196662,
+
+    MOVIE_HARBINGERS                        = 478,
+
+    PLAYERCHOICE_RESPONSE_KAYN              = 2341,
+    PLAYERCHOICE_RESPONSE_ALTRUIS           = 2342
+};
+
+// Kayn and Altruis argue by the Pool of Judgment and Kor'vas cuts in: speaker, text group, when
+struct ANewDirectionArgumentLine
+{
+    uint32 Speaker;
+    uint8 TextGroup;
+    Milliseconds Delay;
+};
+
+static constexpr std::array<ANewDirectionArgumentLine, 4> ANewDirectionArgument =
+{{
+    { NPC_KAYN_SUNFURY_POOL_OF_JUDGMENT,         SAY_KAYN_COWARDS_PATH,          2s },
+    { NPC_ALTRUIS_THE_SUFFERER_POOL_OF_JUDGMENT, SAY_ALTRUIS_BETTER_LEADER,      10s },
+    { NPC_KORVAS_BLOODTHORN_HALL_OF_JUDGMENT,    SAY_KORVAS_FOOLISH_BICKERING,   17s },
+    { NPC_KAYN_SUNFURY_POOL_OF_JUDGMENT,         SAY_KAYN_IMPASSE,               22s }
+}};
+
+// 40373 - A New Direction: Kayn and Altruis argue over the player's choice
+class quest_a_new_direction : public QuestScript
+{
+public:
+    quest_a_new_direction() : QuestScript("quest_a_new_direction") { }
+
+    void OnQuestStatusChange(Player* player, Quest const* /*quest*/, QuestStatus oldStatus, QuestStatus newStatus) override
+    {
+        if (oldStatus != QUEST_STATUS_NONE || newStatus != QUEST_STATUS_INCOMPLETE)
+            return;
+
+        // On the player's own event queue, so the talk follows them and stops if they log out
+        for (ANewDirectionArgumentLine const& line : ANewDirectionArgument)
+        {
+            player->m_Events.AddEventAtOffset([player, line]
+            {
+                if (Creature* speaker = player->FindNearestCreature(line.Speaker, 50.0f))
+                    speaker->AI()->Talk(line.TextGroup, player);
+            }, line.Delay);
+        }
+    }
+};
+
+// 244455 - Pool of Judgment (A New Direction): gazing into it plays the "Harbingers" movie (its own spell is in no data)
+struct go_a_new_direction_pool_of_judgment : public GameObjectAI
+{
+    go_a_new_direction_pool_of_judgment(GameObject* go) : GameObjectAI(go) { }
+
+    bool OnGossipHello(Player* player) override
+    {
+        if (player->GetQuestStatus(QUEST_A_NEW_DIRECTION) == QUEST_STATUS_INCOMPLETE
+            && !player->IsQuestObjectiveComplete(QUEST_A_NEW_DIRECTION, OBJECTIVE_POOL_OF_JUDGMENT_VIEWED))
+            player->CastSpell(player, SPELL_POOL_OF_JUDGEMENT_HARBINGERS, true);
+        return true;
+    }
+};
+
+// A New Direction: the "Harbingers" movie's end counts as Pool of Judgment viewed, and the choice between Kayn and
+// Altruis comes next (the quest has the player speak to Kor'vas for it; no gossip line for that is in the data)
+class player_a_new_direction : public PlayerScript
+{
+public:
+    player_a_new_direction() : PlayerScript("player_a_new_direction") { }
+
+    void OnMovieComplete(Player* player, uint32 movieId) override
+    {
+        if (movieId != MOVIE_HARBINGERS || player->GetQuestStatus(QUEST_A_NEW_DIRECTION) != QUEST_STATUS_INCOMPLETE)
+            return;
+
+        player->KilledMonsterCredit(NPC_POOL_OF_JUDGMENT_CREDIT);
+        if (!player->IsQuestObjectiveComplete(QUEST_A_NEW_DIRECTION, OBJECTIVE_CHOOSE_KAYN_OR_ALTRUIS))
+            player->CastSpell(player, SPELL_A_NEW_DIRECTION_CHOICE, true);
+    }
+};
+
+// 234 - Which follower will you choose? (A New Direction): each answer casts its Chose spell (the credit and the tracking
+// quest that remembers the choice). Altruis takes his leave if Kayn is chosen.
+class playerchoice_a_new_direction : public PlayerChoiceScript
+{
+public:
+    playerchoice_a_new_direction() : PlayerChoiceScript("playerchoice_a_new_direction") { }
+
+    void OnResponse(WorldObject* /*object*/, Player* player, PlayerChoice const* /*choice*/, PlayerChoiceResponse const* response) override
+    {
+        if (player->GetQuestStatus(QUEST_A_NEW_DIRECTION) != QUEST_STATUS_INCOMPLETE
+            || player->IsQuestObjectiveComplete(QUEST_A_NEW_DIRECTION, OBJECTIVE_CHOOSE_KAYN_OR_ALTRUIS))
+            return;
+
+        if (response->ResponseId == PLAYERCHOICE_RESPONSE_KAYN)
+        {
+            player->CastSpell(player, SPELL_A_NEW_DIRECTION_CHOSE_KAYN, CastSpellExtraArgsInit{ .TriggerFlags = TRIGGERED_FULL_MASK });
+            if (Creature* altruis = player->FindNearestCreature(NPC_ALTRUIS_THE_SUFFERER_POOL_OF_JUDGMENT, 50.0f))
+                altruis->AI()->Talk(SAY_ALTRUIS_TAKE_MY_LEAVE, player);
+        }
+        else if (response->ResponseId == PLAYERCHOICE_RESPONSE_ALTRUIS)
+            player->CastSpell(player, SPELL_A_NEW_DIRECTION_CHOSE_ALTRUIS, CastSpellExtraArgsInit{ .TriggerFlags = TRIGGERED_FULL_MASK });
+    }
+};
+
+enum BetweenUsAndFreedomData
+{
+    QUEST_BETWEEN_US_AND_FREEDOM_HAVOC_A    = 39688,
+    QUEST_BETWEEN_US_AND_FREEDOM_HAVOC_H    = 39694,
+    QUEST_BETWEEN_US_AND_FREEDOM_VENGEANCE_A = 40255,
+    QUEST_BETWEEN_US_AND_FREEDOM_VENGEANCE_H = 40256,
+    QUEST_A_NEW_DIRECTION_CHOSE_KAYN        = 40374,
+    QUEST_A_NEW_DIRECTION_CHOSE_ALTRUIS     = 40375,
+
+    NPC_BASTILLAX_POWER_KILLCREDIT          = 106255,
+    NPC_KHADGAR_ARRIVED_CREDIT              = 113812,
+    NPC_KAYN_SUNFURY_CHAMBER_OF_NIGHT       = 102393,
+    NPC_ALTRUIS_THE_SUFFERER_CHAMBER_OF_NIGHT = 102391,
+    NPC_ARCHMAGE_KHADGAR_VAULT_EXIT         = 97978,
+
+    SAY_KORVAS_KEEP_MOVING                  = 1,
+    SAY_BASTILLAX_AGGRO                     = 0,
+    SAY_BASTILLAX_LIGHT_OF_THIS_WORLD       = 1,
+    SAY_BASTILLAX_HOPELESS_DREAM            = 2,
+    SAY_BASTILLAX_SUCH_ARROGANCE            = 3,
+    SAY_BASTILLAX_DEATH                     = 4,
+    SAY_FOLLOWER_FREEDOM_IS_OURS            = 2,
+    SAY_KHADGAR_LEADER_OF_THE_KIRIN_TOR     = 0,
+    SAY_KHADGAR_AZEROTH_NEEDS_YOUR_HELP     = 1,
+
+    SPELL_BASTILLAX_BLUR_OF_SHADOWS         = 200002,
+    SPELL_BASTILLAX_SHADOW_BLAST_MISSILE    = 200003,
+    SPELL_BASTILLAX_FEL_ANNIHILATION        = 200007,
+    SPELL_BASTILLAX_CRUSHING_SHADOWS        = 200027,
+    SPELL_TAKING_POWER_BLUR                 = 210499,
+    SPELL_TAKING_POWER_TORMENT              = 210502,
+
+    EVENT_BASTILLAX_LIGHT_OF_THIS_WORLD     = 1,
+    EVENT_BASTILLAX_HOPELESS_DREAM,
+    EVENT_BASTILLAX_SUCH_ARROGANCE,
+    EVENT_BASTILLAX_FEL_ANNIHILATION,
+    EVENT_BASTILLAX_CRUSHING_SHADOWS,
+    EVENT_BASTILLAX_BLUR_OF_SHADOWS
+};
+
+static constexpr std::array<uint32, 4> BetweenUsAndFreedomQuests =
+{
+    QUEST_BETWEEN_US_AND_FREEDOM_HAVOC_A, QUEST_BETWEEN_US_AND_FREEDOM_HAVOC_H,
+    QUEST_BETWEEN_US_AND_FREEDOM_VENGEANCE_A, QUEST_BETWEEN_US_AND_FREEDOM_VENGEANCE_H
+};
+
+// Khadgar speaks once the chosen follower has cheered: when, after arriving
+static constexpr Milliseconds KhadgarLeaderOfTheKirinTorDelay = 4s;
+static constexpr Milliseconds KhadgarAzerothNeedsYourHelpDelay = 9s;
+
+// The Between Us and Freedom version in the player's log, or 0
+static uint32 GetBetweenUsAndFreedomQuest(Player const* player)
+{
+    for (uint32 questId : BetweenUsAndFreedomQuests)
+    {
+        QuestStatus status = player->GetQuestStatus(questId);
+        if (status == QUEST_STATUS_INCOMPLETE || status == QUEST_STATUS_COMPLETE)
+            return questId;
+    }
+    return 0;
+}
+
+// Each version has its own objective ids; find the objective by what credits it
+static bool IsBetweenUsAndFreedomObjectiveComplete(Player const* player, uint32 questId, int32 creditEntry)
+{
+    if (Quest const* quest = sObjectMgr->GetQuestTemplate(questId))
+        for (QuestObjective const& objective : quest->GetObjectives())
+            if (objective.ObjectID == creditEntry)
+                return player->IsQuestObjectiveComplete(questId, objective.ID);
+    return false;
+}
+
+static bool IsHavocBetweenUsAndFreedom(uint32 questId)
+{
+    return questId == QUEST_BETWEEN_US_AND_FREEDOM_HAVOC_A || questId == QUEST_BETWEEN_US_AND_FREEDOM_HAVOC_H;
+}
+
+// 39688, 39694, 40255, 40256 - Between Us and Freedom: Kor'vas sends the player on to the last chamber
+class quest_between_us_and_freedom : public QuestScript
+{
+public:
+    quest_between_us_and_freedom() : QuestScript("quest_between_us_and_freedom") { }
+
+    void OnQuestStatusChange(Player* player, Quest const* /*quest*/, QuestStatus oldStatus, QuestStatus newStatus) override
+    {
+        if (oldStatus != QUEST_STATUS_NONE || newStatus != QUEST_STATUS_INCOMPLETE)
+            return;
+
+        if (Creature* korvas = player->FindNearestCreature(NPC_KORVAS_BLOODTHORN_HALL_OF_JUDGMENT, 30.0f))
+            korvas->AI()->Talk(SAY_KORVAS_KEEP_MOVING, player);
+    }
+};
+
+// 96783 - Bastillax (Between Us and Freedom): fights with Fel Annihilation (a cone in front), Crushing Shadows (knocks
+// everyone up) and Blur of Shadows (he dodges everything) and taunts, with the retail lines. The follower the player
+// chose fights beside them, but no creature can bring him down. Those who killed him channel Taking Power on his
+// corpse, for Blur (Havoc) or Torment (Vengeance); its end gives the credit (spell_between_us_and_freedom_taking_power).
+struct npc_between_us_and_freedom_bastillax : public ScriptedAI
+{
+    npc_between_us_and_freedom_bastillax(Creature* creature) : ScriptedAI(creature) { }
+
+    void Reset() override
+    {
+        _events.Reset();
+    }
+
+    void JustEngagedWith(Unit* who) override
+    {
+        Talk(SAY_BASTILLAX_AGGRO);
+        _events.ScheduleEvent(EVENT_BASTILLAX_LIGHT_OF_THIS_WORLD, 12s);
+        _events.ScheduleEvent(EVENT_BASTILLAX_HOPELESS_DREAM, 26s);
+        _events.ScheduleEvent(EVENT_BASTILLAX_SUCH_ARROGANCE, 40s);
+        _events.ScheduleEvent(EVENT_BASTILLAX_FEL_ANNIHILATION, 8s);
+        _events.ScheduleEvent(EVENT_BASTILLAX_BLUR_OF_SHADOWS, 14s);
+        _events.ScheduleEvent(EVENT_BASTILLAX_CRUSHING_SHADOWS, 22s);
+
+        // Only the follower this player chose is there for them
+        Player* player = who->GetCharmerOrOwnerPlayerOrPlayerItself();
+        if (!player)
+            return;
+
+        uint32 followerEntry = 0;
+        if (player->GetQuestStatus(QUEST_A_NEW_DIRECTION_CHOSE_KAYN) == QUEST_STATUS_REWARDED)
+            followerEntry = NPC_KAYN_SUNFURY_CHAMBER_OF_NIGHT;
+        else if (player->GetQuestStatus(QUEST_A_NEW_DIRECTION_CHOSE_ALTRUIS) == QUEST_STATUS_REWARDED)
+            followerEntry = NPC_ALTRUIS_THE_SUFFERER_CHAMBER_OF_NIGHT;
+
+        if (followerEntry)
+            if (Creature* follower = me->FindNearestCreature(followerEntry, 40.0f))
+                if (!follower->IsEngaged())
+                    follower->AI()->AttackStart(me);
+    }
+
+    void DamageTaken(Unit* attacker, uint32& damage, DamageEffectType /*damageType*/, SpellInfo const* /*spellInfo = nullptr*/) override
+    {
+        // The follower helps, but the kill and its power belong to the players
+        if (!attacker || attacker->IsControlledByPlayer() || !me->HealthBelowPctDamaged(30, damage))
+            return;
+
+        uint64 floorHealth = me->CountPctFromMaxHealth(30);
+        damage = me->GetHealth() > floorHealth ? uint32(me->GetHealth() - floorHealth) : 0;
+    }
+
+    void JustDied(Unit* /*killer*/) override
+    {
+        Talk(SAY_BASTILLAX_DEATH);
+
+        for (ObjectGuid const& tapperGuid : me->GetTapList())
+        {
+            Player* player = ObjectAccessor::GetPlayer(*me, tapperGuid);
+            if (!player)
+                continue;
+
+            uint32 questId = GetBetweenUsAndFreedomQuest(player);
+            if (!questId || player->GetQuestStatus(questId) != QUEST_STATUS_INCOMPLETE)
+                continue;
+
+            player->CastSpell(me, IsHavocBetweenUsAndFreedom(questId) ? SPELL_TAKING_POWER_BLUR : SPELL_TAKING_POWER_TORMENT,
+                TRIGGERED_IGNORE_CAST_IN_PROGRESS);
+        }
+
+        for (uint32 followerEntry : { NPC_KAYN_SUNFURY_CHAMBER_OF_NIGHT, NPC_ALTRUIS_THE_SUFFERER_CHAMBER_OF_NIGHT })
+            if (Creature* follower = me->FindNearestCreature(followerEntry, 60.0f))
+                follower->AI()->EnterEvadeMode();
+    }
+
+    void UpdateAI(uint32 diff) override
+    {
+        if (!UpdateVictim())
+            return;
+
+        _events.Update(diff);
+
+        if (me->HasUnitState(UNIT_STATE_CASTING))
+            return;
+
+        while (uint32 eventId = _events.ExecuteEvent())
+        {
+            switch (eventId)
+            {
+                case EVENT_BASTILLAX_LIGHT_OF_THIS_WORLD:
+                    Talk(SAY_BASTILLAX_LIGHT_OF_THIS_WORLD);
+                    break;
+                case EVENT_BASTILLAX_HOPELESS_DREAM:
+                    Talk(SAY_BASTILLAX_HOPELESS_DREAM);
+                    break;
+                case EVENT_BASTILLAX_SUCH_ARROGANCE:
+                    Talk(SAY_BASTILLAX_SUCH_ARROGANCE);
+                    break;
+                case EVENT_BASTILLAX_FEL_ANNIHILATION:
+                    DoCastVictim(SPELL_BASTILLAX_FEL_ANNIHILATION);
+                    _events.Repeat(16s, 20s);
+                    break;
+                case EVENT_BASTILLAX_BLUR_OF_SHADOWS:
+                    // It shares a 10 s category cooldown with Crushing Shadows; the timers keep them apart
+                    DoCastSelf(SPELL_BASTILLAX_BLUR_OF_SHADOWS, TRIGGERED_IGNORE_SPELL_AND_CATEGORY_CD);
+                    _events.Repeat(24s, 28s);
+                    break;
+                case EVENT_BASTILLAX_CRUSHING_SHADOWS:
+                    DoCastSelf(SPELL_BASTILLAX_CRUSHING_SHADOWS, TRIGGERED_IGNORE_SPELL_AND_CATEGORY_CD);
+                    _events.Repeat(28s, 32s);
+                    break;
+                default:
+                    break;
+            }
+
+            if (me->HasUnitState(UNIT_STATE_CASTING))
+                return;
+        }
+    }
+
+private:
+    EventMap _events;
+};
+
+// 200002 - Blur of Shadows: an attack it dodges is answered with Shadow Blast at the attacker (its proc names no spell)
+class spell_bastillax_blur_of_shadows : public AuraScript
+{
+    bool Validate(SpellInfo const* /*spellInfo*/) override
+    {
+        return ValidateSpellInfo({ SPELL_BASTILLAX_SHADOW_BLAST_MISSILE });
+    }
+
+    void HandleProc(AuraEffect const* /*aurEff*/, ProcEventInfo& eventInfo)
+    {
+        PreventDefaultAction();
+        if (Unit* attacker = eventInfo.GetActor())
+            GetTarget()->CastSpell(attacker->GetPosition(), SPELL_BASTILLAX_SHADOW_BLAST_MISSILE, true);
+    }
+
+    void Register() override
+    {
+        OnEffectProc += AuraEffectProcFn(spell_bastillax_blur_of_shadows::HandleProc, EFFECT_2, SPELL_AURA_PROC_TRIGGER_SPELL);
+    }
+};
+
+// Outside the Vault's exit (Between Us and Freedom): coming out with Bastillax dead, the chosen follower cheers and
+// Khadgar arrives (the optional "Khadgar arrived"; the credit also shows his spawn)
+struct at_between_us_and_freedom_vault_exit : AreaTriggerAI
+{
+    using AreaTriggerAI::AreaTriggerAI;
+
+    void OnUnitEnter(Unit* unit) override
+    {
+        Player* player = unit->ToPlayer();
+        if (!player)
+            return;
+
+        uint32 questId = GetBetweenUsAndFreedomQuest(player);
+        if (!questId || !IsBetweenUsAndFreedomObjectiveComplete(player, questId, NPC_BASTILLAX_POWER_KILLCREDIT)
+            || IsBetweenUsAndFreedomObjectiveComplete(player, questId, NPC_KHADGAR_ARRIVED_CREDIT))
+            return;
+
+        player->KilledMonsterCredit(NPC_KHADGAR_ARRIVED_CREDIT);
+
+        uint32 followerEntry = player->GetQuestStatus(QUEST_A_NEW_DIRECTION_CHOSE_ALTRUIS) == QUEST_STATUS_REWARDED
+            ? NPC_ALTRUIS_THE_SUFFERER_POOL_OF_JUDGMENT : NPC_KAYN_SUNFURY_POOL_OF_JUDGMENT;
+        if (Creature* follower = player->FindNearestCreature(followerEntry, 50.0f))
+            follower->AI()->Talk(SAY_FOLLOWER_FREEDOM_IS_OURS, player);
+
+        // On the player's own event queue, so the talk follows them and stops if they log out
+        player->m_Events.AddEventAtOffset([player] { KhadgarTalk(player, SAY_KHADGAR_LEADER_OF_THE_KIRIN_TOR); }, KhadgarLeaderOfTheKirinTorDelay);
+        player->m_Events.AddEventAtOffset([player] { KhadgarTalk(player, SAY_KHADGAR_AZEROTH_NEEDS_YOUR_HELP); }, KhadgarAzerothNeedsYourHelpDelay);
+    }
+
+private:
+    static void KhadgarTalk(Player* player, uint8 textGroup)
+    {
+        if (Creature* khadgar = player->FindNearestCreature(NPC_ARCHMAGE_KHADGAR_VAULT_EXIT, 50.0f))
+            khadgar->AI()->Talk(textGroup, player);
+    }
+};
+
 void AddSC_zone_vault_of_the_wardens()
 {
     // Creature
@@ -1121,9 +1755,13 @@ void AddSC_zone_vault_of_the_wardens()
     RegisterCreatureAI(npc_frozen_in_time_ashgolm);
     RegisterCreatureAI(npc_frozen_in_time_ashgolm_frozen);
     RegisterCreatureAI(npc_beam_me_up_glazer);
+    RegisterCreatureAI(npc_forged_in_fire_immolanth);
+    RegisterCreatureAI(npc_between_us_and_freedom_bastillax);
 
     // GameObject
     RegisterGameObjectAI(go_rise_of_the_illidari_warden_cell);
+    RegisterGameObjectAI(go_all_the_way_up_elevator);
+    RegisterGameObjectAI(go_a_new_direction_pool_of_judgment);
 
     // Quest
     new quest_fel_infusion();
@@ -1131,6 +1769,10 @@ void AddSC_zone_vault_of_the_wardens()
     new quest_stop_guldan();
     new quest_grand_theft_felbat();
     new quest_frozen_in_time();
+    new quest_a_new_direction();
+    new player_a_new_direction();
+    new playerchoice_a_new_direction();
+    new quest_between_us_and_freedom();
 
     // Player
     new player_fel_infusion();
@@ -1139,9 +1781,13 @@ void AddSC_zone_vault_of_the_wardens()
     // Spell
     RegisterSpellScript(spell_vault_of_the_wardens_destroying_legion_portal);
     RegisterSpellScript(spell_frozen_in_time_activate_countermeasure);
+    RegisterSpellScript(spell_bastillax_blur_of_shadows);
 
     // AreaTrigger
     RegisterAreaTriggerAI(at_frozen_in_time_lava);
+    RegisterAreaTriggerAI(at_all_the_way_up_hall_of_judgment);
+    RegisterAreaTriggerAI(at_forged_in_fire_burning_fel);
+    RegisterAreaTriggerAI(at_between_us_and_freedom_vault_exit);
 
     // Scene
     new scene_stop_guldan();
