@@ -16,6 +16,7 @@
  */
 
 #include "Player.h"
+#include "PlayerTaskQuests.h"
 #include "AreaTrigger.h"
 #include "AccountMgr.h"
 #include "AchievementMgr.h"
@@ -346,6 +347,7 @@ Player::Player(WorldSession* session) : Unit(true), m_sceneMgr(this)
     _advancedCombatLoggingEnabled = false;
 
     _restMgr = std::make_unique<RestMgr>(this);
+    _taskQuests = std::make_unique<PlayerTaskQuests>(*this);
 
     _usePvpItemLevels = false;
 }
@@ -7276,6 +7278,7 @@ void Player::UpdateArea(uint32 newArea)
         _restMgr->RemoveRestFlag(REST_FLAG_IN_FACTION_AREA);
 
     PushQuests();
+    _taskQuests->OnAreaChanged(oldArea, newArea);
 
     UpdateMountCapability();
 
@@ -14207,6 +14210,12 @@ void Player::AddQuest(Quest const* quest, Object* questGiver)
     if (quest->IsTask() ? log_slot == QUEST_SLOT_NONE : log_slot >= MAX_QUEST_LOG_SIZE) // Player does not have any free slot in the quest log
         return;
 
+    AddQuestInternal(quest, questGiver, log_slot, false);
+}
+
+// keepStatus: a held task quest coming back into a slot; its status, timer and progress stay as they are
+void Player::AddQuestInternal(Quest const* quest, Object* questGiver, uint16 log_slot, bool keepStatus)
+{
     uint32 quest_id = quest->GetQuestId();
 
     // if not exist then created with set uState == NEW and rewarded=false
@@ -14217,8 +14226,11 @@ void Player::AddQuest(Quest const* quest, Object* questGiver)
     // check for repeatable quests status reset
     SetQuestSlot(log_slot, quest_id);
     questStatusData.Slot = log_slot;
-    questStatusData.Status = QUEST_STATUS_INCOMPLETE;
-    questStatusData.Explored = false;
+    if (!keepStatus)
+    {
+        questStatusData.Status = QUEST_STATUS_INCOMPLETE;
+        questStatusData.Explored = false;
+    }
 
     for (QuestObjective const& obj : quest->GetObjectives())
     {
@@ -14231,18 +14243,31 @@ void Player::AddQuest(Quest const* quest, Object* questGiver)
                     GetReputationMgr().SetVisible(factionEntry);
                 break;
             case QUEST_OBJECTIVE_CRITERIA_TREE:
-                m_questObjectiveCriteriaMgr->ResetCriteriaTree(&obj);
+                if (!keepStatus)
+                    m_questObjectiveCriteriaMgr->ResetCriteriaTree(&obj);
                 break;
             default:
                 break;
         }
     }
 
-    GiveQuestSourceItem(quest);
+    if (keepStatus)
+    {
+        _taskQuests->RestoreToSlot(quest, log_slot);
+        if (questStatusData.Status == QUEST_STATUS_COMPLETE)
+            SetQuestSlotState(log_slot, QUEST_STATE_COMPLETE);
+    }
+    else
+        GiveQuestSourceItem(quest);
     AdjustQuestObjectiveProgress(quest);
 
     time_t endTime = 0;
-    if (uint32 limittime = quest->GetLimitTime())
+    if (keepStatus)
+    {
+        if (questStatusData.Timer)
+            endTime = GameTime::GetGameTime() + questStatusData.Timer / IN_MILLISECONDS;
+    }
+    else if (uint32 limittime = quest->GetLimitTime())
     {
         // shared timed quest
         if (questGiver && questGiver->GetTypeId() == TYPEID_PLAYER)
@@ -14275,7 +14300,8 @@ void Player::AddQuest(Quest const* quest, Object* questGiver)
 
     m_QuestStatusSave[quest_id] = QUEST_DEFAULT_SAVE_TYPE;
 
-    StartCriteria(CriteriaStartEvent::AcceptQuest, quest_id);
+    if (!keepStatus)
+        StartCriteria(CriteriaStartEvent::AcceptQuest, quest_id);
 
     SendQuestUpdate(quest_id);
     SendQuestSpawnTrackingUpdates(quest_id);
@@ -14284,7 +14310,7 @@ void Player::AddQuest(Quest const* quest, Object* questGiver)
     if (quest->HasFlag(QUEST_FLAGS_UPDATE_PHASESHIFT))
         updateVisibility = PhasingHandler::OnConditionChange(this, false);
 
-    if (sWorld->getBoolConfig(CONFIG_QUEST_ENABLE_QUEST_TRACKER)) // check if Quest Tracker is enabled
+    if (!keepStatus && sWorld->getBoolConfig(CONFIG_QUEST_ENABLE_QUEST_TRACKER)) // check if Quest Tracker is enabled
     {
         // prepare Quest Tracker datas
         CharacterDatabasePreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_INS_QUEST_TRACK);
@@ -15391,6 +15417,7 @@ void Player::RemoveActiveQuest(uint32 questId, bool update /*= true*/)
         m_QuestStatus.erase(itr);
         m_QuestStatusSave[questId] = QUEST_DELETE_SAVE_TYPE;
     }
+    _taskQuests->Forget(questId);
 
     Quest const* quest = sObjectMgr->GetQuestTemplate(questId);
     bool updateVisibility = false;
@@ -15792,7 +15819,7 @@ int32 Player::GetQuestSlotObjectiveData(uint16 slot, QuestObjective const& objec
     }
 
     if (slot == QUEST_SLOT_NONE)
-        return 0;
+        return _taskQuests->GetOffLogObjectiveData(objective.QuestID, objective);
 
     if (!objective.IsStoringFlag())
         return GetQuestSlotCounter(slot, objective.StorageIndex);
@@ -16426,7 +16453,15 @@ void Player::SetQuestObjectiveData(QuestObjective const& objective, int32 data)
     }
 
     if (status.Slot == QUEST_SLOT_NONE)
+    {
+        Quest const* quest = sObjectMgr->GetQuestTemplate(objective.QuestID);
+        if (quest && quest->IsTask() && _taskQuests->GetOffLogObjectiveData(objective.QuestID, objective) != data)
+        {
+            _taskQuests->SetOffLogObjectiveData(objective.QuestID, objective, data);
+            m_QuestStatusSave[objective.QuestID] = QUEST_DEFAULT_SAVE_TYPE;
+        }
         return;
+    }
 
     // No change
     int32 oldData = GetQuestSlotObjectiveData(status.Slot, objective);
