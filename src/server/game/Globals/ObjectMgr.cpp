@@ -1319,8 +1319,10 @@ void ObjectMgr::LoadGameObjectAddons()
 {
     uint32 oldMSTime = getMSTime();
 
-    //                                               0     1                 2                 3                 4                 5                 6                  7              8
-    QueryResult result = WorldDatabase.Query("SELECT guid, parent_rotation0, parent_rotation1, parent_rotation2, parent_rotation3, invisibilityType, invisibilityValue, WorldEffectID, AIAnimKitID FROM gameobject_addon");
+    _mapWideGameObjectSpawnStore.clear();
+
+    //                                               0     1                 2                 3                 4                 5                 6                  7              8            9
+    QueryResult result = WorldDatabase.Query("SELECT guid, parent_rotation0, parent_rotation1, parent_rotation2, parent_rotation3, invisibilityType, invisibilityValue, WorldEffectID, AIAnimKitID, Flags FROM gameobject_addon");
 
     if (!result)
     {
@@ -1348,6 +1350,7 @@ void ObjectMgr::LoadGameObjectAddons()
         gameObjectAddon.InvisibilityValue = fields[6].GetUInt32();
         gameObjectAddon.WorldEffectID = fields[7].GetUInt32();
         gameObjectAddon.AIAnimKitID   = fields[8].GetUInt32();
+        gameObjectAddon.Flags         = fields[9].GetUInt32();
 
         if (gameObjectAddon.invisibilityType >= TOTAL_INVISIBILITY_TYPES)
         {
@@ -1380,11 +1383,19 @@ void ObjectMgr::LoadGameObjectAddons()
             gameObjectAddon.AIAnimKitID = 0;
         }
 
+        if (gameObjectAddon.Flags & GAMEOBJECT_ADDON_FLAG_MAP_WIDE)
+            _mapWideGameObjectSpawnStore[goData->mapId].push_back(guid);
+
         ++count;
     }
     while (result->NextRow());
 
     TC_LOG_INFO("server.loading", ">> Loaded {} gameobject addons in {} ms", count, GetMSTimeDiffToNow(oldMSTime));
+}
+
+std::vector<ObjectGuid::LowType> const* ObjectMgr::GetMapWideGameObjectSpawns(uint32 mapId) const
+{
+    return Trinity::Containers::MapGetValuePtr(_mapWideGameObjectSpawnStore, mapId);
 }
 
 GameObjectAddon const* ObjectMgr::GetGameObjectAddon(ObjectGuid::LowType lowguid) const

@@ -1026,6 +1026,7 @@ class TC_GAME_API ObjectMgr
         CreatureAddon const* GetCreatureAddon(ObjectGuid::LowType lowguid) const;
         GameObjectAddon const* GetGameObjectAddon(ObjectGuid::LowType lowguid) const;
         GameObjectTemplateAddon const* GetGameObjectTemplateAddon(uint32 entry) const;
+        std::vector<ObjectGuid::LowType> const* GetMapWideGameObjectSpawns(uint32 mapId) const;
         GameObjectOverride const* GetGameObjectOverride(ObjectGuid::LowType spawnId) const;
         CreatureAddon const* GetCreatureTemplateAddon(uint32 entry) const;
         std::vector<float> const* GetCreatureTemplateSparringValues(uint32 entry) const;
@@ -1820,6 +1821,7 @@ class TC_GAME_API ObjectMgr
         CreatureTemplateSparringContainer _creatureTemplateSparringStore;
         std::unordered_map<ObjectGuid::LowType, CreatureMovementData> _creatureMovementOverrides;
         GameObjectAddonContainer _gameObjectAddonStore;
+        std::unordered_map<uint32 /*mapId*/, std::vector<ObjectGuid::LowType>> _mapWideGameObjectSpawnStore;
         GameObjectQuestItemMap _gameObjectQuestItemStore;
         CreatureQuestItemMap _creatureQuestItemStore;
         CreatureStaticFlagsOverrideMap _creatureStaticFlagsOverrideStore;

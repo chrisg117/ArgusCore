@@ -23402,7 +23402,8 @@ uint8 Player::GetStartLevel(uint8 race, uint8 playerClass, Optional<int32> chara
 
 bool Player::HaveAtClient(Object const* u) const
 {
-    return u == this || m_clientGUIDs.find(u->GetGUID()) != m_clientGUIDs.end();
+    return u == this || m_clientGUIDs.find(u->GetGUID()) != m_clientGUIDs.end()
+        || m_visibleMapWideObjects.find(u->GetGUID()) != m_visibleMapWideObjects.end();
 }
 
 bool Player::IsNeverVisibleFor(WorldObject const* seer, bool allowServersideObjects) const
@@ -23578,8 +23579,18 @@ void Player::UpdateVisibilityOf(Trinity::IteratorPair<WorldObject**> targets)
         SendInitialVisiblePackets(visibleUnit);
 }
 
+// Map-wide gameobjects are sent and removed by Map (SendUpdateMapWideVisibility), never by range
+static bool IsMapWideGameObject(WorldObject const* target)
+{
+    GameObject const* gameObject = target->ToGameObject();
+    return gameObject && gameObject->IsMapWide();
+}
+
 void Player::UpdateVisibilityOf(WorldObject* target)
 {
+    if (IsMapWideGameObject(target))
+        return;
+
     if (HaveAtClient(target))
     {
         if (!CanSeeOrDetect(target, { .DistanceCheck = true }))
@@ -23706,6 +23717,9 @@ void Player::SendInitialVisiblePackets(WorldObject* target) const
 template<class T>
 void Player::UpdateVisibilityOf(T* target, UpdateData& data, std::set<WorldObject*>& visibleNow)
 {
+    if (IsMapWideGameObject(target))
+        return;
+
     if (HaveAtClient(target))
     {
         if (!CanSeeOrDetect(target, { .DistanceCheck = true }))

@@ -2593,6 +2593,7 @@ class TC_GAME_API Player final : public Unit, public GridObject<Player>
         // currently visible objects at player client
         GuidUnorderedSet m_clientGUIDs;
         GuidUnorderedSet m_visibleTransports;
+        GuidUnorderedSet m_visibleMapWideObjects;   // map-wide gameobjects at client, kept by Map, never by the grid visibility passes
 
         bool HaveAtClient(Object const* u) const;
 

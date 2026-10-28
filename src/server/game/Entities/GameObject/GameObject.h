@@ -191,6 +191,8 @@ class TC_GAME_API GameObject : public WorldObject, public GridObject<GameObject>
 
         bool IsTransport() const;
         bool IsDestructibleBuilding() const;
+        // gameobject_addon flag GAMEOBJECT_ADDON_FLAG_MAP_WIDE: visibility handled by Map, not by the grid passes
+        bool IsMapWide() const { return _isMapWide; }
 
         ObjectGuid::LowType GetSpawnId() const { return m_spawnId; }
 
@@ -333,6 +335,7 @@ class TC_GAME_API GameObject : public WorldObject, public GridObject<GameObject>
 
         bool IsNeverVisibleFor(WorldObject const* seer, bool allowServersideObjects = false) const override;
         bool IsAlwaysVisibleFor(WorldObject const* seer) const override;
+        void BuildUpdate(UpdateDataMapType& data_map) override;
         bool IsInvisibleDueToDespawn(WorldObject const* seer) const override;
 
         uint8 GetLevelForTarget(WorldObject const* target) const override;
@@ -468,6 +471,7 @@ class TC_GAME_API GameObject : public WorldObject, public GridObject<GameObject>
         GameObjectValue m_goValue; // TODO: replace with m_goTypeImpl
         std::array<std::string const*, 3> m_stringIds;
         Optional<std::string> m_scriptStringId;
+        bool _isMapWide = false;
 
         int64 m_packedRotation;
         QuaternionData m_localRotation;

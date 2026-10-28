@@ -982,6 +982,7 @@ void Map::RemovePlayerFromMap(Player* player, bool remove)
     bool const inWorld = player->IsInWorld();
     player->RemoveFromWorld();
     SendRemoveTransports(player);
+    SendRemoveMapWideObjects(player);
 
     if (!inWorld) // if was in world, RemoveFromWorld() called DestroyForNearbyPlayers()
         player->UpdateObjectVisibilityOnDestroy();
@@ -1952,6 +1953,109 @@ void Map::SendRemoveTransports(Player* player)
 
     WorldPacket packet;
     transData.BuildPacket(&packet);
+    player->SendDirectMessage(&packet);
+}
+
+void Map::LoadMapWideGameObjects()
+{
+    std::vector<ObjectGuid::LowType> const* spawnIds = sObjectMgr->GetMapWideGameObjectSpawns(GetId());
+    if (!spawnIds)
+        return;
+
+    // the grid load spawns them; being active they keep that grid loaded
+    for (ObjectGuid::LowType spawnId : *spawnIds)
+        if (GameObjectData const* data = sObjectMgr->GetGameObjectData(spawnId))
+            LoadGrid(data->spawnPoint.GetPositionX(), data->spawnPoint.GetPositionY());
+}
+
+void Map::AddMapWideGameObject(GameObject* gameObject)
+{
+    if (!_mapWideGameObjects.insert(gameObject).second)
+        return;
+
+    for (MapReference const& playerReference : GetPlayers())
+    {
+        Player* player = playerReference.GetSource();
+        if (!player->IsInWorld() || !player->CanSeeOrDetect(gameObject, { .DistanceCheck = false }))
+            continue;
+
+        if (!player->m_visibleMapWideObjects.insert(gameObject->GetGUID()).second)
+            continue;
+
+        UpdateData data(GetId());
+        gameObject->BuildCreateUpdateBlockForPlayer(&data, player);
+        WorldPacket packet;
+        data.BuildPacket(&packet);
+        player->SendDirectMessage(&packet);
+    }
+}
+
+void Map::RemoveMapWideGameObject(GameObject* gameObject)
+{
+    if (!_mapWideGameObjects.erase(gameObject))
+        return;
+
+    UpdateData data(GetId());
+    if (gameObject->IsDestroyedObject())
+        gameObject->BuildDestroyUpdateBlock(&data);
+    else
+        gameObject->BuildOutOfRangeUpdateBlock(&data);
+
+    WorldPacket packet;
+    data.BuildPacket(&packet);
+    for (MapReference const& playerReference : GetPlayers())
+        if (playerReference.GetSource()->m_visibleMapWideObjects.erase(gameObject->GetGUID()))
+            playerReference.GetSource()->SendDirectMessage(&packet);
+}
+
+void Map::SendUpdateMapWideVisibility(Player* player)
+{
+    UpdateData data(GetId());
+    for (GameObject* gameObject : _mapWideGameObjects)
+    {
+        if (!gameObject->IsInWorld())
+            continue;
+
+        // no distance check, but phasing and visibility conditions (conditions source 32) still apply
+        if (player->CanSeeOrDetect(gameObject, { .DistanceCheck = false }))
+        {
+            if (player->m_visibleMapWideObjects.insert(gameObject->GetGUID()).second)
+                gameObject->BuildCreateUpdateBlockForPlayer(&data, player);
+        }
+        else if (player->m_visibleMapWideObjects.erase(gameObject->GetGUID()))
+            gameObject->BuildOutOfRangeUpdateBlock(&data);
+    }
+
+    if (!data.HasData())
+        return;
+
+    WorldPacket packet;
+    data.BuildPacket(&packet);
+    player->SendDirectMessage(&packet);
+}
+
+void Map::SendRemoveMapWideObjects(Player* player)
+{
+    // A layer migration keeps the client's objects (see AddPlayerToMap): forget them here without telling the client,
+    // so the object is not taken from under the player, and the new layer's forced visibility pass sends them again
+    if (player->GetTeleportOptions() & TELE_TO_LAYER_MIGRATION)
+    {
+        player->m_visibleMapWideObjects.clear();
+        return;
+    }
+
+    UpdateData data(player->GetMapId());
+    for (GameObject* gameObject : _mapWideGameObjects)
+        if (player->m_visibleMapWideObjects.erase(gameObject->GetGUID()))
+            gameObject->BuildOutOfRangeUpdateBlock(&data);
+
+    player->m_visibleMapWideObjects.clear();
+
+    if (!data.HasData())
+        return;
+
+    WorldPacket packet;
+    data.BuildPacket(&packet);
     player->SendDirectMessage(&packet);
 }
 

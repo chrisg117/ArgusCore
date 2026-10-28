@@ -19,6 +19,7 @@
 #include "CellImpl.h"
 #include "CreatureAI.h"
 #include "GridNotifiersImpl.h"
+#include "Map.h"
 #include "ObjectAccessor.h"
 #include "Transport.h"
 #include "UpdateData.h"
@@ -34,6 +35,10 @@ VisibleNotifier::~VisibleNotifier() = default;
 
 void VisibleNotifier::SendToSelf()
 {
+    // map-wide gameobjects are never in range of the cell visit; re-check them on every pass, forced (map entry, phase
+    // change) or deferred (quest state and objective changes only flag the player for the next relocation pass)
+    i_player.GetMap()->SendUpdateMapWideVisibility(&i_player);
+
     // at this moment i_clientGUIDs have guids that not iterate at grid level checks
     // but exist one case when this possible and object not out of range: transports
     if (Transport* transport = dynamic_cast<Transport*>(i_player.GetTransport()))
