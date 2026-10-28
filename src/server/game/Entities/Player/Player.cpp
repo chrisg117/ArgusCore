@@ -23766,8 +23766,9 @@ void Player::UpdateObjectVisibility(bool forced)
 void Player::UpdateVisibilityForPlayer()
 {
     // updates visibility of all objects around point of view for current player
+    // visit as far as the deferred relocation pass does, or large-AOI objects beyond the map range get evicted on every forced pass
     Trinity::VisibleNotifier notifier(*this);
-    Cell::VisitAllObjects(m_seer, notifier, GetSightRange());
+    Cell::VisitAllObjects(m_seer, notifier, MAX_VISIBILITY_DISTANCE);
     notifier.SendToSelf();   // send gathered data
 }
 
