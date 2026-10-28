@@ -951,6 +951,9 @@ void GameObject::AddToWorld()
 
         EnableCollision(toggledState);
         WorldObject::AddToWorld();
+
+        if (IsMapWide())
+            GetMap()->AddMapWideGameObject(this);
     }
 }
 
@@ -970,6 +973,10 @@ void GameObject::RemoveFromWorld()
         // If linked trap exists, despawn it
         if (GameObject* linkedTrap = GetLinkedTrap())
             linkedTrap->DespawnOrUnsummon();
+
+        // before WorldObject::RemoveFromWorld, so the destroy reaches the whole map, not only players in range
+        if (IsMapWide())
+            GetMap()->RemoveMapWideGameObject(this);
 
         WorldObject::RemoveFromWorld();
 
@@ -1174,6 +1181,13 @@ bool GameObject::Create(uint32 entry, Map* map, Position const& pos, QuaternionD
 
         if (gameObjectAddon->AIAnimKitID)
             _animKitId = gameObjectAddon->AIAnimKitID;
+
+        if (gameObjectAddon->Flags & GAMEOBJECT_ADDON_FLAG_MAP_WIDE)
+        {
+            // stays in the world with nobody near (keeps its grid loaded), as transports do
+            _isMapWide = true;
+            setActive(true);
+        }
     }
 
     if (uint32 vignetteId = GetGOInfo()->GetSpawnVignette())
@@ -2146,6 +2160,21 @@ bool GameObject::IsNeverVisibleFor(WorldObject const* seer, bool allowServerside
         return m_goTypeImpl->IsNeverVisibleFor(seer, allowServersideObjects);
 
     return false;
+}
+
+void GameObject::BuildUpdate(UpdateDataMapType& data_map)
+{
+    if (!IsMapWide())
+    {
+        WorldObject::BuildUpdate(data_map);
+        return;
+    }
+
+    for (MapReference const& playerReference : GetMap()->GetPlayers())
+        if (playerReference.GetSource()->HaveAtClient(this))
+            BuildFieldsUpdate(playerReference.GetSource(), data_map);
+
+    ClearUpdateMask(false);
 }
 
 bool GameObject::IsAlwaysVisibleFor(WorldObject const* seer) const

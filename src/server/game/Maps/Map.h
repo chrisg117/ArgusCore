@@ -548,6 +548,14 @@ class TC_GAME_API Map : public GridRefManager<NGridType>
         void SendInitTransports(Player* player);
         void SendRemoveTransports(Player* player);
         void SendUpdateTransportVisibility(Player* player);
+
+        // Map-wide gameobjects (gameobject_addon flag GAMEOBJECT_ADDON_FLAG_MAP_WIDE): sent to every player on the map
+        // who can see them regardless of distance, tracked in Player::m_visibleMapWideObjects instead of m_clientGUIDs
+        void LoadMapWideGameObjects();
+        void AddMapWideGameObject(GameObject* gameObject);
+        void RemoveMapWideGameObject(GameObject* gameObject);
+        void SendUpdateMapWideVisibility(Player* player);
+        void SendRemoveMapWideObjects(Player* player);
         void SendZoneDynamicInfo(uint32 zoneId, Player* player) const;
         void SendZoneWeather(uint32 zoneId, Player* player) const;
         void SendZoneWeather(ZoneDynamicInfo const& zoneDynamicInfo, Player* player) const;
@@ -673,6 +681,8 @@ class TC_GAME_API Map : public GridRefManager<NGridType>
         using TransportsContainer = std::set<Transport*>;
         TransportsContainer _transports;
         TransportsContainer::iterator _transportsUpdateIter;
+
+        std::unordered_set<GameObject*> _mapWideGameObjects;
 
     private:
         Player* _GetScriptPlayerSourceOrTarget(Object* source, Object* target, ScriptInfo const* scriptInfo) const;

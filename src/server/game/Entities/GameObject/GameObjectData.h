@@ -1159,6 +1159,11 @@ struct GameObjectLocale
     std::vector<std::string> Unk1;
 };
 
+enum GameObjectAddonFlags : uint32
+{
+    GAMEOBJECT_ADDON_FLAG_MAP_WIDE  = 0x1,  // sent to every player on the map who can see it, like a transport, and never evicted by range
+};
+
 // `gameobject_addon` table
 struct GameObjectAddon
 {
@@ -1167,6 +1172,7 @@ struct GameObjectAddon
     uint32 InvisibilityValue;
     uint32 WorldEffectID;
     uint32 AIAnimKitID;
+    uint32 Flags;
 };
 
 // `gameobject` table
