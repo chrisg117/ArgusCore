@@ -199,10 +199,50 @@ static constexpr float ThroneRoomFloorMinZ = 150.0f;
 static constexpr float FelbladeAssassinAggroRange = 15.0f;
 static constexpr Milliseconds FelbladeAssassinLookInterval = 1s;
 
-static bool HasWarnedAnduin(Player const* player)
+// Demons Among Us, the same demons for everyone but the demon hunter: Jace comes to the throne room after The Fallen
+// Lion, and reveals them at the player's word
+enum DemonsAmongUsData
 {
-    return player->GetQuestStatus(QUEST_DEMONS_AMONG_THEM) == QUEST_STATUS_INCOMPLETE
-        && player->IsQuestObjectiveComplete(QUEST_DEMONS_AMONG_THEM, OBJECTIVE_WARN_ANDUIN_WRYNN);
+    QUEST_DEMONS_AMONG_US                   = 40593,
+
+    OBJECTIVE_LEARN_WHAT_JACE_KNOWS         = 285798,
+
+    NPC_ANDUIN_WRYNN_USUAL                  = 107574,
+
+    // The Fallen Lion's reward: the aura lasts as long as the Jace it summons
+    SPELL_SUMMON_JACE_DARKWEAVER            = 200891,
+
+    SAY_JACE_URGENT_NEWS                    = 0,
+    SAY_JACE_SAY_THE_WORD                   = 1,
+    SAY_JACE_THE_ENEMY_IS_AMONG_US          = 2,
+    SAY_ANDUIN_HEAR_THE_DEMON_HUNTER        = 0,
+
+    EVENT_JACE_URGENT_NEWS                  = 1,
+    EVENT_ANDUIN_HEARS_THE_DEMON_HUNTER,
+    EVENT_JACE_ARRIVAL_ENDS
+};
+
+static bool HasObjectiveDoneInLog(Player const* player, uint32 questId, uint32 objectiveId)
+{
+    return player->GetQuestStatus(questId) == QUEST_STATUS_INCOMPLETE && player->IsQuestObjectiveComplete(questId, objectiveId);
+}
+
+static bool HasRevealedFelbladeAssassins(Player const* player)
+{
+    return HasObjectiveDoneInLog(player, QUEST_DEMONS_AMONG_THEM, OBJECTIVE_WARN_ANDUIN_WRYNN)
+        || HasObjectiveDoneInLog(player, QUEST_DEMONS_AMONG_US, OBJECTIVE_LEARN_WHAT_JACE_KNOWS);
+}
+
+// The credit shows the player the Felblade Assassins spread through the Keep; the nearest one turns on them
+static void RevealFelbladeAssassins(Creature* revealer, Player* player)
+{
+    player->CastSpell(player, SPELL_SPEAK_WITH_JACE_CREDIT, true);
+
+    if (Creature* assassin = revealer->FindNearestCreature(NPC_FELBLADE_ASSASSIN, 40.0f))
+    {
+        assassin->AI()->Talk(SAY_FELBLADE_ASSASSIN_ATTACK, player);
+        assassin->AI()->AttackStart(player);
+    }
 }
 
 // The Fallen Lion, after the Broken Shore: Genn sends the player off from the Skybreaker; in the throne room the court
@@ -321,13 +361,7 @@ struct npc_demons_among_them_anduin : public ScriptedAI
         if (action != GossipActionDemonsAmongYourRanks || player->GetQuestStatus(QUEST_DEMONS_AMONG_THEM) != QUEST_STATUS_INCOMPLETE)
             return true;
 
-        player->CastSpell(player, SPELL_SPEAK_WITH_JACE_CREDIT, true);
-
-        if (Creature* assassin = me->FindNearestCreature(NPC_FELBLADE_ASSASSIN, 40.0f))
-        {
-            assassin->AI()->Talk(SAY_FELBLADE_ASSASSIN_ATTACK, player);
-            assassin->AI()->AttackStart(player);
-        }
+        RevealFelbladeAssassins(me, player);
         return true;
     }
 };
@@ -357,7 +391,7 @@ struct npc_demons_among_them_felblade_assassin : public ScriptedAI
         me->GetPlayerListInGrid(players, FelbladeAssassinAggroRange);
         for (Player* player : players)
         {
-            if (HasWarnedAnduin(player) && me->IsWithinLOSInMap(player) && me->IsValidAttackTarget(player))
+            if (HasRevealedFelbladeAssassins(player) && me->IsWithinLOSInMap(player) && me->IsValidAttackTarget(player))
             {
                 AttackStart(player);
                 return;
@@ -367,6 +401,78 @@ struct npc_demons_among_them_felblade_assassin : public ScriptedAI
 
 private:
     Milliseconds _lookTimer;
+};
+
+// 101858, 100675 - Jace Darkweaver (Demons Among Us): the first is the one The Fallen Lion's reward summons, who tells
+// Anduin why he came; the second stands in his place when he is gone, for the player who has not yet taken the quest or
+// given the word. Either offers the quest, and the player's word reveals the enemy.
+struct npc_demons_among_us_jace : public ScriptedAI
+{
+    npc_demons_among_us_jace(Creature* creature) : ScriptedAI(creature) { }
+
+    void IsSummonedBy(WorldObject* summoner) override
+    {
+        Player* player = summoner->ToPlayer();
+        if (!player)
+            return;
+
+        _summonerGuid = player->GetGUID();
+        _events.ScheduleEvent(EVENT_JACE_URGENT_NEWS, 1s);
+        _events.ScheduleEvent(EVENT_ANDUIN_HEARS_THE_DEMON_HUNTER, 4s);
+        _events.ScheduleEvent(EVENT_JACE_ARRIVAL_ENDS, 17s);
+    }
+
+    void OnQuestAccept(Player* player, Quest const* quest) override
+    {
+        if (quest->GetQuestId() == QUEST_DEMONS_AMONG_US)
+            Talk(SAY_JACE_SAY_THE_WORD, player);
+    }
+
+    bool OnGossipSelect(Player* player, uint32 /*menuId*/, uint32 /*gossipListId*/) override
+    {
+        CloseGossipMenuFor(player);
+        if (player->GetQuestStatus(QUEST_DEMONS_AMONG_US) != QUEST_STATUS_INCOMPLETE
+            || player->IsQuestObjectiveComplete(QUEST_DEMONS_AMONG_US, OBJECTIVE_LEARN_WHAT_JACE_KNOWS))
+            return true;
+
+        Talk(SAY_JACE_THE_ENEMY_IS_AMONG_US, player);
+        RevealFelbladeAssassins(me, player);
+        return true;
+    }
+
+    void UpdateAI(uint32 diff) override
+    {
+        _events.Update(diff);
+
+        while (uint32 eventId = _events.ExecuteEvent())
+        {
+            switch (eventId)
+            {
+                case EVENT_JACE_URGENT_NEWS:
+                    Talk(SAY_JACE_URGENT_NEWS, ObjectAccessor::GetPlayer(*me, _summonerGuid));
+                    break;
+                case EVENT_ANDUIN_HEARS_THE_DEMON_HUNTER:
+                    if (Creature* anduin = me->FindNearestCreature(NPC_ANDUIN_WRYNN_USUAL, 60.0f))
+                        anduin->AI()->Talk(SAY_ANDUIN_HEAR_THE_DEMON_HUNTER, ObjectAccessor::GetPlayer(*me, _summonerGuid));
+                    break;
+                case EVENT_JACE_ARRIVAL_ENDS:
+                    // The standing Jace waits for the aura to end, and the player would not see him until they next moved
+                    if (Player* player = ObjectAccessor::GetPlayer(*me, _summonerGuid))
+                    {
+                        player->RemoveAurasDueToSpell(SPELL_SUMMON_JACE_DARKWEAVER);
+                        player->UpdateObjectVisibility(false);
+                    }
+                    me->DespawnOrUnsummon();
+                    break;
+                default:
+                    break;
+            }
+        }
+    }
+
+private:
+    EventMap _events;
+    ObjectGuid _summonerGuid;
 };
 
 // To Be Prepared, in Stormwind Harbor before the Broken Shore
@@ -791,6 +897,7 @@ void AddSC_stormwind_city()
     // Creatures
     RegisterCreatureAI(npc_demons_among_them_anduin);
     RegisterCreatureAI(npc_demons_among_them_felblade_assassin);
+    RegisterCreatureAI(npc_demons_among_us_jace);
     RegisterCreatureAI(npc_to_be_prepared_duelist);
     RegisterCreatureAI(npc_the_fallen_lion_gilnean_gryphon);
 
