@@ -18,8 +18,10 @@
 #include "AreaTrigger.h"
 #include "AreaTriggerAI.h"
 #include "Conversation.h"
+#include "ConversationAI.h"
 #include "CreatureAIImpl.h"
 #include "MotionMaster.h"
+#include "MoveSplineInit.h"
 #include "ObjectAccessor.h"
 #include "PhasingHandler.h"
 #include "Player.h"
@@ -29,6 +31,7 @@
 #include "Spell.h"
 #include "SpellScript.h"
 #include "TemporarySummon.h"
+#include "Vehicle.h"
 
 namespace Scripts::EasternKingdoms::StormwindCity
 {
@@ -202,16 +205,78 @@ static bool HasWarnedAnduin(Player const* player)
         && player->IsQuestObjectiveComplete(QUEST_DEMONS_AMONG_THEM, OBJECTIVE_WARN_ANDUIN_WRYNN);
 }
 
-// The Call of War: entering the throne room counts (the objective credits Jace Darkweaver)
+// The Fallen Lion, after the Broken Shore: Genn sends the player off from the Skybreaker; in the throne room the court
+// mourns Varian, then holds council, and listening to its end delivers Varian's letter
+enum TheFallenLionData
+{
+    QUEST_THE_FALLEN_LION                   = 40517,
+
+    OBJECTIVE_LISTEN_TO_KING_ANDUIN         = 280850,
+
+    NPC_HEAR_LEADERS_MOURNING_CREDIT        = 100454,
+
+    ITEM_LETTER_TO_ANDUIN                   = 132251,
+
+    // 120 s; marks a player whose court scene is playing, so entering again does not start it twice
+    SPELL_PLAYER_LISTENING_TO_LEADERS       = 200102,
+    SPELL_LISTEN_TO_KING_ANDUIN_CREDIT      = 198244,
+
+    CONVERSATION_LEADERS_MOURNING           = 926,
+    // Custom ids: no spell names the retail ones
+    CONVERSATION_LEADERS_COUNCIL            = 1519001,
+    CONVERSATION_GENN_SEND_OFF              = 1519002,
+    CONVERSATION_TESS_AND_CROWLEY_RAGE      = 1519003,
+    CONVERSATION_TESS_AND_CROWLEY_THE_KEEP  = 1519004,
+
+    // The optional-looking "Ride a gryphon to Stormwind Keep" has no optional flag, and the letter's objective is
+    // sequenced after it: the ride is part of the quest
+    NPC_GILNEAN_GRYPHON_RIDE_CREDIT         = 100696,
+    NPC_TESS_GREYMANE_FLYING                = 101820,
+    NPC_LORNA_CROWLEY_FLYING                = 101822,
+
+    DISPLAY_GILNEAN_ARMORED_GRYPHON         = 34881,
+
+    POINT_GILNEAN_GRYPHON_THE_KEEP          = 1,
+
+    EVENT_GILNEAN_GRYPHON_TAKE_OFF          = 1,
+    EVENT_TESS_AND_CROWLEY_RAGE,
+    EVENT_TESS_AND_CROWLEY_THE_KEEP
+};
+
+// The council begins as Falstad, the last of the mourners, speaks (the retail chat log has both in the same second)
+static constexpr Milliseconds LeadersCouncilDelay = 13s;
+
+static bool IsListeningToKingAnduin(Player const* player)
+{
+    return player->GetQuestStatus(QUEST_THE_FALLEN_LION) == QUEST_STATUS_INCOMPLETE
+        && !player->IsQuestObjectiveComplete(QUEST_THE_FALLEN_LION, OBJECTIVE_LISTEN_TO_KING_ANDUIN);
+}
+
+static void StartFallenLionCourt(Player* player)
+{
+    if (!IsListeningToKingAnduin(player) || player->HasAura(SPELL_PLAYER_LISTENING_TO_LEADERS))
+        return;
+
+    player->CastSpell(player, SPELL_PLAYER_LISTENING_TO_LEADERS, true);
+    Conversation::CreateConversation(CONVERSATION_LEADERS_MOURNING, player, *player, player->GetGUID());
+}
+
+// The Call of War: entering the throne room counts (the objective credits Jace Darkweaver); for The Fallen Lion it starts
+// the court scene
 struct at_the_call_of_war_throne_room : AreaTriggerAI
 {
     using AreaTriggerAI::AreaTriggerAI;
 
     void OnUnitEnter(Unit* unit) override
     {
-        if (Player* player = unit->ToPlayer())
-            if (player->GetPositionZ() >= ThroneRoomFloorMinZ && player->GetQuestStatus(QUEST_THE_CALL_OF_WAR) == QUEST_STATUS_INCOMPLETE)
-                player->KilledMonsterCredit(NPC_JACE_DARKWEAVER_THRONE_ROOM);
+        Player* player = unit->ToPlayer();
+        if (!player || player->GetPositionZ() < ThroneRoomFloorMinZ)
+            return;
+
+        if (player->GetQuestStatus(QUEST_THE_CALL_OF_WAR) == QUEST_STATUS_INCOMPLETE)
+            player->KilledMonsterCredit(NPC_JACE_DARKWEAVER_THRONE_ROOM);
+
+        StartFallenLionCourt(player);
     }
 };
 
@@ -410,6 +475,307 @@ private:
     ObjectGuid _opponent;
     Milliseconds _countdown;
 };
+
+// 40517 - The Fallen Lion: Genn's send-off when the player takes it on the Skybreaker
+class quest_the_fallen_lion : public QuestScript
+{
+public:
+    quest_the_fallen_lion() : QuestScript("quest_the_fallen_lion") { }
+
+    void OnQuestStatusChange(Player* player, Quest const* /*quest*/, QuestStatus oldStatus, QuestStatus newStatus) override
+    {
+        if (oldStatus == QUEST_STATUS_NONE && newStatus == QUEST_STATUS_INCOMPLETE)
+            Conversation::CreateConversation(CONVERSATION_GENN_SEND_OFF, player, *player, player->GetGUID());
+    }
+};
+
+// The ride from the Skyfire to Stormwind Keep: Wowhead's pins of the flying gryphon (101677), 22 yards over what lies
+// under each pin and the two after it (measured), from the deck down to the Keep's gate. Tess and Crowley fly 7 yards
+// to either side and land where Wowhead pins their gryphons at the Keep (101816, 101819).
+static constexpr std::array<Position, 32> GilneanGryphonFlightToTheKeep =
+{{
+    { -8382.7f, 1354.6f, 138.0f },
+    { -8387.3f, 1344.1f, 129.0f },
+    { -8387.3f, 1312.9f, 123.0f },
+    { -8387.3f, 1274.6f, 117.0f },
+    { -8389.7f, 1253.8f, 111.0f },
+    { -8396.6f, 1226.0f, 105.0f },
+    { -8405.9f, 1208.6f, 99.0f },
+    { -8417.5f, 1180.8f, 93.0f },
+    { -8426.7f, 1149.5f, 87.0f },
+    { -8433.7f, 1118.3f, 81.0f },
+    { -8438.3f, 1097.4f, 75.0f },
+    { -8449.9f, 1059.2f, 69.0f },
+    { -8456.8f, 1045.3f, 63.0f },
+    { -8500.9f, 993.2f, 103.1f },
+    { -8528.7f, 954.9f, 121.3f },
+    { -8542.6f, 934.1f, 121.3f },
+    { -8561.1f, 913.2f, 121.3f },
+    { -8593.5f, 868.1f, 118.9f },
+    { -8607.4f, 850.7f, 119.1f },
+    { -8626.0f, 826.4f, 119.1f },
+    { -8649.1f, 760.3f, 119.1f },
+    { -8658.4f, 746.4f, 118.8f },
+    { -8688.5f, 715.2f, 121.9f },
+    { -8697.8f, 652.6f, 121.9f },
+    { -8700.1f, 617.9f, 121.9f },
+    { -8693.1f, 586.6f, 115.4f },
+    { -8670.0f, 569.2f, 115.4f },
+    { -8619.0f, 537.9f, 115.4f },
+    { -8593.5f, 520.6f, 114.6f },
+    { -8570.4f, 496.2f, 114.6f },
+    { -8552.3f, 475.4f, 110.8f },
+    { -8540.2f, 461.5f, 104.8f }
+}};
+static constexpr std::array<Position, 31> TessFlightToTheKeep =
+{{
+    { -8376.3f, 1351.8f, 140.0f },
+    { -8380.4f, 1343.4f, 131.0f },
+    { -8380.3f, 1312.9f, 125.0f },
+    { -8380.4f, 1274.4f, 119.0f },
+    { -8382.8f, 1252.5f, 113.0f },
+    { -8390.0f, 1223.6f, 107.0f },
+    { -8399.5f, 1205.7f, 101.0f },
+    { -8410.9f, 1178.5f, 95.0f },
+    { -8420.0f, 1147.8f, 89.0f },
+    { -8426.8f, 1116.8f, 83.0f },
+    { -8431.6f, 1095.6f, 77.0f },
+    { -8443.3f, 1056.8f, 71.0f },
+    { -8451.3f, 1041.0f, 65.0f },
+    { -8495.4f, 988.8f, 105.1f },
+    { -8522.9f, 950.9f, 123.3f },
+    { -8537.0f, 929.8f, 123.3f },
+    { -8555.6f, 909.0f, 123.3f },
+    { -8587.9f, 863.9f, 120.9f },
+    { -8601.9f, 846.4f, 121.1f },
+    { -8619.6f, 823.4f, 121.1f },
+    { -8642.6f, 757.7f, 121.1f },
+    { -8653.1f, 741.8f, 120.8f },
+    { -8682.1f, 712.5f, 123.9f },
+    { -8690.8f, 651.8f, 123.9f },
+    { -8693.1f, 618.4f, 123.9f },
+    { -8687.2f, 590.3f, 117.4f },
+    { -8666.1f, 575.1f, 117.4f },
+    { -8615.3f, 543.9f, 117.4f },
+    { -8589.0f, 525.9f, 116.6f },
+    { -8565.2f, 501.0f, 116.6f },
+    { -8519.4f, 430.2f, 106.0f }
+}};
+static constexpr std::array<Position, 31> CrowleyFlightToTheKeep =
+{{
+    { -8389.1f, 1357.4f, 140.0f },
+    { -8394.3f, 1344.9f, 131.0f },
+    { -8394.3f, 1312.9f, 125.0f },
+    { -8394.3f, 1274.9f, 119.0f },
+    { -8396.5f, 1255.1f, 113.0f },
+    { -8403.2f, 1228.4f, 107.0f },
+    { -8412.2f, 1211.6f, 101.0f },
+    { -8424.1f, 1183.1f, 95.0f },
+    { -8433.5f, 1151.3f, 89.0f },
+    { -8440.5f, 1119.8f, 83.0f },
+    { -8445.1f, 1099.3f, 77.0f },
+    { -8456.5f, 1061.5f, 71.0f },
+    { -8462.4f, 1049.6f, 65.0f },
+    { -8506.3f, 997.5f, 105.1f },
+    { -8534.4f, 959.0f, 123.3f },
+    { -8548.1f, 938.4f, 123.3f },
+    { -8566.6f, 917.5f, 123.3f },
+    { -8599.2f, 872.2f, 120.9f },
+    { -8613.0f, 855.0f, 121.1f },
+    { -8632.3f, 829.3f, 121.1f },
+    { -8655.6f, 763.0f, 121.1f },
+    { -8663.7f, 751.0f, 120.8f },
+    { -8695.0f, 717.9f, 123.9f },
+    { -8704.7f, 653.4f, 123.9f },
+    { -8707.1f, 617.4f, 123.9f },
+    { -8699.1f, 582.9f, 117.4f },
+    { -8673.8f, 563.4f, 117.4f },
+    { -8622.8f, 532.0f, 117.4f },
+    { -8598.1f, 515.3f, 116.6f },
+    { -8575.5f, 491.5f, 116.6f },
+    { -8514.8f, 424.0f, 106.0f }
+}};
+
+static constexpr float GilneanGryphonSpeed = 28.0f;
+static constexpr Milliseconds TessAndCrowleyDespawn = 55s;
+
+template <size_t N>
+static void FlyPath(Unit* unit, std::array<Position, N> const& points, uint32 pointId)
+{
+    unit->GetMotionMaster()->LaunchMoveSpline([&points](Movement::MoveSplineInit& init)
+    {
+        Movement::PointsArray path;
+        for (Position const& point : points)
+            path.emplace_back(point.GetPositionX(), point.GetPositionY(), point.GetPositionZ());
+        init.MovebyPath(path);
+        init.SetFly();
+        init.SetVelocity(GilneanGryphonSpeed);
+    }, pointId);
+}
+
+// 100696 - Gilnean Gryphon (The Fallen Lion): the one on the Skyfire's deck summons the player's own (198209, spell
+// click), which takes the player aboard and flies them to Stormwind Keep with Tess and Crowley alongside; landing counts
+struct npc_the_fallen_lion_gilnean_gryphon : public ScriptedAI
+{
+    npc_the_fallen_lion_gilnean_gryphon(Creature* creature) : ScriptedAI(creature) { }
+
+    void InitializeAI() override
+    {
+        me->SetReactState(REACT_PASSIVE);
+    }
+
+    void IsSummonedBy(WorldObject* summoner) override
+    {
+        Player* player = summoner->ToPlayer();
+        if (!player)
+            return;
+
+        // The spell brings it to the ground under the player, which on the Skyfire is the harbor below. And it takes the
+        // ship's phase, which the player leaves with the harbor: the rider would lose sight of their own gryphon.
+        PhasingHandler::SetAlwaysVisible(me, true, true);
+        me->NearTeleportTo(player->GetPosition());
+        player->EnterVehicle(me, 0);
+    }
+
+    void PassengerBoarded(Unit* passenger, int8 /*seatId*/, bool apply) override
+    {
+        if (!apply || !passenger->IsPlayer() || !_riderGuid.IsEmpty())
+            return;
+
+        Player* rider = passenger->ToPlayer();
+        _riderGuid = rider->GetGUID();
+        me->SetDisableGravity(true);
+
+        // Tess and Crowley lead the way
+        _tessGuid = SummonEscort(rider, NPC_TESS_GREYMANE_FLYING, TessFlightToTheKeep);
+        _crowleyGuid = SummonEscort(rider, NPC_LORNA_CROWLEY_FLYING, CrowleyFlightToTheKeep);
+
+        _events.ScheduleEvent(EVENT_GILNEAN_GRYPHON_TAKE_OFF, 1500ms);
+        _events.ScheduleEvent(EVENT_TESS_AND_CROWLEY_RAGE, 3s);
+        _events.ScheduleEvent(EVENT_TESS_AND_CROWLEY_THE_KEEP, 33s);
+    }
+
+    void MovementInform(uint32 type, uint32 id) override
+    {
+        if (type != EFFECT_MOTION_TYPE || id != POINT_GILNEAN_GRYPHON_THE_KEEP)
+            return;
+
+        if (Player* rider = ObjectAccessor::GetPlayer(*me, _riderGuid))
+            rider->KilledMonsterCredit(NPC_GILNEAN_GRYPHON_RIDE_CREDIT);
+
+        if (Vehicle* vehicle = me->GetVehicleKit())
+            vehicle->RemoveAllPassengers();
+        me->DespawnOrUnsummon(2s);
+    }
+
+    void UpdateAI(uint32 diff) override
+    {
+        _events.Update(diff);
+
+        while (uint32 eventId = _events.ExecuteEvent())
+        {
+            switch (eventId)
+            {
+                case EVENT_GILNEAN_GRYPHON_TAKE_OFF:
+                    FlyPath(me, GilneanGryphonFlightToTheKeep, POINT_GILNEAN_GRYPHON_THE_KEEP);
+                    break;
+                case EVENT_TESS_AND_CROWLEY_RAGE:
+                    StartEscortConversation(CONVERSATION_TESS_AND_CROWLEY_RAGE);
+                    break;
+                case EVENT_TESS_AND_CROWLEY_THE_KEEP:
+                    StartEscortConversation(CONVERSATION_TESS_AND_CROWLEY_THE_KEEP);
+                    break;
+                default:
+                    break;
+            }
+        }
+    }
+
+private:
+    template <size_t N>
+    static ObjectGuid SummonEscort(Player* rider, uint32 entry, std::array<Position, N> const& points)
+    {
+        TempSummon* escort = rider->SummonCreature(entry, points.front(), TEMPSUMMON_TIMED_DESPAWN, TessAndCrowleyDespawn, 0, 0, rider->GetGUID());
+        if (!escort)
+            return ObjectGuid::Empty;
+
+        PhasingHandler::SetAlwaysVisible(escort, true, true);
+        escort->Mount(DISPLAY_GILNEAN_ARMORED_GRYPHON);
+        escort->SetDisableGravity(true);
+        FlyPath(escort, points, 0);
+        return escort->GetGUID();
+    }
+
+    // Tess is the first actor of both, Crowley the second
+    void StartEscortConversation(uint32 conversationId)
+    {
+        Player* rider = ObjectAccessor::GetPlayer(*me, _riderGuid);
+        Creature* tess = ObjectAccessor::GetCreature(*me, _tessGuid);
+        Creature* crowley = ObjectAccessor::GetCreature(*me, _crowleyGuid);
+        if (!rider || !tess || !crowley)
+            return;
+
+        Conversation* conversation = Conversation::CreateConversation(conversationId, rider, *rider, rider->GetGUID(), nullptr, false);
+        if (!conversation)
+            return;
+
+        conversation->AddActor(0, 0, tess->GetGUID());
+        conversation->AddActor(0, 1, crowley->GetGUID());
+        // It stays where it began, which the rider leaves behind at the gryphon's speed long before its last line
+        conversation->SetVisibilityDistanceOverride(VisibilityDistanceType::Infinite);
+        conversation->Start();
+    }
+
+    EventMap _events;
+    ObjectGuid _riderGuid;
+    ObjectGuid _tessGuid;
+    ObjectGuid _crowleyGuid;
+};
+
+// 926 - Conversation (the court mourns Varian): the council follows, and Varian's letter is handed over as it begins
+class conversation_the_fallen_lion_mourning : public ConversationAI
+{
+public:
+    using ConversationAI::ConversationAI;
+
+    void OnStart() override
+    {
+        conversation->m_Events.AddEvent([conversation = conversation]()
+        {
+            Player* player = ObjectAccessor::GetPlayer(*conversation, conversation->GetPrivateObjectOwner());
+            if (!player || !IsListeningToKingAnduin(player))
+                return;
+
+            player->DestroyItemCount(ITEM_LETTER_TO_ANDUIN, 1, true);
+            Conversation::CreateConversation(CONVERSATION_LEADERS_COUNCIL, player, *player, player->GetGUID());
+        }, LeadersCouncilDelay);
+    }
+};
+
+// 1519001 - Conversation (the council, custom id): listening to its end delivers the letter
+class conversation_the_fallen_lion_council : public ConversationAI
+{
+public:
+    using ConversationAI::ConversationAI;
+
+    void OnStart() override
+    {
+        conversation->m_Events.AddEvent([conversation = conversation]()
+        {
+            Player* player = ObjectAccessor::GetPlayer(*conversation, conversation->GetPrivateObjectOwner());
+            if (!player)
+                return;
+
+            player->RemoveAurasDueToSpell(SPELL_PLAYER_LISTENING_TO_LEADERS);
+            if (!IsListeningToKingAnduin(player))
+                return;
+
+            player->CastSpell(player, SPELL_LISTEN_TO_KING_ANDUIN_CREDIT, true);
+            // "Hear Leaders Mourning" (hidden, optional) only counts once the sequenced letter objective is done
+            player->KilledMonsterCredit(NPC_HEAR_LEADERS_MOURNING_CREDIT);
+        }, conversation->GetLastLineEndTime(conversation->GetPrivateObjectOwnerLocale()));
+    }
+};
 }
 
 void AddSC_stormwind_city()
@@ -426,6 +792,14 @@ void AddSC_stormwind_city()
     RegisterCreatureAI(npc_demons_among_them_anduin);
     RegisterCreatureAI(npc_demons_among_them_felblade_assassin);
     RegisterCreatureAI(npc_to_be_prepared_duelist);
+    RegisterCreatureAI(npc_the_fallen_lion_gilnean_gryphon);
+
+    // Quests
+    new quest_the_fallen_lion();
+
+    // Conversations
+    RegisterConversationAI(conversation_the_fallen_lion_mourning);
+    RegisterConversationAI(conversation_the_fallen_lion_council);
 
     // Players
     new player_second_sight();
