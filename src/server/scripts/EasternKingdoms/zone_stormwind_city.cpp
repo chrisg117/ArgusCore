@@ -20,6 +20,7 @@
 #include "Conversation.h"
 #include "CreatureAIImpl.h"
 #include "MotionMaster.h"
+#include "ObjectAccessor.h"
 #include "PhasingHandler.h"
 #include "Player.h"
 #include "ScriptMgr.h"
@@ -302,6 +303,113 @@ struct npc_demons_among_them_felblade_assassin : public ScriptedAI
 private:
     Milliseconds _lookTimer;
 };
+
+// To Be Prepared, in Stormwind Harbor before the Broken Shore
+enum ToBePreparedData
+{
+    QUEST_TO_BE_PREPARED                    = 42782,
+
+    OBJECTIVE_WARMED_UP_WITH_A_DUEL         = 284739,
+
+    // Ramall Trueoak; every other duelist has him as its KillCredit
+    NPC_DUEL_CREDIT                         = 108722,
+
+    SAY_DUELIST_YIELD                       = 0
+};
+
+// The duelist yields at this share of its health, after a countdown like a player duel's
+static constexpr int32 DuelistYieldHealthPct = 10;
+static constexpr Milliseconds DuelistCountdown = 3s;
+
+static bool CanDuelForToBePrepared(Player const* player)
+{
+    return player->IsAlive() && player->GetQuestStatus(QUEST_TO_BE_PREPARED) == QUEST_STATUS_INCOMPLETE
+        && !player->IsQuestObjectiveComplete(QUEST_TO_BE_PREPARED, OBJECTIVE_WARMED_UP_WITH_A_DUEL);
+}
+
+// 108722, 108723, 108742-108759, 108765, 108767 - the duelists of To Be Prepared: "Let's duel." starts a duel with that
+// player alone. The duelist turns hostile to players only, so the harbor guards keep out of it; at low health it yields,
+// the player gets the credit, and it is friendly again. Damage from anyone else does nothing.
+struct npc_to_be_prepared_duelist : public ScriptedAI
+{
+    npc_to_be_prepared_duelist(Creature* creature) : ScriptedAI(creature), _countdown(0s) { }
+
+    void Reset() override
+    {
+        _opponent.Clear();
+        _countdown = 0s;
+        me->RestoreFaction();
+        me->SetReactState(REACT_DEFENSIVE);
+    }
+
+    bool OnGossipSelect(Player* player, uint32 /*menuId*/, uint32 /*gossipListId*/) override
+    {
+        CloseGossipMenuFor(player);
+        if (!_opponent.IsEmpty() || me->IsInCombat() || !CanDuelForToBePrepared(player))
+            return true;
+
+        _opponent = player->GetGUID();
+        _countdown = DuelistCountdown;
+        me->SetFacingToObject(player);
+        return true;
+    }
+
+    void DamageTaken(Unit* attacker, uint32& damage, DamageEffectType /*damageType*/, SpellInfo const* /*spellInfo*/) override
+    {
+        if (!attacker || attacker->GetCharmerOrOwnerOrSelf()->GetGUID() != _opponent)
+        {
+            damage = 0;
+            return;
+        }
+
+        if (me->HealthBelowPctDamaged(DuelistYieldHealthPct, damage))
+        {
+            damage = 0;
+            Yield();
+        }
+    }
+
+    void UpdateAI(uint32 diff) override
+    {
+        if (_countdown > 0s)
+        {
+            _countdown -= Milliseconds(diff);
+            if (_countdown <= 0s)
+            {
+                _countdown = 0s;
+                Player* player = ObjectAccessor::GetPlayer(*me, _opponent);
+                if (!player || !CanDuelForToBePrepared(player) || !me->IsWithinDistInMap(player, 30.0f))
+                {
+                    Reset();
+                    return;
+                }
+
+                me->SetFaction(FACTION_ENEMY);
+                AttackStart(player);
+            }
+            return;
+        }
+
+        UpdateVictim();
+    }
+
+private:
+    void Yield()
+    {
+        if (Player* player = ObjectAccessor::GetPlayer(*me, _opponent))
+        {
+            if (CanDuelForToBePrepared(player))
+                player->KilledMonsterCredit(NPC_DUEL_CREDIT);
+            Talk(SAY_DUELIST_YIELD, player);
+        }
+
+        me->SetFullHealth();
+        EnterEvadeMode(EvadeReason::Other);
+    }
+
+    ObjectGuid _opponent;
+    Milliseconds _countdown;
+};
 }
 
 void AddSC_stormwind_city()
@@ -317,6 +425,7 @@ void AddSC_stormwind_city()
     // Creatures
     RegisterCreatureAI(npc_demons_among_them_anduin);
     RegisterCreatureAI(npc_demons_among_them_felblade_assassin);
+    RegisterCreatureAI(npc_to_be_prepared_duelist);
 
     // Players
     new player_second_sight();
