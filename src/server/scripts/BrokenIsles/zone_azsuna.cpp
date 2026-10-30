@@ -172,7 +172,7 @@ struct npc_illidari_stand_allari : public AzsunaQuestPollAI
         }
 
         std::list<Creature*> allaris;
-        me->GetCreatureListWithEntryInGrid(allaris, NPC_ALLARI_SPEAK, 200.0f);
+        player->GetCreatureListWithEntryInGrid(allaris, NPC_ALLARI_SPEAK, 200.0f);
         for (Creature* allari : allaris)
             if (allari->GetPrivateObjectOwner() == player->GetGUID())
                 return;
