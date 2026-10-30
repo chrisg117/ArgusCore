@@ -17,6 +17,7 @@
 
 // This is where scripts' loading functions should be declared:
 
+void AddSC_zone_azsuna();
 void AddSC_zone_dalaran_broken_isle();
 void AddSC_zone_mardum();
 void AddSC_zone_vault_of_the_wardens();
@@ -55,6 +56,7 @@ void AddSC_orderhall_priest();
 // void Add${NameOfDirectory}Scripts()
 void AddBrokenIslesScripts()
 {
+    AddSC_zone_azsuna();
     AddSC_zone_dalaran_broken_isle();
     AddSC_zone_mardum();
     AddSC_zone_vault_of_the_wardens();
