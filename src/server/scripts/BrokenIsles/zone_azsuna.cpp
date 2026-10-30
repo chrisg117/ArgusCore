@@ -20,6 +20,7 @@
 #include "MotionMaster.h"
 #include "MoveSplineInit.h"
 #include "ObjectAccessor.h"
+#include "PhasingHandler.h"
 #include "Player.h"
 #include "ScriptMgr.h"
 #include "ScriptedCreature.h"
@@ -98,8 +99,11 @@ struct AzsunaQuestPollAI : public ScriptedAI
 
         _pollLeft = QuestPollInterval;
 
+        // A quest NPC can be phased away from the very player it waits for: Allari is, while The Scythe of Souls runs
         std::list<Player*> players;
-        me->GetPlayerListInGrid(players, QuestPollRadius);
+        auto inRange = [this](Player* player) { return me->IsWithinDist(player, QuestPollRadius); };
+        Trinity::PlayerListSearcher searcher(PhasingHandler::GetAlwaysVisiblePhaseShift(), players, inRange);
+        Cell::VisitWorldObjects(me, searcher, QuestPollRadius);
         for (Player* player : players)
             CheckPlayer(player);
     }
