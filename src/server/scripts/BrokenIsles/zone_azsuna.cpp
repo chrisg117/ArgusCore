@@ -36,6 +36,9 @@ enum AzsunaQuests
     QUEST_SCYTHE_OF_SOULS       = 37660,
     QUEST_SAVING_STELLAGOSA     = 37450,
     QUEST_DARK_REVELATIONS      = 37449,
+    QUEST_DEATH_OF_THE_ELDEST   = 37853,
+    QUEST_AGAPANTHUS            = 37991,
+    QUEST_THEIR_DYING_BREATHS   = 42271,
 
     OBJECTIVE_FIRST_SOUL_FREED  = 277152,
     OBJECTIVE_FIRST_SOUL_DONE   = 277153,
@@ -43,7 +46,9 @@ enum AzsunaQuests
     OBJECTIVE_SECOND_SOUL_DONE  = 277157,
     OBJECTIVE_GEM_ENTERED       = 277158,
     OBJECTIVE_AREVNAAL          = 277159,
-    OBJECTIVE_NIGHTGLAIVE       = 277301
+    OBJECTIVE_NIGHTGLAIVE       = 277301,
+    OBJECTIVE_LEYWORM_CORES     = 277011,
+    OBJECTIVE_WHELPLINGS_REVIVED = 284015
 };
 
 enum AzsunaCreatures
@@ -57,7 +62,9 @@ enum AzsunaCreatures
     NPC_ALLARI                  = 89398,
     NPC_STELLAGOSA_CHAINED      = 90546,
     NPC_STELLAGOSA_RIDE         = 90982,
-    NPC_ILLIDARI_LEADER_CREDIT  = 112175
+    NPC_ILLIDARI_LEADER_CREDIT  = 112175,
+    NPC_SENEGOS_POOL_CREDIT     = 90315,
+    NPC_AGAPANTHUS              = 90543
 };
 
 enum AzsunaSpells
@@ -70,6 +77,10 @@ static constexpr float SoulGemRadius = 15.0f;
 static constexpr float QuestPollRadius = 30.0f;
 static constexpr Milliseconds QuestPollInterval = 1s;
 static constexpr Milliseconds SoulCompelTime = 5s;
+static constexpr float SenegosPoolRadius = 20.0f;
+static constexpr uint32 ITEM_GRIEVOUSLY_WOUNDED_WHELPLING = 122292;
+static constexpr Milliseconds WhelplingReviveTime = 2s;
+static constexpr Seconds WhelplingRespawnTime = 30s;
 
 // The quest POIs of The Scythe of Souls
 static constexpr Position AllariAtTheGems = { -156.0f, 6906.0f, 13.5f, 0.0f };
@@ -377,6 +388,74 @@ struct npc_illidari_stand_kayn : public AzsunaQuestPollAI
     }
 };
 
+// 89975 - Senegos (The Death of the Eldest): no spell or object credits the pool, so the cores count once brought to him
+struct npc_death_of_the_eldest_senegos : public AzsunaQuestPollAI
+{
+    npc_death_of_the_eldest_senegos(Creature* creature) : AzsunaQuestPollAI(creature) { }
+
+    void CheckPlayer(Player* player) override
+    {
+        if (player->GetQuestStatus(QUEST_DEATH_OF_THE_ELDEST) == QUEST_STATUS_INCOMPLETE && me->IsWithinDist(player, SenegosPoolRadius)
+            && player->IsQuestObjectiveComplete(QUEST_DEATH_OF_THE_ELDEST, OBJECTIVE_LEYWORM_CORES))
+            player->KilledMonsterCredit(NPC_SENEGOS_POOL_CREDIT);
+    }
+};
+
+// 90543 - Agapanthus: "Investigate the visitors" is reaching her
+struct npc_agapanthus : public AzsunaQuestPollAI
+{
+    npc_agapanthus(Creature* creature) : AzsunaQuestPollAI(creature) { }
+
+    void CheckPlayer(Player* player) override
+    {
+        if (player->GetQuestStatus(QUEST_AGAPANTHUS) == QUEST_STATUS_INCOMPLETE)
+            player->KilledMonsterCredit(NPC_AGAPANTHUS);
+    }
+};
+
+// 90880 - Mana-Drained Whelpling (Their Dying Breaths): the click casts Resuscitating (180713), which credits. A revived
+// whelpling leaves for a while, so one whelpling can't be revived four times. The last one is the Grievously Wounded
+// Whelpling the player carries back to Senegos: nothing in the data hands that item out.
+struct npc_their_dying_breaths_whelpling : public ScriptedAI
+{
+    npc_their_dying_breaths_whelpling(Creature* creature) : ScriptedAI(creature) { }
+
+    void InitializeAI() override
+    {
+        me->SetReactState(REACT_PASSIVE);
+    }
+
+    void OnSpellClick(Unit* clicker, bool spellClickHandled) override
+    {
+        Player* player = clicker->ToPlayer();
+        if (!player || !spellClickHandled)
+            return;
+
+        ObjectGuid playerGuid = player->GetGUID();
+        int32 revivedBefore = player->GetQuestObjectiveData(QUEST_THEIR_DYING_BREATHS, OBJECTIVE_WHELPLINGS_REVIVED);
+        _scheduler.Schedule(WhelplingReviveTime, [this, playerGuid, revivedBefore](TaskContext)
+        {
+            Player* reviver = ObjectAccessor::GetPlayer(*me, playerGuid);
+            if (!reviver || reviver->GetQuestObjectiveData(QUEST_THEIR_DYING_BREATHS, OBJECTIVE_WHELPLINGS_REVIVED) <= revivedBefore)
+                return;
+
+            if (reviver->IsQuestObjectiveComplete(QUEST_THEIR_DYING_BREATHS, OBJECTIVE_WHELPLINGS_REVIVED)
+                && !reviver->HasItemCount(ITEM_GRIEVOUSLY_WOUNDED_WHELPLING))
+                reviver->AddItem(ITEM_GRIEVOUSLY_WOUNDED_WHELPLING, 1);
+
+            me->DespawnOrUnsummon(0ms, WhelplingRespawnTime);
+        });
+    }
+
+    void UpdateAI(uint32 diff) override
+    {
+        _scheduler.Update(diff);
+    }
+
+private:
+    TaskScheduler _scheduler;
+};
+
 void AddSC_zone_azsuna()
 {
     RegisterCreatureAI(npc_demon_souls_soul_gem);
@@ -387,4 +466,7 @@ void AddSC_zone_azsuna()
     RegisterCreatureAI(npc_dark_revelations_nightglaive);
     RegisterCreatureAI(npc_dark_revelations_stellagosa);
     RegisterCreatureAI(npc_illidari_stand_kayn);
+    RegisterCreatureAI(npc_death_of_the_eldest_senegos);
+    RegisterCreatureAI(npc_agapanthus);
+    RegisterCreatureAI(npc_their_dying_breaths_whelpling);
 }
