@@ -66,7 +66,9 @@ enum OrderCampaignDalaranIntro
     SPELL_SUMMON_MAXWELL_TYROSUS_PALADIN    = 190886,
     SPELL_SUMMON_DA_NEL_MONK                = 193978,
     SPELL_SUMMON_KORVAS_DH                  = 195286,
-    SPELL_SUMMON_RUNETOTEM_DRUID            = 199277
+    SPELL_SUMMON_RUNETOTEM_DRUID            = 199277,
+
+    NPC_KORVAS_BLOODTHORN_SUMMON            = 99343
 };
 
 // 224240 - 7.0 Order Campaign - Dalaran Aura
@@ -140,6 +142,10 @@ class spell_dalaran_order_campaign_intro_aura : public AuraScript
             }
             case CLASS_DEMON_HUNTER:
             {
+                // The aura comes back on every entry into the zone; she stays five minutes and must not stack
+                if (player->FindNearestCreatureWithOptions(100.0f, { .CreatureId = NPC_KORVAS_BLOODTHORN_SUMMON, .IgnorePhases = true, .OwnerGuid = player->GetGUID() }))
+                    break;
+
                 if (player->GetQuestStatus(QUEST_CALL_OF_THE_ILLIDARI_ALTRUIS) == QUEST_STATUS_NONE && player->GetQuestStatus(QUEST_A_NEW_DIRECTION_ALTRUIS) == QUEST_STATUS_REWARDED)
                     player->CastSpell(nullptr, SPELL_SUMMON_KORVAS_DH, true);
                 else if (player->GetQuestStatus(QUEST_CALL_OF_THE_ILLIDARI_JAYCE) == QUEST_STATUS_NONE && player->GetQuestStatus(QUEST_A_NEW_DIRECTION_JAYCE) == QUEST_STATUS_REWARDED)

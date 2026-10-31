@@ -51,6 +51,7 @@ void AddSC_scenario_broken_shore();
 void AddSC_orderhall_warrior();
 void AddSC_orderhall_rogue();
 void AddSC_orderhall_priest();
+void AddSC_orderhall_demon_hunter();
 
 // The name of this function should match:
 // void Add${NameOfDirectory}Scripts()
@@ -90,4 +91,5 @@ void AddBrokenIslesScripts()
     AddSC_orderhall_warrior();
     AddSC_orderhall_rogue();
     AddSC_orderhall_priest();
+    AddSC_orderhall_demon_hunter();
 }
