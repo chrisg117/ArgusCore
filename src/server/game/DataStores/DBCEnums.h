@@ -691,7 +691,7 @@ enum class CriteriaType : uint8
     StartAnyGarrisonMissionWithFollowerType        = 171, /*NYI*/ // Garrison Mission: Start any with FollowerType "{GarrFollowerType}"
     StartGarrisonMission                           = 172, /*NYI*/ // Garrison Mission: Start "{GarrMission}"
     SucceedAnyGarrisonMissionWithFollowerType      = 173, /*NYI*/ // Garrison Mission: Succeed any with FollowerType "{GarrFollowerType}"
-    SucceedGarrisonMission                         = 174, /*NYI*/ // Garrison Mission: Succeed "{GarrMission}"
+    SucceedGarrisonMission                         = 174, // Garrison Mission: Succeed "{GarrMission}"
     RecruitAnyGarrisonFollower                     = 175, /*NYI*/ // Garrison Follower: Recruit any
     RecruitGarrisonFollower                        = 176, // Garrison Follower: Recruit "{GarrFollower}"
     AcquireGarrison                                = 177, /*NYI*/ // Garrison: Acquire a Garrison
@@ -699,7 +699,7 @@ enum class CriteriaType : uint8
     LearnGarrisonBlueprint                         = 179, /*NYI*/ // Garrison Blueprint: Learn "{GarrBuilding}"
     LearnAnyGarrisonSpecialization                 = 180, /*NYI*/ // Garrison Specialization: Learn any
     LearnGarrisonSpecialization                    = 181, /*NYI*/ // Garrison Specialization: Learn "{GarrSpecialization}"
-    CollectGarrisonShipment                        = 182, /*NYI*/ // Garrison Shipment of type "{CharShipmentContainer}" collected
+    CollectGarrisonShipment                        = 182, // Garrison Shipment of type "{CharShipmentContainer}" collected
     ItemLevelChangedForGarrisonFollower            = 183, /*NYI*/ // Garrison Follower: Item Level Changed
     LevelChangedForGarrisonFollower                = 184, /*NYI*/ // Garrison Follower: Level Changed
     LearnToy                                       = 185, /*NYI*/ // Learn Toy "{Item}"
@@ -714,12 +714,12 @@ enum class CriteriaType : uint8
     HonorLevelIncrease                             = 194, // (Player) honor level increase
     PrestigeLevelIncrease                          = 195, /*NYI*/ // (Player) prestige level increase
     ActivelyReachLevel                             = 196, // Actively level to level {#Level}
-    CompleteResearchAnyGarrisonTalent              = 197, /*NYI*/ // Garrison Talent: Complete Research Any
-    CompleteResearchGarrisonTalent                 = 198, /*NYI*/ // Garrison Talent: Complete Research "{GarrTalent}"
+    CompleteResearchAnyGarrisonTalent              = 197, // Garrison Talent: Complete Research Any
+    CompleteResearchGarrisonTalent                 = 198, // Garrison Talent: Complete Research "{GarrTalent}"
     LearnAnyTransmogInSlot                         = 199, // Learn Any Transmog in Slot "{$Equip Slot}"
-    RecruitAnyGarrisonTroop                        = 200, /*NYI*/ // Recruit any Garrison Troop
-    StartResearchAnyGarrisonTalent                 = 201, /*NYI*/ // Garrison Talent: Start Research Any
-    StartResearchGarrisonTalent                    = 202, /*NYI*/ // Garrison Talent: Start Research "{GarrTalent}"
+    RecruitAnyGarrisonTroop                        = 200, // Recruit any Garrison Troop
+    StartResearchAnyGarrisonTalent                 = 201, // Garrison Talent: Start Research Any
+    StartResearchGarrisonTalent                    = 202, // Garrison Talent: Start Research "{GarrTalent}"
     CompleteAnyWorldQuest                          = 203, /*NYI*/ // Complete Any Quest
     EarnLicense                                    = 204, /*NYI*/ // Earn License "{BattlePayDeliverable}" (does NOT work for box level)
     CollectTransmogSetFromGroup                    = 205, // (Account Only) Collect a Transmog Set from Group "{TransmogSetGroup}"

@@ -151,6 +151,9 @@ void ClassHallTalents::FinishResearch(Talent& talent)
     _owner->SendDirectMessage(talentCompleted.Write());
 
     ApplyPerk(talent);
+
+    _owner->UpdateCriteria(CriteriaType::CompleteResearchGarrisonTalent, talent.Entry->ID);
+    _owner->UpdateCriteria(CriteriaType::CompleteResearchAnyGarrisonTalent);
 }
 
 void ClassHallTalents::ApplyPerk(Talent const& talent)
@@ -232,6 +235,12 @@ void ClassHallTalents::Research(uint32 garrTalentId)
     }
 
     _owner->SendDirectMessage(researchTalentResult.Write());
+
+    if (result == GARRISON_SUCCESS)
+    {
+        _owner->UpdateCriteria(CriteriaType::StartResearchGarrisonTalent, garrTalentId);
+        _owner->UpdateCriteria(CriteriaType::StartResearchAnyGarrisonTalent);
+    }
 }
 
 bool ClassHallTalents::HasTalent(uint32 garrTalentId) const

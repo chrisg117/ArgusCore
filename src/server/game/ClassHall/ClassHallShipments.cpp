@@ -270,6 +270,8 @@ void ClassHallShipments::CompleteShipments(uint32 charShipmentContainerId)
         completeShipmentResponse.Result = GARRISON_SUCCESS;
         _owner->SendDirectMessage(completeShipmentResponse.Write());
 
+        _owner->UpdateCriteria(CriteriaType::CollectGarrisonShipment, charShipmentContainerId);
+
         // the quest credit of an order comes from this spell
         if (entry->OnCompleteSpellID)
             _owner->CastSpell(_owner, entry->OnCompleteSpellID, true);

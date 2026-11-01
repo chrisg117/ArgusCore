@@ -722,6 +722,7 @@ void ClassHallMissions::CompleteMission(ObjectGuid npcGuid, uint32 garrMissionId
     if (completeMissionResult.Succeeded)
     {
         mission.PacketInfo.MissionState = CLASS_HALL_MISSION_STATE_COMPLETED;
+        _owner->UpdateCriteria(CriteriaType::SucceedGarrisonMission, garrMissionId);
 
         // the chance over 100 is the chance of the bonus rewards, as the client shows it; the result is
         // told to the client in the state of the mission in the complete reply, below
