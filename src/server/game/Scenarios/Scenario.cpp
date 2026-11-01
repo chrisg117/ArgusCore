@@ -225,6 +225,18 @@ void Scenario::CompletedCriteriaTree(CriteriaTree const* tree, Player* /*referen
     CompleteStep(step);
 }
 
+// The leaves of a progress bar count multiples of their amount and never complete on their own,
+// so a step whose bar fills last has no completed leaf to report it
+void Scenario::AfterCriteriaTreeUpdate(CriteriaTree const* tree, Player* /*referencePlayer*/)
+{
+    ScenarioStepEntry const* step = tree->ScenarioStep;
+    if (!step || step != _currentstep || !IsCompletedStep(step))
+        return;
+
+    SetStepState(step, SCENARIO_STEP_DONE);
+    CompleteStep(step);
+}
+
 bool Scenario::IsCompletedStep(ScenarioStepEntry const* step)
 {
     CriteriaTree const* tree = sCriteriaMgr->GetCriteriaTree(step->Criteriatreeid);

@@ -87,7 +87,7 @@ class TC_GAME_API Scenario : public CriteriaHandler
         bool CanUpdateCriteriaTree(Criteria const* criteria, CriteriaTree const* tree, Player* referencePlayer) const override;
         bool CanCompleteCriteriaTree(CriteriaTree const* tree) override;
         void CompletedCriteriaTree(CriteriaTree const* tree, Player* referencePlayer) override;
-        void AfterCriteriaTreeUpdate(CriteriaTree const* /*tree*/, Player* /*referencePlayer*/) override { }
+        void AfterCriteriaTreeUpdate(CriteriaTree const* tree, Player* referencePlayer) override;
 
         void DoForAllPlayers(std::function<void(Player*)> const& worker) const;
         void SendPacket(WorldPacket const* data) const override;
