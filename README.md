@@ -13,6 +13,37 @@
 | Linux (GCC) | [![Linux Build](../../actions/workflows/build-linux.yml/badge.svg)](../../actions/workflows/build-linux.yml) |
 | Windows x64 | [![Windows Build](../../actions/workflows/build-windows.yml/badge.svg)](../../actions/workflows/build-windows.yml) |
 
+## Development Status
+
+What is finished and playable on the `dev` branch. Kept short on purpose; updated whenever a piece lands.
+
+**Class development**
+
+| Class | Artifact weapon | Class hall |
+|-------|-----------------|------------|
+| Shadow Priest | Playable: opening quests, "Blade in Twilight" scenario, Netherlight Temple entry | Started: hall entry and mission table |
+| Demon Hunter | In progress | In progress |
+| All other classes | Not started | Not started |
+
+Shared class hall engine (foundation, talents, followers, shipments, missions, follower growth, mission extras, mission rewards): complete.
+
+**Raids**
+
+| Raid | Status |
+|------|--------|
+| Emerald Nightmare | 2 of 7 bosses playable (Nythendra, Il'gynoth); Elerethe Renferal in progress |
+| All other Legion raids | Not started |
+
+**Legion zone quests**
+
+| Zone | Status |
+|------|--------|
+| Broken Shore scenario | Playable start to end (Alliance) |
+| Mardum and the Vault of the Wardens | Playable (Demon Hunter start) |
+| Dalaran | Flight master, inns, banks, mail and portals in; Horde capital portals, trainers, vendors and townsfolk next |
+| Azsuna | In progress |
+| Val'sharah, Highmountain, Stormheim, Suramar | Not started |
+
 ## About
 
 ArgusCore is a C++ server emulator for World of Warcraft patch 7.3.5 (Legion).
