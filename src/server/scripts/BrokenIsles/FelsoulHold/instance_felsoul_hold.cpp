@@ -36,15 +36,18 @@ enum FelsoulHoldData
 {
     MAP_ACQUISITION_HAVOC                   = 1498,
     WORLD_SAFE_LOC_FELSOUL_HOLD_GRAVEYARD   = 5097,
+    WORLD_SAFE_LOC_VAREDIS_GRAVEYARD        = 5362,
 
     SCENARIO_STEP_STALKING_YOUR_PREY        = 1808,
     SCENARIO_STEP_THEY_ARE_NOT_PREPARED     = 1821,
+    SCENARIO_STEP_UNLEASHED_HAVOC           = 1825,
 
     GAME_EVENT_FLY_INTO_FELSOUL_HOLD        = 45563,
     GAME_EVENT_WARD_DESTROYED               = 45698,
     GAME_EVENT_FIRST_WARD                   = 45760,
     GAME_EVENT_SECOND_WARD                  = 45761,
     GAME_EVENT_THIRD_WARD                   = 45762,
+    GAME_EVENT_VAREDIS_SLAIN                = 45717,
 
     // What a kill adds to the bar of "Absorb demon souls", of 1000
     GAME_EVENT_SOUL_225                     = 54742,
@@ -55,6 +58,12 @@ enum FelsoulHoldData
     SPELL_TELEPORT_TO_FELSOUL_HOLD          = 188922,
     SPELL_DH_CAMP_EXPLOSION_SCENE           = 186760,
     SPELL_DH_CAMP_EXPLOSION_EVENT           = 186771,
+    SPELL_VAREDIS_REVEAL                    = 189475,
+    SPELL_DEMONS_BITE                       = 190226,
+    SPELL_CHAOS_NOVA                        = 190246,
+    SPELL_SHADOW_STRIKE                     = 189526,
+    SPELL_FEL_RUSH                          = 202817,
+    SPELL_BLUR                              = 202818,
 
     GO_FELSHIELD_WARD_FIRST                 = 243428,
     GO_FELSHIELD_WARD_SECOND                = 243472,
@@ -66,12 +75,30 @@ enum FelsoulHoldData
     NPC_FEL_COMMANDER_IGRIUS                = 95285,
     NPC_FELSOUL_CRUSHER                     = 95452,
     NPC_VAREDIS_FELSOUL_IMAGE               = 94310,
+    NPC_VAREDIS_FELSOUL                     = 94836,
+    NPC_KILJAEDEN_VOICE                     = 25608,
 
     SAY_VAREDIS_SEEK_MY_HEAD                = 0,
 
+    SAY_VAREDIS_AGGRO                       = 1,
+    SAY_VAREDIS_75                          = 2,
+    SAY_VAREDIS_50                          = 3,
+    SAY_VAREDIS_25                          = 4,
+    SAY_VAREDIS_10                          = 5,
+    SAY_KILJAEDEN_NOT_YOUR_TIME             = 50,
+
+    DATA_VAREDIS_RECALLED                   = 1,
+    DISPLAY_INVISIBLE_STALKER               = 11686,
+
     EVENT_ARRIVED                           = 1,
     EVENT_DIVE,
-    EVENT_BAT_LEAVES                        = 1
+    EVENT_BAT_LEAVES                        = 1,
+
+    EVENT_DEMONS_BITE                       = 1,
+    EVENT_SHADOW_STRIKE,
+    EVENT_CHAOS_NOVA,
+    EVENT_FEL_RUSH,
+    EVENT_BLUR
 };
 
 // Where the camp blows up under the player: the scenario's first graveyard stands there (safe location 5097)
@@ -79,6 +106,9 @@ static constexpr Position CampDropPoint = { 1264.60f, 5234.68f, 93.53f, 3.97f };
 // After the second ward Varedis shows himself at the third and sends his crusher
 static constexpr Position VaredisAtTheThirdWard = { 1100.0f, 4885.0f, 61.5f, 1.2f };
 static constexpr Position CrusherAtTheThirdWard = { 1112.0f, 4900.0f, 60.19f, 4.5f };
+// The flat ground by the scenario's stage 4 graveyard (safe location 5362)
+static constexpr Position VaredisArena = { 1010.0f, 4925.0f, 36.44f, 3.97f };
+static constexpr Milliseconds VaredisRecallDuration = 4s;
 static constexpr Milliseconds FelBatRideDelay = 2s;
 static constexpr Milliseconds ArrivalDelay = 3s;
 static constexpr Milliseconds DiveDelay = 8s;
@@ -94,7 +124,7 @@ public:
 
     struct instance_felsoul_hold_InstanceMapScript : public InstanceScript
     {
-        instance_felsoul_hold_InstanceMapScript(InstanceMap* map) : InstanceScript(map), _arrived(false), _wardsDestroyed(0)
+        instance_felsoul_hold_InstanceMapScript(InstanceMap* map) : InstanceScript(map), _arrived(false), _varedisShown(false), _wardsDestroyed(0)
         {
             SetHeaders(DataHeader);
 
@@ -185,8 +215,26 @@ public:
                 VaredisShowsHimself();
         }
 
+        void SetData(uint32 type, uint32 /*data*/) override
+        {
+            if (type != DATA_VAREDIS_RECALLED)
+                return;
+
+            if (TempSummon* voice = instance->SummonCreature(NPC_KILJAEDEN_VOICE, VaredisArena))
+            {
+                voice->SetDisplayId(DISPLAY_INVISIBLE_STALKER);
+                voice->AI()->Talk(SAY_KILJAEDEN_NOT_YOUR_TIME);
+                voice->DespawnOrUnsummon(VaredisRecallDuration);
+            }
+            SendScenarioEvent(GAME_EVENT_VAREDIS_SLAIN);
+        }
+
         void Update(uint32 diff) override
         {
+            // The step can end by any of its objectives, so there is no one event that says stage 4 began
+            if (!_varedisShown && IsOnStep(SCENARIO_STEP_UNLEASHED_HAVOC))
+                VaredisRises();
+
             _events.Update(diff);
             while (uint32 eventId = _events.ExecuteEvent())
             {
@@ -266,10 +314,23 @@ public:
             instance->SummonCreature(NPC_FELSOUL_CRUSHER, CrusherAtTheThirdWard);
         }
 
+        void VaredisRises()
+        {
+            Player* player = FindScenarioPlayer();
+            if (!player)
+                return;
+
+            _varedisShown = true;
+            SetEntranceLocation(WORLD_SAFE_LOC_VAREDIS_GRAVEYARD);
+            player->AddAura(SPELL_VAREDIS_REVEAL, player);
+            instance->SummonCreature(NPC_VAREDIS_FELSOUL, VaredisArena);
+        }
+
         EventMap _events;
         ObjectGuid _secondWardGuid;
         ObjectGuid _thirdWardGuid;
         bool _arrived;
+        bool _varedisShown;
         uint8 _wardsDestroyed;
     };
 
@@ -277,6 +338,118 @@ public:
     {
         return new instance_felsoul_hold_InstanceMapScript(map);
     }
+};
+
+// 94836 - Varedis Felsoul
+// The wiki lists his abilities with no timings and no recording of the fight was found, so the timers are ours. He does not die:
+// Kil'jaeden calls him back to Argus.
+struct boss_varedis_felsoul : public ScriptedAI
+{
+    boss_varedis_felsoul(Creature* creature) : ScriptedAI(creature), _nextLine(0), _aggroSaid(false), _recalled(false) { }
+
+    void Reset() override
+    {
+        _events.Reset();
+        _nextLine = 0;
+        _aggroSaid = false;
+    }
+
+    void JustEngagedWith(Unit* /*who*/) override
+    {
+        // Combat can drop and start again without a reset
+        if (!_aggroSaid)
+        {
+            Talk(SAY_VAREDIS_AGGRO);
+            _aggroSaid = true;
+        }
+
+        _events.Reset();
+        _events.ScheduleEvent(EVENT_DEMONS_BITE, 3s);
+        _events.ScheduleEvent(EVENT_SHADOW_STRIKE, 8s);
+        _events.ScheduleEvent(EVENT_FEL_RUSH, 12s);
+        _events.ScheduleEvent(EVENT_CHAOS_NOVA, 20s);
+        _events.ScheduleEvent(EVENT_BLUR, 30s);
+    }
+
+    void DamageTaken(Unit* /*attacker*/, uint32& damage, DamageEffectType /*damageType*/, SpellInfo const* /*spellInfo*/) override
+    {
+        if (_recalled)
+        {
+            damage = 0;
+            return;
+        }
+
+        static constexpr std::array<std::pair<uint32, uint32>, 4> Lines =
+        { { { 75, SAY_VAREDIS_75 }, { 50, SAY_VAREDIS_50 }, { 25, SAY_VAREDIS_25 }, { 10, SAY_VAREDIS_10 } } };
+        while (_nextLine < Lines.size() && me->HealthBelowPctDamaged(Lines[_nextLine].first, damage))
+            Talk(Lines[_nextLine++].second);
+
+        if (me->HealthBelowPctDamaged(RecallHealthPct, damage))
+        {
+            damage = 0;
+            Recall();
+        }
+    }
+
+    void UpdateAI(uint32 diff) override
+    {
+        if (!UpdateVictim())
+            return;
+
+        _events.Update(diff);
+        if (me->HasUnitState(UNIT_STATE_CASTING))
+            return;
+
+        while (uint32 eventId = _events.ExecuteEvent())
+        {
+            switch (eventId)
+            {
+                case EVENT_DEMONS_BITE:
+                    DoCastVictim(SPELL_DEMONS_BITE);
+                    _events.Repeat(4s);
+                    break;
+                case EVENT_SHADOW_STRIKE:
+                    DoCastVictim(SPELL_SHADOW_STRIKE);
+                    _events.Repeat(14s);
+                    break;
+                case EVENT_FEL_RUSH:
+                    DoCastVictim(SPELL_FEL_RUSH);
+                    _events.Repeat(18s);
+                    break;
+                case EVENT_CHAOS_NOVA:
+                    DoCastSelf(SPELL_CHAOS_NOVA);
+                    _events.Repeat(30s);
+                    break;
+                case EVENT_BLUR:
+                    DoCastSelf(SPELL_BLUR);
+                    _events.Repeat(40s);
+                    break;
+                default:
+                    break;
+            }
+        }
+    }
+
+private:
+    static constexpr uint32 RecallHealthPct = 5;
+
+    void Recall()
+    {
+        _recalled = true;
+        _events.Reset();
+        me->CastStop();
+        me->AttackStop();
+        me->SetReactState(REACT_PASSIVE);
+        me->SetImmuneToAll(true);
+        if (InstanceScript* instance = me->GetInstanceScript())
+            instance->SetData(DATA_VAREDIS_RECALLED, 1);
+        me->DespawnOrUnsummon(VaredisRecallDuration);
+    }
+
+    EventMap _events;
+    size_t _nextLine;
+    bool _aggroSaid;
+    bool _recalled;
 };
 
 // 94324 - Illidari Fel Bat, summoned by the one at Krasus' Landing. It has no seat in this client's data, so it only comes to fetch the player.
@@ -323,6 +496,7 @@ class spell_felsoul_hold_fly_in : public SpellScript
 void AddSC_instance_felsoul_hold()
 {
     new instance_felsoul_hold();
+    RegisterCreatureAI(boss_varedis_felsoul);
     RegisterCreatureAI(npc_illidari_fel_bat_felsoul_hold);
     RegisterSpellScript(spell_felsoul_hold_fly_in);
 }
