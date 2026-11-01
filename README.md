@@ -22,7 +22,7 @@ What is finished and playable on the `dev` branch. Kept short on purpose; update
 | Class | Artifact weapon | Class hall |
 |-------|-----------------|------------|
 | Shadow Priest | Playable: opening quests, "Blade in Twilight" scenario, Netherlight Temple entry | Started: hall entry and mission table |
-| Demon Hunter | In progress | Started: Fel Hammer entry and hall founding |
+| Demon Hunter | In progress: Havoc playable; Vengeance not started | Started: Fel Hammer opening, forge and nether crucible |
 | All other classes | Not started | Not started |
 
 Shared class hall engine (foundation, talents, followers, shipments, missions, follower growth, mission extras, mission rewards): complete.

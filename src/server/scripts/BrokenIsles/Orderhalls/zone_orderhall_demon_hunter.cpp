@@ -18,6 +18,10 @@
 #include "ScriptMgr.h"
 #include "CreatureAI.h"
 #include "DB2Stores.h"
+#include "GameObject.h"
+#include "GameObjectAI.h"
+#include "GameTables.h"
+#include "Item.h"
 #include "MotionMaster.h"
 #include "ObjectAccessor.h"
 #include "Player.h"
@@ -25,6 +29,7 @@
 #include "QuestDef.h"
 #include "ScriptedCreature.h"
 #include "ScriptedGossip.h"
+#include "SpellAuras.h"
 #include "SpellInfo.h"
 #include "SpellMgr.h"
 #include "SpellScript.h"
@@ -750,6 +755,190 @@ class spell_dh_reality_tear : public SpellScript
     }
 };
 
+enum FelHammerData
+{
+    QUEST_UNBRIDLED_POWER_ALTRUIS           = 41060,
+    QUEST_UNBRIDLED_POWER_KAYN              = 41037,
+    QUEST_CURSED_FORGE_OF_THE_NATHREZIM     = 41064,
+
+    SPELL_ASSUMING_CONTROL_CREDIT           = 203459,
+    SPELL_GATEWAY_THE_FEL_HAMMER            = 193752,
+    SPELL_SUMMON_BATTLELORD_GAARDOUN        = 203676,
+    SPELL_GAZING_TELEPORT                   = 203802,
+    SPELL_GAZING_SCENE                      = 203790,
+    SPELL_GAZING_RETURN                     = 203803,
+
+    MENU_SHOW_ME_THE_SPOILS                 = 19287,
+    MENU_EMPOWERED_NETHER_CRUCIBLE          = 19337,
+
+    POINT_THE_SPOILS                        = 1,
+    SAY_GAARDOUN_LEADS_THE_WAY              = 0
+};
+
+static constexpr Position GaardounSpoilsPos = { 1584.0f, 1409.0f, 218.1f };
+
+// 95237 - Altruis the Sufferer, 95240 - Kayn Sunfury
+// Unbridled Power teaches the way back here, and nothing in the data says so
+struct npc_illidari_leader_fel_hammer : public ScriptedAI
+{
+    npc_illidari_leader_fel_hammer(Creature* creature) : ScriptedAI(creature) { }
+
+    void OnQuestReward(Player* player, Quest const* quest, LootItemType /*type*/, uint32 /*opt*/) override
+    {
+        if (quest->GetQuestId() == QUEST_UNBRIDLED_POWER_ALTRUIS || quest->GetQuestId() == QUEST_UNBRIDLED_POWER_KAYN)
+            player->LearnSpell(SPELL_GATEWAY_THE_FEL_HAMMER, false);
+    }
+};
+
+// 103068 - Battlelord Gaardoun
+struct npc_battlelord_gaardoun_spoils : public ScriptedAI
+{
+    npc_battlelord_gaardoun_spoils(Creature* creature) : ScriptedAI(creature) { }
+
+    bool OnGossipSelect(Player* player, uint32 menuId, uint32 /*gossipListId*/) override
+    {
+        if (menuId != MENU_SHOW_ME_THE_SPOILS)
+            return false;
+
+        CloseGossipMenuFor(player);
+        player->CastSpell(player, SPELL_SUMMON_BATTLELORD_GAARDOUN, true);
+        return true;
+    }
+};
+
+// 103047 - Battlelord Gaardoun
+struct npc_battlelord_gaardoun_summoned : public ScriptedAI
+{
+    npc_battlelord_gaardoun_summoned(Creature* creature) : ScriptedAI(creature) { }
+
+    void IsSummonedBy(WorldObject* summoner) override
+    {
+        _ownerGUID = summoner->GetGUID();
+        Talk(SAY_GAARDOUN_LEADS_THE_WAY, summoner);
+        me->GetMotionMaster()->MovePoint(POINT_THE_SPOILS, GaardounSpoilsPos);
+    }
+
+    void MovementInform(uint32 type, uint32 id) override
+    {
+        if (type != POINT_MOTION_TYPE || id != POINT_THE_SPOILS)
+            return;
+
+        if (Player* player = ObjectAccessor::GetPlayer(*me, _ownerGUID))
+            player->KilledMonsterCredit(me->GetEntry());
+
+        me->DespawnOrUnsummon(1s);
+    }
+
+private:
+    ObjectGuid _ownerGUID;
+};
+
+// 250244 - Cursed Forge of the Nathrezim
+// The quest has the first trait bought, and the weapon has no artifact power when it is won. See the priest's forge
+struct go_dh_cursed_forge_of_the_nathrezim : GameObjectAI
+{
+    go_dh_cursed_forge_of_the_nathrezim(GameObject* go) : GameObjectAI(go) { }
+
+    bool OnGossipHello(Player* player) override
+    {
+        if (player->GetQuestStatus(QUEST_CURSED_FORGE_OF_THE_NATHREZIM) != QUEST_STATUS_INCOMPLETE)
+            return false;
+
+        Aura const* artifactAura = player->GetAura(ARTIFACTS_ALL_WEAPONS_GENERAL_WEAPON_EQUIPPED_PASSIVE);
+        Item* artifact = artifactAura ? player->GetItemByGuid(artifactAura->GetCastItemGUID()) : nullptr;
+        if (!artifact || artifact->GetTotalPurchasedArtifactPowers())
+            return false;
+
+        if (GtArtifactLevelXPEntry const* firstTrait = sArtifactLevelXPGameTable.GetRow(1))
+        {
+            uint64 cost = uint64(firstTrait->XP);
+            uint64 artifactPower = artifact->GetUInt64Value(ITEM_FIELD_ARTIFACT_XP);
+            if (artifactPower < cost)
+                artifact->GiveArtifactXp(cost - artifactPower, nullptr, 0);
+        }
+
+        // The forge's window opens as it would
+        return false;
+    }
+};
+
+// 250677 - Empowered Nether Crucible
+struct go_dh_empowered_nether_crucible : GameObjectAI
+{
+    go_dh_empowered_nether_crucible(GameObject* go) : GameObjectAI(go) { }
+
+    bool OnGossipSelect(Player* player, uint32 menuId, uint32 /*gossipListId*/) override
+    {
+        if (menuId != MENU_EMPOWERED_NETHER_CRUCIBLE)
+            return false;
+
+        CloseGossipMenuFor(player);
+        player->CastSpell(player, SPELL_GAZING_TELEPORT, false);
+        return true;
+    }
+};
+
+// 203802 - Gazing takes the player to the Broken Shore; the scene waits for the player to arrive
+class player_dh_gazing : public PlayerScript
+{
+public:
+    player_dh_gazing() : PlayerScript("player_dh_gazing") { }
+
+    void OnMapChanged(Player* player) override
+    {
+        if (player->HasAura(SPELL_GAZING_TELEPORT) && !player->HasAura(SPELL_GAZING_SCENE))
+            player->CastSpell(player, SPELL_GAZING_SCENE, true);
+    }
+};
+
+// Scene 1201, of 203269 - Assuming Control. The rally itself is the scene's, which goes on cheering for as long as the aura lasts.
+// The credit shows the hall's own characters as the scene takes its away, and moves the leader on
+class scene_dh_activate_the_fel_hammer : public SceneScript
+{
+public:
+    scene_dh_activate_the_fel_hammer() : SceneScript("scene_dh_activate_the_fel_hammer") { }
+
+    void OnSceneTriggerEvent(Player* player, uint32 /*sceneInstanceID*/, SceneTemplate const* /*sceneTemplate*/, std::string const& triggerName) override
+    {
+        if (triggerName == "KillCredit")
+            Activate(player);
+    }
+
+    void OnSceneComplete(Player* player, uint32 /*sceneInstanceID*/, SceneTemplate const* /*sceneTemplate*/) override
+    {
+        Activate(player);
+    }
+
+    void OnSceneCancel(Player* player, uint32 /*sceneInstanceID*/, SceneTemplate const* /*sceneTemplate*/) override
+    {
+        Activate(player);
+    }
+
+private:
+    static void Activate(Player* player)
+    {
+        player->CastSpell(player, SPELL_ASSUMING_CONTROL_CREDIT, true);
+        player->UpdateObjectVisibility(false);
+    }
+};
+
+// Scene 1203, of 203790 - Gazing. The credit and the way back are in 203803
+class scene_dh_nether_crucible : public SceneScript
+{
+public:
+    scene_dh_nether_crucible() : SceneScript("scene_dh_nether_crucible") { }
+
+    void OnSceneComplete(Player* player, uint32 /*sceneInstanceID*/, SceneTemplate const* /*sceneTemplate*/) override
+    {
+        player->CastSpell(player, SPELL_GAZING_RETURN, true);
+    }
+
+    void OnSceneCancel(Player* player, uint32 /*sceneInstanceID*/, SceneTemplate const* /*sceneTemplate*/) override
+    {
+        player->CastSpell(player, SPELL_GAZING_RETURN, true);
+    }
+};
+
 void AddSC_orderhall_demon_hunter()
 {
     // Creature
@@ -758,6 +947,18 @@ void AddSC_orderhall_demon_hunter()
     RegisterCreatureAI(npc_warden_alturas_violet_hold);
     RegisterCreatureAI(npc_taldath_the_destroyer);
     RegisterCreatureAI(npc_illidari_leader_violet_hold);
+    RegisterCreatureAI(npc_illidari_leader_fel_hammer);
+    RegisterCreatureAI(npc_battlelord_gaardoun_spoils);
+    RegisterCreatureAI(npc_battlelord_gaardoun_summoned);
+
+    // Gameobjects
+    RegisterGameObjectAI(go_dh_cursed_forge_of_the_nathrezim);
+    RegisterGameObjectAI(go_dh_empowered_nether_crucible);
+
+    // Scenes
+    new scene_dh_activate_the_fel_hammer();
+    new scene_dh_nether_crucible();
+    new player_dh_gazing();
 
     // Playerchoice
     new playerchoice_the_power_to_survive();
