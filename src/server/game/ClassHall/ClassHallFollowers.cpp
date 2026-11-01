@@ -320,6 +320,9 @@ GarrisonError ClassHallFollowers::AddFollower(uint32 garrFollowerId, Optional<ui
     _owner->SendDirectMessage(addFollowerResult.Write());
 
     _owner->UpdateCriteria(CriteriaType::RecruitGarrisonFollower, garrFollowerId);
+    if (IsTroop(entry))
+        _owner->UpdateCriteria(CriteriaType::RecruitAnyGarrisonTroop);
+
     return GARRISON_SUCCESS;
 }
 

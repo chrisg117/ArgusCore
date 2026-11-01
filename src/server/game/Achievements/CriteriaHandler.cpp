@@ -514,6 +514,13 @@ void CriteriaHandler::UpdateCriteria(Criteria const* criteria, uint64 miscValue1
         case CriteriaType::AuctionsWon:    /* FIXME: for online player only currently */
         case CriteriaType::RollAnyNeed:
         case CriteriaType::RollAnyGreed:
+        case CriteriaType::SucceedGarrisonMission:
+        case CriteriaType::CollectGarrisonShipment:
+        case CriteriaType::CompleteResearchAnyGarrisonTalent:
+        case CriteriaType::CompleteResearchGarrisonTalent:
+        case CriteriaType::RecruitAnyGarrisonTroop:
+        case CriteriaType::StartResearchAnyGarrisonTalent:
+        case CriteriaType::StartResearchGarrisonTalent:
         case CriteriaType::AbandonAnyQuest:
         case CriteriaType::BuyTaxi:
         case CriteriaType::AcceptSummon:
@@ -808,10 +815,8 @@ void CriteriaHandler::UpdateCriteria(Criteria const* criteria, uint64 miscValue1
         case CriteriaType::UpgradeGarrison:
         case CriteriaType::StartAnyGarrisonMissionWithFollowerType:
         case CriteriaType::SucceedAnyGarrisonMissionWithFollowerType:
-        case CriteriaType::SucceedGarrisonMission:
         case CriteriaType::RecruitAnyGarrisonFollower:
         case CriteriaType::LearnAnyGarrisonBlueprint:
-        case CriteriaType::CollectGarrisonShipment:
         case CriteriaType::ItemLevelChangedForGarrisonFollower:
         case CriteriaType::LevelChangedForGarrisonFollower:
         case CriteriaType::LearnToy:
@@ -833,8 +838,6 @@ void CriteriaHandler::UpdateCriteria(Criteria const* criteria, uint64 miscValue1
         case CriteriaType::GroupedTankLeftEarlyInLFGDungeon:
         case CriteriaType::StartGarrisonMission:
         case CriteriaType::QualityUpgradedForGarrisonFollower:
-        case CriteriaType::CompleteResearchGarrisonTalent:
-        case CriteriaType::RecruitAnyGarrisonTroop:
         case CriteriaType::CompleteAnyWorldQuest:
         case CriteriaType::ParagonLevelIncreaseWithFaction:
         case CriteriaType::PlayerHasEarnedHonor:
@@ -1220,6 +1223,13 @@ bool CriteriaHandler::IsCompletedCriteria(Criteria const* criteria, uint64 requi
         case CriteriaType::CompleteAnyReplayQuest:
         case CriteriaType::BuyItemsFromVendors:
         case CriteriaType::SellItemsToVendors:
+        case CriteriaType::SucceedGarrisonMission:
+        case CriteriaType::CollectGarrisonShipment:
+        case CriteriaType::CompleteResearchAnyGarrisonTalent:
+        case CriteriaType::CompleteResearchGarrisonTalent:
+        case CriteriaType::RecruitAnyGarrisonTroop:
+        case CriteriaType::StartResearchAnyGarrisonTalent:
+        case CriteriaType::StartResearchGarrisonTalent:
         case CriteriaType::AnyoneTriggerGameEventScenario:
             return progress->Counter >= requiredAmount;
         case CriteriaType::EarnAchievement:
@@ -1634,6 +1644,19 @@ bool CriteriaHandler::RequirementsSatisfied(Criteria const* criteria, uint64 mis
             break;
         case CriteriaType::RecruitGarrisonFollower:
             if (miscValue1 != uint32(criteria->Entry->Asset.GarrFollowerID))
+                return false;
+            break;
+        case CriteriaType::SucceedGarrisonMission:
+            if (miscValue1 != uint32(criteria->Entry->Asset.GarrMissionID))
+                return false;
+            break;
+        case CriteriaType::CollectGarrisonShipment:
+            if (miscValue1 != uint32(criteria->Entry->Asset.CharShipmentContainerID))
+                return false;
+            break;
+        case CriteriaType::CompleteResearchGarrisonTalent:
+        case CriteriaType::StartResearchGarrisonTalent:
+            if (miscValue1 != uint32(criteria->Entry->Asset.GarrTalentID))
                 return false;
             break;
         case CriteriaType::CollectTransmogSetFromGroup:
