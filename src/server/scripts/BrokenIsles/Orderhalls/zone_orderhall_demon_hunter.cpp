@@ -16,6 +16,7 @@
  */
 
 #include "ScriptMgr.h"
+#include "CreatureAI.h"
 #include "DB2Stores.h"
 #include "MotionMaster.h"
 #include "ObjectAccessor.h"
@@ -663,6 +664,92 @@ class spell_dh_by_any_means_teleport : public SpellScript
     }
 };
 
+enum IllidariRedoubtData
+{
+    SPELL_CREATE_ORDER_HALL                 = 192191,
+    SPELL_SOUL_MISSILES                     = 217386,
+
+    NPC_KORVAS_AT_THE_REDOUBT               = 109239,
+    NPC_CAPTURED_WRATHGUARD                 = 109247,
+    NPC_IMPRISONED_IMP                      = 109252,
+    NPC_SOUL_FONT                           = 109273,
+
+    SAY_KORVAS_SOULS_ARE_FORFEIT            = 0
+};
+
+static constexpr float RedoubtPrisonersRange = 40.0f;
+
+// 192190 - Create Garrison: Artifact
+// The reward of five quests of the campaign, a dummy in the data. The first to fire founds the hall; 192191 does that work.
+class spell_dh_create_order_hall : public SpellScript
+{
+    void HandleDummy(SpellEffIndex /*effIndex*/)
+    {
+        Player* player = GetHitPlayer();
+        if (player && !player->GetClassHall())
+            player->CastSpell(player, SPELL_CREATE_ORDER_HALL, true);
+    }
+
+    void Register() override
+    {
+        OnEffectHitTarget += SpellEffectFn(spell_dh_create_order_hall::HandleDummy, EFFECT_0, SPELL_EFFECT_DUMMY);
+    }
+};
+
+// 217377 - Sentence to Death
+// Its event 52351 has no target in the data: the prisoners' souls go to the Soul Font, and the object that opens the gateway appears
+class spell_dh_sentence_to_death : public SpellScript
+{
+    void HandleAfterCast()
+    {
+        Player* player = GetCaster()->ToPlayer();
+        if (!player)
+            return;
+
+        Creature* font = player->FindNearestCreature(NPC_SOUL_FONT, RedoubtPrisonersRange);
+        for (uint32 entry : { NPC_CAPTURED_WRATHGUARD, NPC_IMPRISONED_IMP })
+        {
+            std::list<Creature*> prisoners;
+            player->GetCreatureListWithEntryInGrid(prisoners, entry, RedoubtPrisonersRange);
+            for (Creature* prisoner : prisoners)
+            {
+                if (!prisoner->IsAlive())
+                    continue;
+
+                if (font)
+                    prisoner->CastSpell(font, SPELL_SOUL_MISSILES, true);
+                prisoner->KillSelf();
+            }
+        }
+
+        if (Creature* korvas = player->FindNearestCreature(NPC_KORVAS_AT_THE_REDOUBT, RedoubtPrisonersRange))
+            korvas->AI()->Talk(SAY_KORVAS_SOULS_ARE_FORFEIT, player);
+
+        player->UpdateObjectVisibility(false);
+    }
+
+    void Register() override
+    {
+        AfterCast += SpellCastFn(spell_dh_sentence_to_death::HandleAfterCast);
+    }
+};
+
+// 217458 - Reality Tear
+// The credit completes the quest, whose state shows the gateway and takes away the object the player clicked
+class spell_dh_reality_tear : public SpellScript
+{
+    void HandleAfterCast()
+    {
+        if (Player* player = GetCaster()->ToPlayer())
+            player->UpdateObjectVisibility(false);
+    }
+
+    void Register() override
+    {
+        AfterCast += SpellCastFn(spell_dh_reality_tear::HandleAfterCast);
+    }
+};
+
 void AddSC_orderhall_demon_hunter()
 {
     // Creature
@@ -678,4 +765,7 @@ void AddSC_orderhall_demon_hunter()
     // Spellscripts
     RegisterSpellScript(spell_dh_force_specialization);
     RegisterSpellScript(spell_dh_by_any_means_teleport);
+    RegisterSpellScript(spell_dh_create_order_hall);
+    RegisterSpellScript(spell_dh_sentence_to_death);
+    RegisterSpellScript(spell_dh_reality_tear);
 }
