@@ -16,12 +16,17 @@
  */
 
 #include "ScriptMgr.h"
+#include "CreatureAI.h"
 #include "EventMap.h"
+#include "GameObject.h"
 #include "GameEventSender.h"
 #include "InstanceScript.h"
 #include "Map.h"
+#include "DB2Structure.h"
+#include "InstanceScenario.h"
 #include "Player.h"
 #include "ScriptedCreature.h"
+#include "TemporarySummon.h"
 #include "SpellMgr.h"
 #include "SpellScript.h"
 
@@ -32,22 +37,56 @@ enum FelsoulHoldData
     MAP_ACQUISITION_HAVOC                   = 1498,
     WORLD_SAFE_LOC_FELSOUL_HOLD_GRAVEYARD   = 5097,
 
+    SCENARIO_STEP_STALKING_YOUR_PREY        = 1808,
+    SCENARIO_STEP_THEY_ARE_NOT_PREPARED     = 1821,
+
     GAME_EVENT_FLY_INTO_FELSOUL_HOLD        = 45563,
+    GAME_EVENT_WARD_DESTROYED               = 45698,
+    GAME_EVENT_FIRST_WARD                   = 45760,
+    GAME_EVENT_SECOND_WARD                  = 45761,
+    GAME_EVENT_THIRD_WARD                   = 45762,
+
+    // What a kill adds to the bar of "Absorb demon souls", of 1000
+    GAME_EVENT_SOUL_225                     = 54742,
+    GAME_EVENT_SOUL_85                      = 54743,
+    GAME_EVENT_SOUL_50                      = 54744,
+    GAME_EVENT_SOUL_35                      = 54745,
 
     SPELL_TELEPORT_TO_FELSOUL_HOLD          = 188922,
     SPELL_DH_CAMP_EXPLOSION_SCENE           = 186760,
     SPELL_DH_CAMP_EXPLOSION_EVENT           = 186771,
 
+    GO_FELSHIELD_WARD_FIRST                 = 243428,
+    GO_FELSHIELD_WARD_SECOND                = 243472,
+    GO_FELSHIELD_WARD_THIRD                 = 243473,
+
+    NPC_FELSOUL_STALKER                     = 94375,
+    NPC_FELSOUL_CHAOSWEAVER                 = 95313,
+    NPC_FELSOUL_BERSERKER                   = 95423,
+    NPC_FEL_COMMANDER_IGRIUS                = 95285,
+    NPC_FELSOUL_CRUSHER                     = 95452,
+    NPC_VAREDIS_FELSOUL_IMAGE               = 94310,
+
+    SAY_VAREDIS_SEEK_MY_HEAD                = 0,
+
     EVENT_ARRIVED                           = 1,
+    EVENT_DIVE,
     EVENT_BAT_LEAVES                        = 1
 };
 
-// The camp lies far below the cliff where the fel bat drops the player (safe location 5313, height 138)
-static constexpr float DiveHeight = 110.0f;
+// Where the camp blows up under the player: the scenario's first graveyard stands there (safe location 5097)
+static constexpr Position CampDropPoint = { 1264.60f, 5234.68f, 93.53f, 3.97f };
+// After the second ward Varedis shows himself at the third and sends his crusher
+static constexpr Position VaredisAtTheThirdWard = { 1100.0f, 4885.0f, 61.5f, 1.2f };
+static constexpr Position CrusherAtTheThirdWard = { 1112.0f, 4900.0f, 60.19f, 4.5f };
 static constexpr Milliseconds FelBatRideDelay = 2s;
 static constexpr Milliseconds ArrivalDelay = 3s;
+static constexpr Milliseconds DiveDelay = 8s;
+static constexpr Milliseconds WardFadeDelay = 2s;
+static constexpr Milliseconds VaredisImageDuration = 15s;
 
-// The scenario's first two steps. The rest of the hold comes with the steps that use it.
+// The scenario up to the wards and the souls. The fel bat has no seat in this client's data, so the ride
+// over the hold is a wait at the start point and a teleport down into the camp.
 class instance_felsoul_hold : public InstanceMapScript
 {
 public:
@@ -55,7 +94,7 @@ public:
 
     struct instance_felsoul_hold_InstanceMapScript : public InstanceScript
     {
-        instance_felsoul_hold_InstanceMapScript(InstanceMap* map) : InstanceScript(map), _arrived(false), _dived(false)
+        instance_felsoul_hold_InstanceMapScript(InstanceMap* map) : InstanceScript(map), _arrived(false), _wardsDestroyed(0)
         {
             SetHeaders(DataHeader);
 
@@ -65,22 +104,113 @@ public:
 
         void OnPlayerEnter(Player* /*player*/) override
         {
-            if (!_arrived)
-                _events.ScheduleEvent(EVENT_ARRIVED, ArrivalDelay);
+            // A player coming back into the running instance does not fly in twice, nor miss a dive he left before
+            if (IsOnStep(SCENARIO_STEP_STALKING_YOUR_PREY))
+            {
+                if (!_arrived)
+                    _events.ScheduleEvent(EVENT_ARRIVED, ArrivalDelay);
+            }
+            else if (IsOnStep(SCENARIO_STEP_THEY_ARE_NOT_PREPARED))
+                _events.RescheduleEvent(EVENT_DIVE, DiveDelay);
+        }
+
+        void OnGameObjectCreate(GameObject* go) override
+        {
+            switch (go->GetEntry())
+            {
+                case GO_FELSHIELD_WARD_SECOND:
+                    _secondWardGuid = go->GetGUID();
+                    go->SetFlag(GO_FLAG_NOT_SELECTABLE);
+                    break;
+                case GO_FELSHIELD_WARD_THIRD:
+                    _thirdWardGuid = go->GetGUID();
+                    go->SetFlag(GO_FLAG_NOT_SELECTABLE);
+                    break;
+                default:
+                    break;
+            }
+        }
+
+        void OnUnitDeath(Unit* unit) override
+        {
+            switch (unit->GetEntry())
+            {
+                case NPC_FELSOUL_STALKER:
+                    SendScenarioEvent(GAME_EVENT_SOUL_35);
+                    break;
+                case NPC_FELSOUL_BERSERKER:
+                    SendScenarioEvent(GAME_EVENT_SOUL_50);
+                    break;
+                case NPC_FELSOUL_CHAOSWEAVER:
+                    SendScenarioEvent(GAME_EVENT_SOUL_85);
+                    break;
+                case NPC_FEL_COMMANDER_IGRIUS:
+                    SendScenarioEvent(GAME_EVENT_SOUL_225);
+                    OpenWard(_secondWardGuid);
+                    break;
+                case NPC_FELSOUL_CRUSHER:
+                    SendScenarioEvent(GAME_EVENT_SOUL_225);
+                    OpenWard(_thirdWardGuid);
+                    break;
+                default:
+                    break;
+            }
+        }
+
+        void ProcessEvent(WorldObject* obj, uint32 eventId, WorldObject* /*invoker*/) override
+        {
+            if (eventId != GAME_EVENT_WARD_DESTROYED)
+                return;
+
+            if (GameObject* ward = Object::ToGameObject(obj))
+            {
+                ward->DespawnOrUnsummon(WardFadeDelay);
+                switch (ward->GetEntry())
+                {
+                    case GO_FELSHIELD_WARD_FIRST:
+                        SendScenarioEvent(GAME_EVENT_FIRST_WARD);
+                        break;
+                    case GO_FELSHIELD_WARD_SECOND:
+                        SendScenarioEvent(GAME_EVENT_SECOND_WARD);
+                        break;
+                    case GO_FELSHIELD_WARD_THIRD:
+                        SendScenarioEvent(GAME_EVENT_THIRD_WARD);
+                        break;
+                    default:
+                        break;
+                }
+            }
+
+            if (++_wardsDestroyed == 2)
+                VaredisShowsHimself();
         }
 
         void Update(uint32 diff) override
         {
             _events.Update(diff);
             while (uint32 eventId = _events.ExecuteEvent())
-                if (eventId == EVENT_ARRIVED)
-                    FlownIn();
-
-            if (_arrived && !_dived)
-                CheckDive();
+            {
+                switch (eventId)
+                {
+                    case EVENT_ARRIVED:
+                        FlownIn();
+                        break;
+                    case EVENT_DIVE:
+                        Dive();
+                        break;
+                    default:
+                        break;
+                }
+            }
         }
 
     private:
+        bool IsOnStep(uint32 stepId) const
+        {
+            InstanceScenario const* scenario = instance->GetInstanceScenario();
+            return scenario && scenario->GetStep() && scenario->GetStep()->ID == stepId;
+        }
+
         // The core only passes a game event on to the scenario when a player is its source, and never for a player in GM mode
         Player* FindScenarioPlayer() const
         {
@@ -91,29 +221,56 @@ public:
             return nullptr;
         }
 
+        void SendScenarioEvent(uint32 gameEventId) const
+        {
+            if (Player* player = FindScenarioPlayer())
+                GameEvents::Trigger(gameEventId, player, nullptr);
+        }
+
         void FlownIn()
         {
             if (Player* player = FindScenarioPlayer())
             {
                 _arrived = true;
                 GameEvents::Trigger(GAME_EVENT_FLY_INTO_FELSOUL_HOLD, player, nullptr);
+                _events.ScheduleEvent(EVENT_DIVE, DiveDelay);
             }
         }
 
-        void CheckDive()
+        void Dive()
         {
+            // A player on the way out comes back through OnPlayerEnter; a teleport now would strand him on the loading screen
             Player* player = FindScenarioPlayer();
-            if (!player || player->GetPositionZ() >= DiveHeight)
+            if (!player || player->IsBeingTeleported() || !IsOnStep(SCENARIO_STEP_THEY_ARE_NOT_PREPARED))
                 return;
 
-            _dived = true;
+            player->NearTeleportTo(CampDropPoint);
             player->CastSpell(player, SPELL_DH_CAMP_EXPLOSION_SCENE, true);
             player->CastSpell(player, SPELL_DH_CAMP_EXPLOSION_EVENT, true);
         }
 
+        void OpenWard(ObjectGuid const& wardGuid)
+        {
+            if (GameObject* ward = instance->GetGameObject(wardGuid))
+                ward->RemoveFlag(GO_FLAG_NOT_SELECTABLE);
+        }
+
+        void VaredisShowsHimself()
+        {
+            Player* player = FindScenarioPlayer();
+            if (TempSummon* varedis = instance->SummonCreature(NPC_VAREDIS_FELSOUL_IMAGE, VaredisAtTheThirdWard))
+            {
+                varedis->AI()->Talk(SAY_VAREDIS_SEEK_MY_HEAD, player);
+                varedis->DespawnOrUnsummon(VaredisImageDuration);
+            }
+            instance->SummonCreature(NPC_FELSOUL_CRUSHER, CrusherAtTheThirdWard);
+        }
+
         EventMap _events;
+        ObjectGuid _secondWardGuid;
+        ObjectGuid _thirdWardGuid;
         bool _arrived;
-        bool _dived;
+        uint8 _wardsDestroyed;
     };
 
     InstanceScript* GetInstanceScript(InstanceMap* map) const override
