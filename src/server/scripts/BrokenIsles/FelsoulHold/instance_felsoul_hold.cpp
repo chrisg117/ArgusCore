@@ -19,9 +19,13 @@
 #include "CreatureAI.h"
 #include "EventMap.h"
 #include "GameObject.h"
+#include "GameObjectAI.h"
 #include "GameEventSender.h"
 #include "InstanceScript.h"
+#include "Item.h"
 #include "Map.h"
+#include "MotionMaster.h"
+#include "MoveSplineInit.h"
 #include "DB2Structure.h"
 #include "InstanceScenario.h"
 #include "Player.h"
@@ -35,6 +39,7 @@
 enum FelsoulHoldData
 {
     MAP_ACQUISITION_HAVOC                   = 1498,
+    MAP_BROKEN_ISLES                        = 1220,
     WORLD_SAFE_LOC_FELSOUL_HOLD_GRAVEYARD   = 5097,
     WORLD_SAFE_LOC_VAREDIS_GRAVEYARD        = 5362,
 
@@ -65,6 +70,13 @@ enum FelsoulHoldData
     SPELL_FEL_RUSH                          = 202817,
     SPELL_BLUR                              = 202818,
 
+    SPELL_TWINBLADES_OF_THE_DECEIVER        = 189524,
+    SPELL_WIELD_THE_TWINBLADES              = 218936,
+
+    GO_TWINBLADES_OF_THE_DECEIVER           = 251878,
+    GO_GLAIVE                               = 243267,
+
+    ITEM_TWINBLADES_OF_THE_DECEIVER         = 127829,
     GO_FELSHIELD_WARD_FIRST                 = 243428,
     GO_FELSHIELD_WARD_SECOND                = 243472,
     GO_FELSHIELD_WARD_THIRD                 = 243473,
@@ -75,6 +87,7 @@ enum FelsoulHoldData
     NPC_FEL_COMMANDER_IGRIUS                = 95285,
     NPC_FELSOUL_CRUSHER                     = 95452,
     NPC_VAREDIS_FELSOUL_IMAGE               = 94310,
+    DISPLAY_ILLIDARI_FEL_BAT                = 68247,
     NPC_VAREDIS_FELSOUL                     = 94836,
     NPC_KILJAEDEN_VOICE                     = 25608,
 
@@ -88,10 +101,12 @@ enum FelsoulHoldData
     SAY_KILJAEDEN_NOT_YOUR_TIME             = 50,
 
     DATA_VAREDIS_RECALLED                   = 1,
+    DATA_TWINBLADES_WIELDED                 = 2,
     DISPLAY_INVISIBLE_STALKER               = 11686,
 
     EVENT_ARRIVED                           = 1,
     EVENT_DIVE,
+    EVENT_LEAVE_THE_HOLD,
     EVENT_BAT_LEAVES                        = 1,
 
     EVENT_DEMONS_BITE                       = 1,
@@ -103,20 +118,32 @@ enum FelsoulHoldData
 
 // Where the camp blows up under the player: the scenario's first graveyard stands there (safe location 5097)
 static constexpr Position CampDropPoint = { 1264.60f, 5234.68f, 93.53f, 3.97f };
+// Over the hold on the fel bat, from the start point (safe location 5313) to above the camp. Ours, high enough to clear the cliffs.
+static std::array<G3D::Vector3, 3> const FelBatRide =
+{ {
+    { 900.0f, 5050.0f, 170.0f },
+    { 1100.0f, 5150.0f, 170.0f },
+    { 1264.60f, 5234.68f, 110.0f }
+} };
+static constexpr float FelBatRideSpeed = 35.0f;
 // After the second ward Varedis shows himself at the third and sends his crusher
-static constexpr Position VaredisAtTheThirdWard = { 1100.0f, 4885.0f, 61.5f, 1.2f };
-static constexpr Position CrusherAtTheThirdWard = { 1112.0f, 4900.0f, 60.19f, 4.5f };
+static constexpr Position VaredisAtTheThirdWard = { 1100.0f, 4885.0f, 62.07f, 1.2f };
+static constexpr Position CrusherAtTheThirdWard = { 1112.0f, 4900.0f, 62.14f, 4.5f };
 // The flat ground by the scenario's stage 4 graveyard (safe location 5362)
 static constexpr Position VaredisArena = { 1010.0f, 4925.0f, 36.44f, 3.97f };
 static constexpr Milliseconds VaredisRecallDuration = 4s;
+// Safe location 5696, Krasus' Landing
+static constexpr Position HavocExit = { -849.43f, 4259.27f, 746.28f, 0.0f };
+// As long as the aura of the Twinblades scene lasts
+static constexpr Milliseconds LeaveTheHoldDelay = 15s;
 static constexpr Milliseconds FelBatRideDelay = 2s;
 static constexpr Milliseconds ArrivalDelay = 3s;
-static constexpr Milliseconds DiveDelay = 8s;
+static constexpr Milliseconds DiveDelay = 16s;
 static constexpr Milliseconds WardFadeDelay = 2s;
 static constexpr Milliseconds VaredisImageDuration = 15s;
 
-// The scenario up to the wards and the souls. The fel bat has no seat in this client's data, so the ride
-// over the hold is a wait at the start point and a teleport down into the camp.
+// The scenario. The fel bat has no seat in this client's data, so the ride over the hold is the player mounted on its model
+// on a server spline, and the dive a teleport down into the camp.
 class instance_felsoul_hold : public InstanceMapScript
 {
 public:
@@ -144,23 +171,6 @@ public:
                 _events.RescheduleEvent(EVENT_DIVE, DiveDelay);
         }
 
-        void OnGameObjectCreate(GameObject* go) override
-        {
-            switch (go->GetEntry())
-            {
-                case GO_FELSHIELD_WARD_SECOND:
-                    _secondWardGuid = go->GetGUID();
-                    go->SetFlag(GO_FLAG_NOT_SELECTABLE);
-                    break;
-                case GO_FELSHIELD_WARD_THIRD:
-                    _thirdWardGuid = go->GetGUID();
-                    go->SetFlag(GO_FLAG_NOT_SELECTABLE);
-                    break;
-                default:
-                    break;
-            }
-        }
-
         void OnUnitDeath(Unit* unit) override
         {
             switch (unit->GetEntry())
@@ -176,11 +186,9 @@ public:
                     break;
                 case NPC_FEL_COMMANDER_IGRIUS:
                     SendScenarioEvent(GAME_EVENT_SOUL_225);
-                    OpenWard(_secondWardGuid);
                     break;
                 case NPC_FELSOUL_CRUSHER:
                     SendScenarioEvent(GAME_EVENT_SOUL_225);
-                    OpenWard(_thirdWardGuid);
                     break;
                 default:
                     break;
@@ -217,9 +225,25 @@ public:
 
         void SetData(uint32 type, uint32 /*data*/) override
         {
+            if (type == DATA_TWINBLADES_WIELDED)
+            {
+                if (GameObject* glaive = instance->GetGameObject(_glaiveGuid))
+                    glaive->DespawnOrUnsummon();
+                _events.ScheduleEvent(EVENT_LEAVE_THE_HOLD, LeaveTheHoldDelay);
+                return;
+            }
+
             if (type != DATA_VAREDIS_RECALLED)
                 return;
 
+            if (Player* player = FindScenarioPlayer())
+            {
+                QuaternionData const rotation = QuaternionData::fromEulerAnglesZYX(VaredisArena.GetOrientation(), 0.0f, 0.0f);
+                player->SummonGameObject(GO_TWINBLADES_OF_THE_DECEIVER, VaredisArena, rotation, 0s);
+                // The object above is a box that cannot be seen, as for the other artifacts: this is what the player looks for
+                if (GameObject* glaive = player->SummonGameObject(GO_GLAIVE, VaredisArena, rotation, 0s))
+                    _glaiveGuid = glaive->GetGUID();
+            }
             if (TempSummon* voice = instance->SummonCreature(NPC_KILJAEDEN_VOICE, VaredisArena))
             {
                 voice->SetDisplayId(DISPLAY_INVISIBLE_STALKER);
@@ -245,6 +269,9 @@ public:
                         break;
                     case EVENT_DIVE:
                         Dive();
+                        break;
+                    case EVENT_LEAVE_THE_HOLD:
+                        LeaveTheHold();
                         break;
                     default:
                         break;
@@ -281,6 +308,14 @@ public:
             {
                 _arrived = true;
                 GameEvents::Trigger(GAME_EVENT_FLY_INTO_FELSOUL_HOLD, player, nullptr);
+                player->Mount(DISPLAY_ILLIDARI_FEL_BAT);
+                player->GetMotionMaster()->LaunchMoveSpline([](Movement::MoveSplineInit& init)
+                {
+                    Movement::PointsArray path(FelBatRide.begin(), FelBatRide.end());
+                    init.MovebyPath(path);
+                    init.SetFly();
+                    init.SetVelocity(FelBatRideSpeed);
+                }, 0, MOTION_PRIORITY_NORMAL, POINT_MOTION_TYPE);
                 _events.ScheduleEvent(EVENT_DIVE, DiveDelay);
             }
         }
@@ -292,15 +327,10 @@ public:
             if (!player || player->IsBeingTeleported() || !IsOnStep(SCENARIO_STEP_THEY_ARE_NOT_PREPARED))
                 return;
 
+            player->Dismount();
             player->NearTeleportTo(CampDropPoint);
             player->CastSpell(player, SPELL_DH_CAMP_EXPLOSION_SCENE, true);
             player->CastSpell(player, SPELL_DH_CAMP_EXPLOSION_EVENT, true);
-        }
-
-        void OpenWard(ObjectGuid const& wardGuid)
-        {
-            if (GameObject* ward = instance->GetGameObject(wardGuid))
-                ward->RemoveFlag(GO_FLAG_NOT_SELECTABLE);
         }
 
         void VaredisShowsHimself()
@@ -312,6 +342,13 @@ public:
                 varedis->DespawnOrUnsummon(VaredisImageDuration);
             }
             instance->SummonCreature(NPC_FELSOUL_CRUSHER, CrusherAtTheThirdWard);
+        }
+
+        void LeaveTheHold()
+        {
+            for (MapReference const& ref : instance->GetPlayers())
+                if (Player* player = ref.GetSource())
+                    player->TeleportTo(MAP_BROKEN_ISLES, HavocExit.GetPositionX(), HavocExit.GetPositionY(), HavocExit.GetPositionZ(), HavocExit.GetOrientation());
         }
 
         void VaredisRises()
@@ -327,8 +364,7 @@ public:
         }
 
         EventMap _events;
-        ObjectGuid _secondWardGuid;
-        ObjectGuid _thirdWardGuid;
+        ObjectGuid _glaiveGuid;
         bool _arrived;
         bool _varedisShown;
         uint8 _wardsDestroyed;
@@ -452,6 +488,44 @@ private:
     bool _recalled;
 };
 
+// 251878 - Twinblades of the Deceiver
+struct go_twinblades_of_the_deceiver : public GameObjectAI
+{
+    using GameObjectAI::GameObjectAI;
+
+    bool OnGossipHello(Player* player) override
+    {
+        // Gives and equips the blades and plays the scene; the event that ends the stage is its own spell, which nothing casts in the data
+        player->CastSpell(player, SPELL_TWINBLADES_OF_THE_DECEIVER, true);
+        player->CastSpell(player, SPELL_WIELD_THE_TWINBLADES, true);
+        if (InstanceScript* instance = me->GetInstanceScript())
+            instance->SetData(DATA_TWINBLADES_WIELDED, 1);
+        me->DespawnOrUnsummon();
+        return true;
+    }
+};
+
+// 189523 - The Twinblades of the Deceiver
+// SPELL_EFFECT_FORCE_EQUIP_ITEM does nothing in the core
+class spell_felsoul_hold_equip_twinblades : public SpellScript
+{
+    void HandleEquip(SpellEffIndex /*effIndex*/)
+    {
+        Player* player = GetHitPlayer();
+        if (!player)
+            return;
+
+        Item* item = player->GetItemByEntry(ITEM_TWINBLADES_OF_THE_DECEIVER);
+        if (item && !item->IsEquipped())
+            player->SwapItem(item->GetPos(), (INVENTORY_SLOT_BAG_0 << 8) | EQUIPMENT_SLOT_MAINHAND);
+    }
+
+    void Register() override
+    {
+        OnEffectHitTarget += SpellEffectFn(spell_felsoul_hold_equip_twinblades::HandleEquip, EFFECT_0, SPELL_EFFECT_FORCE_EQUIP_ITEM);
+    }
+};
+
 // 94324 - Illidari Fel Bat, summoned by the one at Krasus' Landing. It has no seat in this client's data, so it only comes to fetch the player.
 struct npc_illidari_fel_bat_felsoul_hold : public ScriptedAI
 {
@@ -497,6 +571,8 @@ void AddSC_instance_felsoul_hold()
 {
     new instance_felsoul_hold();
     RegisterCreatureAI(boss_varedis_felsoul);
+    RegisterGameObjectAI(go_twinblades_of_the_deceiver);
+    RegisterSpellScript(spell_felsoul_hold_equip_twinblades);
     RegisterCreatureAI(npc_illidari_fel_bat_felsoul_hold);
     RegisterSpellScript(spell_felsoul_hold_fly_in);
 }

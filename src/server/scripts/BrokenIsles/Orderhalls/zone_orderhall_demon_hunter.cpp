@@ -425,12 +425,12 @@ struct npc_warden_alturas_violet_hold : public ScriptedAI
                 }
                 case EVENT_ALTURAS_FOLLOW_ME:
                     Talk(SAY_ALTURAS_FOLLOW_ME, player);
-                    me->GetMotionMaster()->MovePoint(POINT_ALTURAS_AT_THE_CELL, AlturasAtTheCell, false);
+                    me->GetMotionMaster()->MovePoint(POINT_ALTURAS_AT_THE_CELL, AlturasAtTheCell);
                     if (leader)
                     {
                         if (leader->GetEntry() == NPC_KAYN_SUNFURY)
                             leader->AI()->Talk(SAY_KAYN_AFTER_YOU, player);
-                        leader->GetMotionMaster()->MovePoint(0, LeaderAtTheCell, false);
+                        leader->GetMotionMaster()->MovePoint(0, LeaderAtTheCell);
                     }
                     break;
                 case EVENT_ALTURAS_NEVER_HERE:
@@ -438,7 +438,7 @@ struct npc_warden_alturas_violet_hold : public ScriptedAI
                     _events.ScheduleEvent(EVENT_LEADER_MEET_TALDATH, 5s);
                     break;
                 case EVENT_LEADER_MEET_TALDATH:
-                    me->GetMotionMaster()->MovePoint(POINT_ALTURAS_LEAVES, HoldEntrance, false);
+                    me->GetMotionMaster()->MovePoint(POINT_ALTURAS_LEAVES, HoldEntrance);
                     if (leader && leader->GetEntry() == NPC_KAYN_SUNFURY)
                         leader->AI()->Talk(SAY_KAYN_MEET_TALDATH, player);
                     _events.ScheduleEvent(EVENT_LEADER_THE_HONORS, 7s);
