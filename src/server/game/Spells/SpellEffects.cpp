@@ -5387,10 +5387,11 @@ void Spell::EffectCreateGarrison()
 
     Player* player = unitTarget->ToPlayer();
     GarrTypeEntry const* garrType = sGarrisonMgr.GetGarrTypeEntryForSite(effectInfo->MiscValue);
-    if (garrType && garrType->ID == GARRISON_TYPE_CLASS_ORDER)
-        player->CreateClassHall(effectInfo->MiscValue);
-    else
+    // only Draenor's sites always name a map of their type: the demon hunter hall's first level points at an unrelated map
+    if (garrType && garrType->ID == GARRISON_TYPE_GARRISON)
         player->CreateGarrison(effectInfo->MiscValue);
+    else
+        player->CreateClassHall(effectInfo->MiscValue);
 }
 
 void Spell::EffectCreateConversation()
