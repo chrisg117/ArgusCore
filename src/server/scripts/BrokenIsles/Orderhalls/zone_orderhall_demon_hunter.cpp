@@ -802,6 +802,7 @@ struct npc_battlelord_gaardoun_spoils : public ScriptedAI
 
         CloseGossipMenuFor(player);
         player->CastSpell(player, SPELL_SUMMON_BATTLELORD_GAARDOUN, true);
+        player->UpdateObjectVisibility(false);
         return true;
     }
 };
@@ -824,7 +825,10 @@ struct npc_battlelord_gaardoun_summoned : public ScriptedAI
             return;
 
         if (Player* player = ObjectAccessor::GetPlayer(*me, _ownerGUID))
+        {
             player->KilledMonsterCredit(me->GetEntry());
+            player->UpdateObjectVisibility(false);
+        }
 
         me->DespawnOrUnsummon(1s);
     }
@@ -897,6 +901,12 @@ class scene_dh_activate_the_fel_hammer : public SceneScript
 {
 public:
     scene_dh_activate_the_fel_hammer() : SceneScript("scene_dh_activate_the_fel_hammer") { }
+
+    // the leader at the door goes when the scene's own actor takes over from him
+    void OnSceneStart(Player* player, uint32 /*sceneInstanceID*/, SceneTemplate const* /*sceneTemplate*/) override
+    {
+        player->UpdateObjectVisibility(false);
+    }
 
     void OnSceneTriggerEvent(Player* player, uint32 /*sceneInstanceID*/, SceneTemplate const* /*sceneTemplate*/, std::string const& triggerName) override
     {
