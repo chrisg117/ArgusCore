@@ -1087,7 +1087,7 @@ bool GameObject::Create(uint32 entry, Map* map, Position const& pos, QuaternionD
     // GAMEOBJECT_BYTES_1, index at 0, 1, 2 and 3
     SetGoType(GameobjectTypes(goInfo->type));
     m_prevGoState = goState;
-    SetGoState(goState);
+    SetGoState(goInfo->IsGooberStartOpen() ? GO_STATE_ACTIVE : goState);
     SetGoArtKit(artKit);
 
     switch (goInfo->type)
@@ -1634,7 +1634,7 @@ void GameObject::Update(uint32 diff)
                     m_usetimes = 0;
                 }
 
-                SetGoState(GO_STATE_READY);
+                SetGoState(GetGOInfo()->IsGooberStartOpen() ? GO_STATE_ACTIVE : GO_STATE_READY);
 
                 //any return here in case battleground traps
                 if (GameObjectOverride const* goOverride = GetGameObjectOverride())
@@ -2871,7 +2871,7 @@ void GameObject::Use(Unit* user, bool ignoreCastInProgress /*= false*/)
                 if (info->IsDespawnAtAction())
                     DespawnForPlayer(player, Seconds(m_respawnDelayTime));
                 else
-                    SetGoStateFor(GO_STATE_ACTIVE, player);
+                    SetGoStateFor(info->IsGooberStartOpen() ? GO_STATE_READY : GO_STATE_ACTIVE, player);
             }
             else
             {
@@ -2882,7 +2882,7 @@ void GameObject::Use(Unit* user, bool ignoreCastInProgress /*= false*/)
                 if (info->goober.customAnim)
                     SendCustomAnim(GetGoAnimProgress());
                 else
-                    SetGoState(GO_STATE_ACTIVE);
+                    SetGoState(info->IsGooberStartOpen() ? GO_STATE_READY : GO_STATE_ACTIVE);
 
                 m_cooldownTime = GameTime::GetGameTimeMS() + info->GetAutoCloseTime();
             }
@@ -4058,7 +4058,7 @@ void GameObject::BuildValuesUpdateWithMask(uint8 updateType, ByteBuffer* data, P
                     case GAMEOBJECT_TYPE_BUTTON:
                     case GAMEOBJECT_TYPE_GOOBER:
                         if (HasConditionalInteraction() && CanActivateForPlayer(target))
-                            if (GetGoStateFor(target->GetGUID()) != GO_STATE_ACTIVE)
+                            if (GetGoStateFor(target->GetGUID()) != (GetGOInfo()->IsGooberStartOpen() ? GO_STATE_READY : GO_STATE_ACTIVE))
                                 dynFlags |= GO_DYNFLAG_LO_ACTIVATE | GO_DYNFLAG_LO_HIGHLIGHT;
                         break;
                     case GAMEOBJECT_TYPE_QUESTGIVER:

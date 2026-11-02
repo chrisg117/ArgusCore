@@ -695,6 +695,9 @@ struct GameObjectTemplate
     WorldPacket QueryData[TOTAL_LOCALES];
 
     // helpers
+    // a startOpen goober rests open and closes when used
+    bool IsGooberStartOpen() const { return type == GAMEOBJECT_TYPE_GOOBER && goober.startOpen != 0; }
+
     bool IsDespawnAtAction() const
     {
         switch (type)
