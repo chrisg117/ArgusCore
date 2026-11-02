@@ -760,6 +760,8 @@ enum FelHammerData
     QUEST_UNBRIDLED_POWER_ALTRUIS           = 41060,
     QUEST_UNBRIDLED_POWER_KAYN              = 41037,
     QUEST_CURSED_FORGE_OF_THE_NATHREZIM     = 41064,
+    QUEST_DIRECT_OUR_WRATH_ALTRUIS          = 41099,
+    QUEST_DIRECT_OUR_WRATH_KAYN             = 41069,
 
     SPELL_ASSUMING_CONTROL_CREDIT           = 203459,
     SPELL_GATEWAY_THE_FEL_HAMMER            = 193752,
@@ -767,6 +769,7 @@ enum FelHammerData
     SPELL_GAZING_TELEPORT                   = 203802,
     SPELL_GAZING_SCENE                      = 203790,
     SPELL_GAZING_RETURN                     = 203803,
+    SPELL_ZONE_BREADCRUMB_ALREADY_OBTAINED  = 215269,
 
     MENU_SHOW_ME_THE_SPOILS                 = 19287,
     MENU_EMPOWERED_NETHER_CRUCIBLE          = 19337,
@@ -777,11 +780,31 @@ enum FelHammerData
 
 static constexpr Position GaardounSpoilsPos = { 1584.0f, 1409.0f, 218.1f };
 
+// The adventure map's zone quests: Paradise Lost, The Tranquil Forest, Stormheim (both factions), The Lone Mountain
+static constexpr uint32 ZoneQuests[] = { 39718, 39731, 39735, 39864, 39733 };
+
 // 95237 - Altruis the Sufferer, 95240 - Kayn Sunfury
 // Unbridled Power teaches the way back here, and nothing in the data says so
 struct npc_illidari_leader_fel_hammer : public ScriptedAI
 {
     npc_illidari_leader_fel_hammer(Creature* creature) : ScriptedAI(creature) { }
+
+    // The Command Map is open to anyone in the hall, so a zone may be picked before Direct Our Wrath is taken;
+    // the map then has nothing left to offer, and this spell is the credit for that case
+    void OnQuestAccept(Player* player, Quest const* quest) override
+    {
+        if (quest->GetQuestId() != QUEST_DIRECT_OUR_WRATH_ALTRUIS && quest->GetQuestId() != QUEST_DIRECT_OUR_WRATH_KAYN)
+            return;
+
+        for (uint32 zoneQuest : ZoneQuests)
+        {
+            if (player->GetQuestStatus(zoneQuest) != QUEST_STATUS_NONE)
+            {
+                player->CastSpell(player, SPELL_ZONE_BREADCRUMB_ALREADY_OBTAINED, true);
+                return;
+            }
+        }
+    }
 
     void OnQuestReward(Player* player, Quest const* quest, LootItemType /*type*/, uint32 /*opt*/) override
     {
