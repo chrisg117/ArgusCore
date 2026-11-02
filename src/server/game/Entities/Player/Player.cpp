@@ -16502,6 +16502,10 @@ void Player::SetQuestObjectiveData(QuestObjective const& objective, int32 data)
     if (Quest const* quest = sObjectMgr->GetQuestTemplate(objective.QuestID))
         sScriptMgr->OnQuestObjectiveChange(this, quest, objective, oldData, data);
 
+    // Phase conditions can check objective progress; retail data has no completion effect row for most of them
+    if (sConditionMgr->IsQuestObjectiveUsedInPhaseConditions(objective.ID))
+        PhasingHandler::OnConditionChange(this);
+
     // Visibility conditions can depend on objective progress too
     UpdateObjectVisibility(false);
 }

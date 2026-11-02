@@ -1292,6 +1292,7 @@ class TC_GAME_API ObjectMgr
         void LoadTerrainSwapDefaults();
         void LoadTerrainWorldMaps();
         void LoadAreaPhases();
+        void ReloadAreaPhases();
 
         void LoadSceneTemplates();
 
@@ -1773,6 +1774,8 @@ class TC_GAME_API ObjectMgr
         std::unordered_map<uint32, TerrainSwapInfo> _terrainSwapInfoById;
         std::unordered_map<uint32, std::vector<PhaseAreaInfo>> _phaseInfoByArea;
         std::unordered_map<uint32, std::vector<TerrainSwapInfo*>> _terrainSwapInfoByMap;
+        // phase_area entries replaced by a reload; kept alive because phase shifts hold pointers to their conditions
+        std::vector<std::unordered_map<uint32, std::vector<PhaseAreaInfo>>> _retiredPhaseInfoByArea;
 
     private:
         void LoadEventSet();

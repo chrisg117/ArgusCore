@@ -330,6 +330,8 @@ class TC_GAME_API ConditionMgr
         bool IsObjectMeetingPlayerChoiceResponseConditions(uint32 playerChoiceId, int32 playerChoiceResponseId, Player const* player) const;
 
         bool IsSpellUsedInSpellClickConditions(uint32 spellId) const;
+        // phase_area or terrain swap conditions check this objective's progress (CONDITION_QUEST_OBJECTIVE_PROGRESS)
+        bool IsQuestObjectiveUsedInPhaseConditions(uint32 objectiveId) const { return QuestObjectivesUsedInPhaseConditions.contains(objectiveId); }
 
         ConditionContainer const* GetConditionsForAreaTrigger(uint32 areaTriggerId, bool isServerSide) const;
         bool IsObjectMeetingTrainerSpellConditions(uint32 trainerId, uint32 spellId, Player* player) const;
@@ -370,6 +372,7 @@ class TC_GAME_API ConditionMgr
         ConditionEntriesByTypeArray     ConditionStore;
 
         std::unordered_set<uint32> SpellsUsedInSpellClickConditions;
+        std::unordered_set<uint32> QuestObjectivesUsedInPhaseConditions;
 };
 
 #define sConditionMgr ConditionMgr::instance()
