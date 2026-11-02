@@ -1457,6 +1457,13 @@ void ConditionMgr::LoadConditions(bool isReload)
     for (auto&& [id, conditions] : ConditionStore[CONDITION_SOURCE_TYPE_PHASE])
         addToPhases(id, conditions);
 
+    // Objective progress does not re-evaluate phases on its own; remember which objectives phases depend on
+    for (ConditionSourceType sourceType : { CONDITION_SOURCE_TYPE_PHASE, CONDITION_SOURCE_TYPE_TERRAIN_SWAP })
+        for (auto&& [id, conditions] : ConditionStore[sourceType])
+            for (Condition const& condition : *conditions)
+                if (condition.ConditionType == CONDITION_QUEST_OBJECTIVE_PROGRESS)
+                    QuestObjectivesUsedInPhaseConditions.insert(condition.ConditionValue1);
+
     for (auto&& [id, conditions] : ConditionStore[CONDITION_SOURCE_TYPE_GRAVEYARD])
         addToGraveyardData(id, conditions);
 
@@ -2728,6 +2735,7 @@ void ConditionMgr::Clean()
         conditionsMap.clear();
 
     SpellsUsedInSpellClickConditions.clear();
+    QuestObjectivesUsedInPhaseConditions.clear();
 }
 
 inline bool PlayerConditionCompare(int32 comparisonType, int32 value1, int32 value2)
