@@ -31,6 +31,7 @@ EndScriptData */
 #include "CharacterTemplateDataStore.h"
 #include "Chat.h"
 #include "ChatCommand.h"
+#include "ConditionMgr.h"
 #include "ConversationDataStore.h"
 #include "CreatureTextMgr.h"
 #include "DatabaseEnv.h"
@@ -41,7 +42,10 @@ EndScriptData */
 #include "Log.h"
 #include "LootMgr.h"
 #include "MapManager.h"
+#include "ObjectAccessor.h"
 #include "ObjectMgr.h"
+#include "PhasingHandler.h"
+#include "Player.h"
 #include "SkillDiscovery.h"
 #include "SkillExtraItems.h"
 #include "SmartAI.h"
@@ -129,6 +133,8 @@ public:
             { "npc_spellclick_spells",         rbac::RBAC_PERM_COMMAND_RELOAD_NPC_SPELLCLICK_SPELLS,            true,  &HandleReloadSpellClickSpellsCommand,           "" },
             { "npc_vendor",                    rbac::RBAC_PERM_COMMAND_RELOAD_NPC_VENDOR,                       true,  &HandleReloadNpcVendorCommand,                  "" },
             { "page_text",                     rbac::RBAC_PERM_COMMAND_RELOAD_PAGE_TEXT,                        true,  &HandleReloadPageTextsCommand,                  "" },
+            { "phase_area",                    rbac::RBAC_PERM_COMMAND_RELOAD_CONDITIONS,                       true,  &HandleReloadPhaseAreaCommand,                  "" },
+            { "phase_name",                    rbac::RBAC_PERM_COMMAND_RELOAD_CONDITIONS,                       true,  &HandleReloadPhaseNameCommand,                  "" },
             { "pickpocketing_loot_template",   rbac::RBAC_PERM_COMMAND_RELOAD_PICKPOCKETING_LOOT_TEMPLATE,      true,  &HandleReloadLootTemplatesPickpocketingCommand, "" },
             { "points_of_interest",            rbac::RBAC_PERM_COMMAND_RELOAD_POINTS_OF_INTEREST,               true,  &HandleReloadPointsOfInterestCommand,           "" },
             { "prospecting_loot_template",     rbac::RBAC_PERM_COMMAND_RELOAD_PROSPECTING_LOOT_TEMPLATE,        true,  &HandleReloadLootTemplatesProspectingCommand,   "" },
@@ -866,6 +872,30 @@ public:
         TC_LOG_INFO("misc", "Re-Loading Spell pet auras...");
         sSpellMgr->LoadSpellPetAuras();
         handler->SendGlobalGMSysMessage("DB table `spell_pet_auras` reloaded.");
+        return true;
+    }
+
+    static bool HandleReloadPhaseAreaCommand(ChatHandler* handler, char const* /*args*/)
+    {
+        TC_LOG_INFO("misc", "Re-Loading phase_area and conditions...");
+        sObjectMgr->ReloadAreaPhases();
+        // phase conditions live on the phase_area entries, so they have to be attached again
+        sConditionMgr->LoadConditions(true);
+        sScriptMgr->NotifyScriptIDUpdate();
+
+        for (auto&& [playerGuid, player] : ObjectAccessor::GetPlayers())
+            if (player->IsInWorld())
+                PhasingHandler::OnAreaChange(player);
+
+        handler->SendGlobalGMSysMessage("DB tables `phase_area` and `conditions` reloaded, phases re-applied to online players.");
+        return true;
+    }
+
+    static bool HandleReloadPhaseNameCommand(ChatHandler* handler, char const* /*args*/)
+    {
+        TC_LOG_INFO("misc", "Re-Loading phase_name...");
+        sObjectMgr->LoadPhaseNames();
+        handler->SendGlobalGMSysMessage("DB table `phase_name` reloaded.");
         return true;
     }
 

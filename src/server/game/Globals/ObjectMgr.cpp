@@ -10623,6 +10623,17 @@ void ObjectMgr::LoadAreaPhases()
     TC_LOG_INFO("server.loading", ">> Loaded {} phase areas in {} ms.", count, GetMSTimeDiffToNow(oldMSTime));
 }
 
+void ObjectMgr::ReloadAreaPhases()
+{
+    _retiredPhaseInfoByArea.push_back(std::move(_phaseInfoByArea));
+    _phaseInfoByArea.clear();
+
+    for (auto& [phaseId, phaseInfo] : _phaseInfoById)
+        phaseInfo.Areas.clear();
+
+    LoadAreaPhases();
+}
+
 bool PhaseInfoStruct::IsAllowedInArea(uint32 areaId) const
 {
     return std::any_of(Areas.begin(), Areas.end(), [areaId](uint32 areaToCheck)
