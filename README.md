@@ -49,6 +49,7 @@ Shared class hall engine (foundation, talents, followers, shipments, missions, f
 | Area | Status |
 |------|--------|
 | Phasing | Phases re-checked when a quest objective they depend on progresses; `.reload phase_area` applies phase changes without a restart |
+| Gameobjects | Goobers that spawn open (startOpen) are usable from a client click |
 
 ## About
 
