@@ -4804,7 +4804,10 @@ void Spell::EffectQuestStart()
             player->PlayerTalkClass->SendQuestGiverQuestDetails(quest, player->GetGUID(), true, true);
         }
         else
+        {
+            player->SetQuestStartSpellQuestId(quest->GetQuestId());
             player->PlayerTalkClass->SendQuestGiverQuestDetails(quest, player->GetGUID(), true, false);
+        }
     }
 }
 

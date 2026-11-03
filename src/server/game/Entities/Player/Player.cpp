@@ -171,6 +171,7 @@ Player::Player(WorldSession* session) : Unit(true), m_sceneMgr(this)
 
     m_ingametime = 0;
     m_sharedQuestId = 0;
+    m_questStartSpellQuestId = 0;
 
     m_ExtraFlags = 0;
 

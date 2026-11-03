@@ -103,7 +103,13 @@ void WorldSession::HandleQuestgiverAcceptQuestOpcode(WorldPackets::Quest::QuestG
     if (!object)
         return;
 
-    if (Player* playerQuestObject = object->ToPlayer())
+    if (object == _player)
+    {
+        // only the quest a quest-start spell offered has the player as its own giver
+        if (_player->GetQuestStartSpellQuestId() != packet.QuestID)
+            return;
+    }
+    else if (Player* playerQuestObject = object->ToPlayer())
     {
         if ((_player->GetPlayerSharingQuest().IsEmpty() && _player->GetPlayerSharingQuest() != packet.QuestGiverGUID) || !playerQuestObject->CanShareQuest(packet.QuestID))
             return;
@@ -143,6 +149,9 @@ void WorldSession::HandleQuestgiverAcceptQuestOpcode(WorldPackets::Quest::QuestG
         return;
 
     (void)CLOSE_GOSSIP_CLEAR_SHARING_INFO.release();
+
+    if (object == _player)
+        _player->SetQuestStartSpellQuestId(0);
 
     _player->AddQuestAndCheckCompletion(quest, object);
 
