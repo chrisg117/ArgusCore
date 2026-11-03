@@ -224,6 +224,12 @@ void WorldSession::HandleGameobjectReportUse(WorldPackets::GameObject::GameObjRe
         if (go->AI()->OnReportUse(_player))
             return;
 
+        // the client only reports clicks on a goober that starts open, so the report is its use;
+        // once used it is ready or despawned for this player and further reports are ignored
+        if (go->GetGOInfo()->IsGooberStartOpen() && go->GetGoStateFor(_player->GetGUID()) == GO_STATE_ACTIVE
+            && go->getLootState() == GO_READY && !go->HasFlag(GO_FLAG_IN_USE) && !go->IsInvisibleDueToDespawn(_player))
+            go->Use(_player);
+
         // the object of an order container hands over the finished orders
         if (go->GetGoType() == GAMEOBJECT_TYPE_GARRISON_SHIPMENT)
             if (ClassHall* classHall = _player->GetClassHall())
