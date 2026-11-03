@@ -24,8 +24,8 @@ namespace WorldPackets::Garrison
 {
 WorldPacket const* GarrisonCreateResult::Write()
 {
-    _worldPacket << uint32(Result);
     _worldPacket << uint32(GarrSiteLevelID);
+    _worldPacket << uint32(Result);
 
     return &_worldPacket;
 }
