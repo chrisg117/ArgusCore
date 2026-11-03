@@ -44,6 +44,12 @@ Shared class hall engine (foundation, talents, followers, shipments, missions, f
 | Azsuna | In progress: opening chain through Our Very Bones; Retake Faronaar bonus objective |
 | Val'sharah, Highmountain, Stormheim, Suramar | Not started |
 
+**Core engine**
+
+| Area | Status |
+|------|--------|
+| Phasing | Phases re-checked when a quest objective they depend on progresses; `.reload phase_area` applies phase changes without a restart |
+
 ## About
 
 ArgusCore is a C++ server emulator for World of Warcraft patch 7.3.5 (Legion).
