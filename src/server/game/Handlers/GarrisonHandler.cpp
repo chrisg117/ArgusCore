@@ -34,6 +34,11 @@ bool IsGarrisonFollower(Player const* player, uint64 followerDbId)
 
 void WorldSession::HandleGetGarrisonInfo(WorldPackets::Garrison::GetGarrisonInfo& /*getGarrisonInfo*/)
 {
+    SendGarrisonInfo();
+}
+
+void WorldSession::SendGarrisonInfo()
+{
     // the client asks once and expects every garrison the character has in one reply
     WorldPackets::Garrison::GetGarrisonInfoResult garrisonInfo;
     garrisonInfo.FactionIndex = _player->GetTeam() == HORDE ? GARRISON_FACTION_INDEX_HORDE : GARRISON_FACTION_INDEX_ALLIANCE;
