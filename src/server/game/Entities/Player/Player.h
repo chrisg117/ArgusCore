@@ -1748,6 +1748,9 @@ class TC_GAME_API Player final : public Unit, public GridObject<Player>
         ObjectGuid GetPlayerSharingQuest() const { return m_playerSharingQuest; }
         void SetQuestSharingInfo(ObjectGuid guid, uint32 id) { m_playerSharingQuest = guid; m_sharedQuestId = id; }
         void ClearQuestSharingInfo() { m_playerSharingQuest = ObjectGuid::Empty; m_sharedQuestId = 0; }
+        // the quest a quest-start spell last offered, with the player as its giver
+        uint32 GetQuestStartSpellQuestId() const { return m_questStartSpellQuestId; }
+        void SetQuestStartSpellQuestId(uint32 questId) { m_questStartSpellQuestId = questId; }
 
         uint32 GetInGameTime() const { return m_ingametime; }
         void SetInGameTime(uint32 time) { m_ingametime = time; }
@@ -2968,6 +2971,7 @@ class TC_GAME_API Player final : public Unit, public GridObject<Player>
 
         ObjectGuid m_playerSharingQuest;
         uint32 m_sharedQuestId;
+        uint32 m_questStartSpellQuestId;
         uint32 m_ingametime;
 
         /*********************************************************/
