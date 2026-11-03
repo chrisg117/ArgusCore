@@ -28494,8 +28494,14 @@ void Player::CreateClassHall(uint32 garrSiteId)
     }
 
     std::unique_ptr<ClassHall> classHall = std::make_unique<ClassHall>(this);
-    if (classHall->Create(garrSiteId))
-        _classHall = std::move(classHall);
+    if (!classHall->Create(garrSiteId))
+        return;
+
+    _classHall = std::move(classHall);
+
+    // the client asks for its garrisons only at login: without the info the new hall has no landing page until then
+    GetSession()->SendGarrisonInfo();
+    PhasingHandler::OnConditionChange(this);
 }
 
 void Player::SendMovementSetCollisionHeight(float height, WorldPackets::Movement::UpdateCollisionHeightReason reason)
