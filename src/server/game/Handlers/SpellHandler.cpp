@@ -200,6 +200,33 @@ void WorldSession::HandleOpenWrappedItemCallback(uint16 pos, ObjectGuid itemGuid
     CharacterDatabase.CommitTransaction(trans);
 }
 
+// The generic opening spell the client casts for a lock type; 0 when there is none
+static uint32 GetOpeningSpellForLock(uint32 lockId)
+{
+    LockEntry const* lock = sLockStore.LookupEntry(lockId);
+    if (!lock)
+        return 0;
+
+    for (uint8 i = 0; i < MAX_LOCK_CASE; ++i)
+    {
+        if (lock->Type[i] != LOCK_KEY_SKILL)
+            continue;
+
+        switch (lock->Index[i])
+        {
+            case LOCKTYPE_OPEN:              return 3365;
+            case LOCKTYPE_OPEN_TINKERING:    return 6477;
+            case LOCKTYPE_OPEN_KNEELING:     return 6478;
+            case LOCKTYPE_OPEN_ATTACKING:    return 8386;
+            case LOCKTYPE_PVP_OPEN:          return 21651;
+            case LOCKTYPE_OPEN_FROM_VEHICLE: return 61437;
+            default:                         return 0;
+        }
+    }
+
+    return 0;
+}
+
 void WorldSession::HandleGameObjectUseOpcode(WorldPackets::GameObject::GameObjUse& packet)
 {
     if (GameObject* obj = GetPlayer()->GetGameObjectIfCanInteractWith(packet.Guid))
@@ -228,7 +255,17 @@ void WorldSession::HandleGameobjectReportUse(WorldPackets::GameObject::GameObjRe
         // once used it is ready or despawned for this player and further reports are ignored
         if (go->GetGOInfo()->IsGooberStartOpen() && go->GetGoStateFor(_player->GetGUID()) == GO_STATE_ACTIVE
             && go->getLootState() == GO_READY && !go->HasFlag(GO_FLAG_IN_USE) && !go->IsInvisibleDueToDespawn(_player))
-            go->Use(_player);
+        {
+            // a locked one is opened by the lock type's opening cast (its cast bar), which uses it on success;
+            // reports during that cast are ignored so they do not restart it
+            if (uint32 openingSpellId = GetOpeningSpellForLock(go->GetGOInfo()->GetLockId()))
+            {
+                if (!_player->IsNonMeleeSpellCast(false))
+                    _player->CastSpell(go, openingSpellId);
+            }
+            else
+                go->Use(_player);
+        }
 
         // the object of an order container hands over the finished orders
         if (go->GetGoType() == GAMEOBJECT_TYPE_GARRISON_SHIPMENT)
