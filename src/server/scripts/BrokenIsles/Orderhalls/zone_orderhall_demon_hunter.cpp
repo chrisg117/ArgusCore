@@ -671,7 +671,8 @@ class spell_dh_by_any_means_teleport : public SpellScript
 
 enum IllidariRedoubtData
 {
-    SPELL_CREATE_ORDER_HALL                 = 192191,
+    SPELL_CREATE_ORDER_HALL_DEMON_HUNTER    = 192191,
+    SPELL_CREATE_ORDER_HALL                 = 185506,
     SPELL_SOUL_MISSILES                     = 217386,
 
     NPC_KORVAS_AT_THE_REDOUBT               = 109239,
@@ -685,19 +686,23 @@ enum IllidariRedoubtData
 static constexpr float RedoubtPrisonersRange = 40.0f;
 
 // 192190 - Create Garrison: Artifact
-// The reward of five quests of the campaign, a dummy in the data. The first to fire founds the hall; 192191 does that work.
-class spell_dh_create_order_hall : public SpellScript
+// The reward of several quests of each class's campaign, a dummy in the data. The first to fire founds the hall: the
+// demon hunter's Fel Hammer is its own site (163, 192191); every other class's hall is site 161 (185506), which the
+// client draws by class. A death knight on site 163 gets no landing page button.
+class spell_order_hall_founding : public SpellScript
 {
     void HandleDummy(SpellEffIndex /*effIndex*/)
     {
         Player* player = GetHitPlayer();
-        if (player && !player->GetClassHall())
-            player->CastSpell(player, SPELL_CREATE_ORDER_HALL, true);
+        if (!player || player->GetClassHall())
+            return;
+
+        player->CastSpell(player, player->GetClass() == CLASS_DEMON_HUNTER ? SPELL_CREATE_ORDER_HALL_DEMON_HUNTER : SPELL_CREATE_ORDER_HALL, true);
     }
 
     void Register() override
     {
-        OnEffectHitTarget += SpellEffectFn(spell_dh_create_order_hall::HandleDummy, EFFECT_0, SPELL_EFFECT_DUMMY);
+        OnEffectHitTarget += SpellEffectFn(spell_order_hall_founding::HandleDummy, EFFECT_0, SPELL_EFFECT_DUMMY);
     }
 };
 
@@ -999,7 +1004,7 @@ void AddSC_orderhall_demon_hunter()
     // Spellscripts
     RegisterSpellScript(spell_dh_force_specialization);
     RegisterSpellScript(spell_dh_by_any_means_teleport);
-    RegisterSpellScript(spell_dh_create_order_hall);
+    RegisterSpellScript(spell_order_hall_founding);
     RegisterSpellScript(spell_dh_sentence_to_death);
     RegisterSpellScript(spell_dh_reality_tear);
 }
