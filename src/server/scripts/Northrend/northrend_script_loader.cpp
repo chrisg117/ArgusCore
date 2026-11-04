@@ -187,6 +187,7 @@ void AddSC_boss_the_lich_king();
 void AddSC_icecrown_citadel_teleport();
 void AddSC_instance_icecrown_citadel();
 void AddSC_icecrown_citadel();
+void AddSC_instance_icecrown_citadel_scenario();
 // Ruby Sanctum
 void AddSC_instance_ruby_sanctum();
 void AddSC_ruby_sanctum();
@@ -382,6 +383,7 @@ void AddNorthrendScripts()
     AddSC_icecrown_citadel_teleport();
     AddSC_instance_icecrown_citadel();
     AddSC_icecrown_citadel();
+    AddSC_instance_icecrown_citadel_scenario();
     // Ruby Sanctum
     AddSC_instance_ruby_sanctum();
     AddSC_ruby_sanctum();
