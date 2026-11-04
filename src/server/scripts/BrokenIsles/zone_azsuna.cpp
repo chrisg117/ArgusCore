@@ -16,6 +16,8 @@
  */
 
 #include "CellImpl.h"
+#include "PathGenerator.h"
+#include "QuestDef.h"
 #include "GridNotifiersImpl.h"
 #include "MotionMaster.h"
 #include "MoveSplineInit.h"
@@ -27,6 +29,7 @@
 #include "ScriptedGossip.h"
 #include "TemporarySummon.h"
 #include "Vehicle.h"
+#include "WaypointManager.h"
 
 #include <array>
 
@@ -456,6 +459,219 @@ private:
     TaskScheduler _scheduler;
 };
 
+enum FarondisEscort
+{
+    QUEST_TRAILING_THE_TIDESTONE    = 37497,
+    QUEST_THE_WALK_OF_SHAME         = 37467,
+
+    NPC_FARONDIS_ESCORT_RUINS       = 88869,    // Summon Farondis 177755: the gate to the Ruins of Nar'thalas
+    NPC_FARONDIS_ESCORT_EDGE        = 88889,    // Summon Farondis 177816: the ruins around the edge of town
+    NPC_TRAILING_ESCORT_CREDIT      = 90077,    // Trailing the Crescent Escort Credit B
+    NPC_DROWNED_GARDENS_CREDIT      = 88746,
+
+    PATH_FARONDIS_TO_RUINS          = 1220001,
+    PATH_FARONDIS_EDGE_OF_TOWN      = 1220002
+};
+
+static constexpr float FarondisWaitRadius = 20.0f;     // walks on once his player is this close
+static constexpr float FarondisCreditRadius = 30.0f;   // every player on the quest this close is credited on arrival
+static constexpr float FarondisLostRadius = 80.0f;
+static constexpr Seconds FarondisLostTime = 60s;
+static constexpr float FarondisDetourFactor = 1.5f;     // a mesh route longer than this times the straight line is a detour
+
+struct FarondisWalk
+{
+    uint32 Escort;
+    uint32 Quest;
+    uint32 Path;
+    uint32 Credit;
+};
+
+static constexpr std::array<FarondisWalk, 2> FarondisWalks =
+{{
+    { NPC_FARONDIS_ESCORT_RUINS, QUEST_TRAILING_THE_TIDESTONE, PATH_FARONDIS_TO_RUINS,     NPC_TRAILING_ESCORT_CREDIT },
+    { NPC_FARONDIS_ESCORT_EDGE,  QUEST_THE_WALK_OF_SHAME,      PATH_FARONDIS_EDGE_OF_TOWN, NPC_DROWNED_GARDENS_CREDIT }
+}};
+
+static FarondisWalk const* GetFarondisWalk(uint32 escortEntry)
+{
+    for (FarondisWalk const& walk : FarondisWalks)
+        if (walk.Escort == escortEntry)
+            return &walk;
+    return nullptr;
+}
+
+// 88869, 88889 - Prince Farondis (Trailing the Tidestone, The Walk of Shame): a personal summon of the player who asked
+// for the walk. Walks the path node by node, waiting at each node until that player is close, and credits every player
+// on the quest near him at the end. Leaves when his player drops the quest, logs out, or stays far away for a minute.
+struct npc_farondis_escort : public ScriptedAI
+{
+    npc_farondis_escort(Creature* creature) : ScriptedAI(creature), _walk(GetFarondisWalk(creature->GetEntry())) { }
+
+    void InitializeAI() override
+    {
+        me->SetReactState(REACT_PASSIVE);
+        me->SetWalk(true);
+    }
+
+    void IsSummonedBy(WorldObject* summoner) override
+    {
+        Player* player = summoner->ToPlayer();
+        if (!player || !_walk)
+        {
+            me->DespawnOrUnsummon();
+            return;
+        }
+
+        _playerGuid = player->GetGUID();
+
+        // One walk per player: a second request replaces the first
+        std::list<Creature*> others;
+        me->GetCreatureListWithEntryInGrid(others, me->GetEntry(), FarondisLostRadius * 2);
+        for (Creature* other : others)
+            if (other != me && other->GetPrivateObjectOwner() == _playerGuid)
+                other->DespawnOrUnsummon();
+
+        _scheduler.Schedule(2s, [this](TaskContext)
+        {
+            _waiting = true;    // the first node is reached as soon as the player stands by
+        });
+    }
+
+    void MovementInform(uint32 type, uint32 id) override
+    {
+        if (type != POINT_MOTION_TYPE || id != _nextNode)
+            return;
+
+        WaypointPath const* path = sWaypointMgr->GetPath(_walk->Path);
+        if (!path || ++_nextNode >= path->Nodes.size())
+        {
+            Arrive();
+            return;
+        }
+
+        _waiting = true;
+    }
+
+    void UpdateAI(uint32 diff) override
+    {
+        _scheduler.Update(diff);
+
+        if (_pollLeft > Milliseconds(diff))
+        {
+            _pollLeft -= Milliseconds(diff);
+            return;
+        }
+
+        _pollLeft = QuestPollInterval;
+
+        if (_arrived || !_playerGuid)
+            return;
+
+        Player* player = ObjectAccessor::GetPlayer(*me, _playerGuid);
+        if (!player || player->GetQuestStatus(_walk->Quest) != QUEST_STATUS_INCOMPLETE)
+        {
+            me->DespawnOrUnsummon();
+            return;
+        }
+
+        if (!me->IsWithinDist(player, FarondisLostRadius))
+        {
+            _lostFor += QuestPollInterval;
+            if (_lostFor >= FarondisLostTime)
+                me->DespawnOrUnsummon();
+            return;
+        }
+
+        _lostFor = 0ms;
+
+        if (_waiting && me->IsWithinDist(player, FarondisWaitRadius))
+            MoveToNextNode();
+    }
+
+private:
+    void MoveToNextNode()
+    {
+        WaypointPath const* path = sWaypointMgr->GetPath(_walk->Path);
+        if (!path || _nextNode >= path->Nodes.size())
+        {
+            Arrive();
+            return;
+        }
+
+        _waiting = false;
+        WaypointNode const& node = path->Nodes[_nextNode];
+        me->GetMotionMaster()->MovePoint(_nextNode, node.X, node.Y, node.Z, UseMeshPath(node));
+    }
+
+    // The nodes are a hand-laid road a few yards apart. Where the navmesh has no complete route between two of
+    // them (the steps below the Crumbled Palace gate carry no mesh: the path finder sent him 90 yd around for a
+    // 17 yd hop), or only a long way round, he walks the straight line as a player would.
+    bool UseMeshPath(WaypointNode const& node) const
+    {
+        PathGenerator mesh(me);
+        mesh.CalculatePath(node.X, node.Y, node.Z);
+        if (mesh.GetPathType() != PATHFIND_NORMAL)
+            return false;
+
+        return mesh.GetPathLength() <= me->GetExactDist(node.X, node.Y, node.Z) * FarondisDetourFactor;
+    }
+
+    void Arrive()
+    {
+        if (_arrived)
+            return;
+
+        _arrived = true;
+        _waiting = false;
+
+        std::list<Player*> players;
+        auto inRange = [this](Player* player) { return me->IsWithinDist(player, FarondisCreditRadius); };
+        Trinity::PlayerListSearcher searcher(PhasingHandler::GetAlwaysVisiblePhaseShift(), players, inRange);
+        Cell::VisitWorldObjects(me, searcher, FarondisCreditRadius);
+        for (FarondisWalk const& walk : FarondisWalks)
+        {
+            if (walk.Escort != me->GetEntry())
+                continue;
+            for (Player* player : players)
+                if (player->GetQuestStatus(walk.Quest) == QUEST_STATUS_INCOMPLETE)
+                    player->KilledMonsterCredit(walk.Credit);
+        }
+
+        me->DespawnOrUnsummon(5s);
+    }
+
+    FarondisWalk const* _walk;
+    TaskScheduler _scheduler;
+    ObjectGuid _playerGuid;
+    Milliseconds _pollLeft = QuestPollInterval;
+    Milliseconds _lostFor = 0ms;
+    uint32 _nextNode = 0;
+    bool _waiting = false;
+    bool _arrived = false;
+};
+
+// 88115, 88867 - Prince Farondis (gate, ruins): the static Farondis phases out as the walk is accepted (phases 4270,
+// 4290) and the walking one takes his place. Retail casts Summon Farondis 177755 / 177816; the walking copy is summoned
+// directly here so that its summoner is the player.
+struct npc_farondis_tidestone_giver : public ScriptedAI
+{
+    npc_farondis_tidestone_giver(Creature* creature) : ScriptedAI(creature) { }
+
+    void OnQuestAccept(Player* player, Quest const* quest) override
+    {
+        uint32 escortEntry = 0;
+        switch (quest->GetQuestId())
+        {
+            case QUEST_TRAILING_THE_TIDESTONE: escortEntry = NPC_FARONDIS_ESCORT_RUINS; break;
+            case QUEST_THE_WALK_OF_SHAME:      escortEntry = NPC_FARONDIS_ESCORT_EDGE; break;
+            default: return;
+        }
+
+        player->SummonCreature(escortEntry, me->GetPosition(), TEMPSUMMON_MANUAL_DESPAWN, 0s, 0, 0, player->GetGUID());
+    }
+};
+
 void AddSC_zone_azsuna()
 {
     RegisterCreatureAI(npc_demon_souls_soul_gem);
@@ -469,4 +685,6 @@ void AddSC_zone_azsuna()
     RegisterCreatureAI(npc_death_of_the_eldest_senegos);
     RegisterCreatureAI(npc_agapanthus);
     RegisterCreatureAI(npc_their_dying_breaths_whelpling);
+    RegisterCreatureAI(npc_farondis_escort);
+    RegisterCreatureAI(npc_farondis_tidestone_giver);
 }
