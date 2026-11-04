@@ -15,9 +15,15 @@
  * with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "AreaTrigger.h"
+#include "AreaTriggerAI.h"
 #include "CellImpl.h"
+#include "GameObject.h"
+#include "GameObjectAI.h"
+#include "ObjectMgr.h"
 #include "PathGenerator.h"
 #include "QuestDef.h"
+#include "SpellScript.h"
 #include "GridNotifiersImpl.h"
 #include "MotionMaster.h"
 #include "MoveSplineInit.h"
@@ -32,6 +38,7 @@
 #include "WaypointManager.h"
 
 #include <array>
+#include <cmath>
 
 enum AzsunaQuests
 {
@@ -672,6 +679,240 @@ struct npc_farondis_tidestone_giver : public ScriptedAI
     }
 };
 
+enum NarthalasAcademy
+{
+    QUEST_WANDING_101               = 42370,
+    QUEST_STUDY_HALL                = 42371,
+    QUEST_POP_QUIZ                  = 37729,
+
+    NPC_WAND_TARGET                 = 107279,
+
+    SPELL_WAND_SHOT                 = 179174,   // the missile from the player's wand to the target (dummy, visual)
+
+    // Pop Quiz: Advanced Rune Drawing
+    SPELL_RUNE_DRAWING_ARCANE       = 179151,   // Rune Drawing 101: Rune A, plays scene 935
+    SPELL_RUNE_DRAWING_FIRE         = 179152,   // Rune B, scene 936
+    SPELL_RUNE_DRAWING_FROST        = 179153,   // Rune C, scene 937
+    SCENE_RUNE_ARCANE               = 935,
+    SCENE_RUNE_FIRE                 = 936,
+    SCENE_RUNE_FROST                = 937,
+    NPC_RUNE_CREDIT_ARCANE          = 89655,
+    NPC_RUNE_CREDIT_FIRE            = 89656,
+    NPC_RUNE_CREDIT_FROST           = 89657,
+    AT_PROPERTIES_RUNE_ARCANE       = 1220006,
+    AT_PROPERTIES_RUNE_FIRE         = 1220007,
+    AT_PROPERTIES_RUNE_FROST        = 1220008,
+
+    // Study Hall: Combat Research
+    SCENE_INTO_THE_BOOK_1           = 1279,
+    SCENE_INTO_THE_BOOK_2           = 1280,
+    SCENE_INTO_THE_BOOK_3           = 1281
+};
+
+static constexpr float WandMinRange = 5.0f;     // "And no point-blank shots! That's cheating."
+static constexpr float WandMaxRange = 40.0f;
+static constexpr float WandCone = float(M_PI) / 3.0f;   // Wand Practice's 60 degree cone
+
+// 212782 - Wand Practice: the button the override bar of Wanding 101 gives (OverrideSpellData 711). Its area trigger
+// (7042) has no properties and its triggered spell (218570) is not in the client's data, so the wand shot is played
+// here: the nearest Wand Target in front of the caster, from 5 to 40 yards, is hit and counts.
+class spell_narthalas_wand_practice : public SpellScript
+{
+    void PreventEffect(SpellEffIndex effIndex)
+    {
+        PreventHitDefaultEffect(effIndex);
+    }
+
+    void HandleShot()
+    {
+        Player* player = GetCaster()->ToPlayer();
+        if (!player || player->GetQuestStatus(QUEST_WANDING_101) != QUEST_STATUS_INCOMPLETE)
+            return;
+
+        std::list<Creature*> targets;
+        player->GetCreatureListWithEntryInGrid(targets, NPC_WAND_TARGET, WandMaxRange);
+        Creature* best = nullptr;
+        for (Creature* target : targets)
+        {
+            if (!target->IsAlive() || !player->CanSeeOrDetect(target) || player->IsWithinDist(target, WandMinRange)
+                || !player->HasInArc(WandCone, target) || !player->IsWithinLOSInMap(target))
+                continue;
+            if (!best || player->GetExactDist2dSq(target) < player->GetExactDist2dSq(best))
+                best = target;
+        }
+
+        if (!best)
+            return;
+
+        player->CastSpell(best, SPELL_WAND_SHOT, true);
+        player->KilledMonsterCredit(NPC_WAND_TARGET, best->GetGUID());
+    }
+
+    void Register() override
+    {
+        OnEffectHit += SpellEffectFn(spell_narthalas_wand_practice::PreventEffect, EFFECT_0, SPELL_EFFECT_CREATE_AREATRIGGER);
+        OnEffectHitTarget += SpellEffectFn(spell_narthalas_wand_practice::PreventEffect, EFFECT_1, SPELL_EFFECT_TRIGGER_SPELL);
+        AfterCast += SpellCastFn(spell_narthalas_wand_practice::HandleShot);
+    }
+};
+
+struct NarthalasRune
+{
+    uint32 AreaTriggerProperties;
+    uint32 Spell;
+    uint32 Scene;
+    uint32 Credit;
+};
+
+static constexpr std::array<NarthalasRune, 3> NarthalasRunes =
+{{
+    { AT_PROPERTIES_RUNE_ARCANE, SPELL_RUNE_DRAWING_ARCANE, SCENE_RUNE_ARCANE, NPC_RUNE_CREDIT_ARCANE },
+    { AT_PROPERTIES_RUNE_FIRE,   SPELL_RUNE_DRAWING_FIRE,   SCENE_RUNE_FIRE,   NPC_RUNE_CREDIT_FIRE },
+    { AT_PROPERTIES_RUNE_FROST,  SPELL_RUNE_DRAWING_FROST,  SCENE_RUNE_FROST,  NPC_RUNE_CREDIT_FROST }
+}};
+
+static bool HasRuneCredit(Player* player, uint32 credit)
+{
+    Quest const* quest = sObjectMgr->GetQuestTemplate(QUEST_POP_QUIZ);
+    if (!quest)
+        return true;
+    for (QuestObjective const& objective : quest->GetObjectives())
+        if (objective.Type == QUEST_OBJECTIVE_MONSTER && uint32(objective.ObjectID) == credit)
+            return player->IsQuestObjectiveComplete(QUEST_POP_QUIZ, objective.ID);
+    return true;
+}
+
+// Server-side area triggers of ours on the academy floor, one per rune outline ("I will provide outlines for you. You can
+// simply use your feet to trace the runes."): stepping on one starts its tracing scene. Nothing in the client's data
+// casts the three scene auras.
+struct at_narthalas_rune_outline : AreaTriggerAI
+{
+    at_narthalas_rune_outline(AreaTrigger* areatrigger) : AreaTriggerAI(areatrigger) { }
+
+    void OnUnitEnter(Unit* unit) override
+    {
+        Player* player = unit->ToPlayer();
+        if (!player || player->GetQuestStatus(QUEST_POP_QUIZ) != QUEST_STATUS_INCOMPLETE)
+            return;
+
+        for (NarthalasRune const& rune : NarthalasRunes)
+            if (rune.AreaTriggerProperties == at->GetCreateProperties()->Id.Id)
+            {
+                if (!HasRuneCredit(player, rune.Credit) && !player->HasAura(rune.Spell))
+                    player->CastSpell(player, rune.Spell, true);
+                return;
+            }
+    }
+};
+
+// Scenes 935 to 937 (Azsuna - Academy - Runes A to C): the client's scene traces the rune under the player's feet and
+// sends the server event "Credit" once every circle of the rune is filled.
+class scene_narthalas_rune_drawing : public SceneScript
+{
+public:
+    scene_narthalas_rune_drawing() : SceneScript("scene_narthalas_rune_drawing") { }
+
+    void OnSceneTriggerEvent(Player* player, uint32 /*sceneInstanceID*/, SceneTemplate const* sceneTemplate, std::string const& triggerName) override
+    {
+        if (triggerName != "Credit")
+            return;
+
+        for (NarthalasRune const& rune : NarthalasRunes)
+            if (rune.Scene == sceneTemplate->SceneId && player->GetQuestStatus(QUEST_POP_QUIZ) == QUEST_STATUS_INCOMPLETE)
+                player->KilledMonsterCredit(rune.Credit);
+    }
+
+    void OnSceneComplete(Player* player, uint32 /*sceneInstanceID*/, SceneTemplate const* sceneTemplate) override
+    {
+        EndRune(player, sceneTemplate);
+    }
+
+    void OnSceneCancel(Player* player, uint32 /*sceneInstanceID*/, SceneTemplate const* sceneTemplate) override
+    {
+        EndRune(player, sceneTemplate);
+    }
+
+private:
+    // The scene's aura would otherwise stay, and a rune left half-drawn could not be started again
+    static void EndRune(Player* player, SceneTemplate const* sceneTemplate)
+    {
+        for (NarthalasRune const& rune : NarthalasRunes)
+            if (rune.Scene == sceneTemplate->SceneId)
+                player->RemoveAurasDueToSpell(rune.Spell);
+    }
+};
+
+struct StudyHallBook
+{
+    uint32 Item;            // the book from the shelf
+    uint32 ItemObjective;
+    uint32 BookCredit;      // Book Credit 01..03: kill credit for the podium and the scene "Into the Book"
+    uint32 BookObjective;
+    uint32 Scene;
+    uint32 Drawing;         // the challenge inside the book
+    uint32 DrawingObjective;
+};
+
+static constexpr std::array<StudyHallBook, 3> StudyHallBooks =
+{{
+    { 137423, 284157, 212912, 284158, SCENE_INTO_THE_BOOK_1, 107301, 284150 },  // Encyclopedia Azsunica (K-M), Kobold Drawing
+    { 137422, 284159, 212913, 284160, SCENE_INTO_THE_BOOK_2, 107300, 284149 },  // Courtship Rituals of the Skrog, Sea Skrog Drawing
+    { 137426, 284161, 212914, 284162, SCENE_INTO_THE_BOOK_3, 107299, 284151 }   // Draconic Compendium, Volume III, Senegos Drawing
+}};
+
+static constexpr Seconds StudyHallDrawingTime = 3min;
+
+// 250362 - Sythorne's Podium: its goober spell (212924) is not in the client's data. The book the player brought next
+// goes on the podium: Book Credit 01..03 counts it and plays the scene that takes the player into the book.
+struct go_sythorne_podium : public GameObjectAI
+{
+    go_sythorne_podium(GameObject* go) : GameObjectAI(go) { }
+
+    bool OnGossipHello(Player* player) override
+    {
+        if (player->GetQuestStatus(QUEST_STUDY_HALL) != QUEST_STATUS_INCOMPLETE)
+            return true;
+
+        for (StudyHallBook const& book : StudyHallBooks)
+        {
+            if (!player->IsQuestObjectiveComplete(QUEST_STUDY_HALL, book.BookObjective))
+            {
+                if (player->IsQuestObjectiveComplete(QUEST_STUDY_HALL, book.ItemObjective))
+                    player->CastSpell(player, book.BookCredit, true);
+                return true;
+            }
+
+            if (!player->IsQuestObjectiveComplete(QUEST_STUDY_HALL, book.DrawingObjective))
+                return true;    // this book's challenge first: the objectives are sequenced
+        }
+        return true;
+    }
+};
+
+// Scenes 1279 to 1281 (Into the Book 01 to 03): the scene sends "phase" as the camera comes out of the book, and the
+// book's challenge, the drawing, stands before the player.
+class scene_study_hall_into_the_book : public SceneScript
+{
+public:
+    scene_study_hall_into_the_book() : SceneScript("scene_study_hall_into_the_book") { }
+
+    void OnSceneTriggerEvent(Player* player, uint32 /*sceneInstanceID*/, SceneTemplate const* sceneTemplate, std::string const& triggerName) override
+    {
+        if (triggerName != "phase" || player->GetQuestStatus(QUEST_STUDY_HALL) != QUEST_STATUS_INCOMPLETE)
+            return;
+
+        for (StudyHallBook const& book : StudyHallBooks)
+        {
+            if (book.Scene != sceneTemplate->SceneId || player->IsQuestObjectiveComplete(QUEST_STUDY_HALL, book.DrawingObjective))
+                continue;
+
+            Position spot = player->GetNearPosition(6.0f, 0.0f);
+            if (Creature* drawing = player->SummonCreature(book.Drawing, spot, TEMPSUMMON_TIMED_DESPAWN, StudyHallDrawingTime, 0, 0, player->GetGUID()))
+                drawing->SetFacingToObject(player);
+        }
+    }
+};
+
 void AddSC_zone_azsuna()
 {
     RegisterCreatureAI(npc_demon_souls_soul_gem);
@@ -687,4 +928,9 @@ void AddSC_zone_azsuna()
     RegisterCreatureAI(npc_their_dying_breaths_whelpling);
     RegisterCreatureAI(npc_farondis_escort);
     RegisterCreatureAI(npc_farondis_tidestone_giver);
+    RegisterSpellScript(spell_narthalas_wand_practice);
+    RegisterAreaTriggerAI(at_narthalas_rune_outline);
+    new scene_narthalas_rune_drawing();
+    RegisterGameObjectAI(go_sythorne_podium);
+    new scene_study_hall_into_the_book();
 }

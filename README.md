@@ -42,7 +42,7 @@ Shared class hall engine (foundation, talents, followers, shipments, missions, f
 | Broken Shore scenario | Playable start to end (Alliance) |
 | Mardum and the Vault of the Wardens | Playable (Demon Hunter start) |
 | Dalaran | Flight master, inns, banks, mail and portals in; Horde capital portals, trainers, vendors and townsfolk next |
-| Azsuna | In progress: opening chain through Our Very Bones; Retake Faronaar bonus objective |
+| Azsuna | In progress: opening chain through The Tidestone: Shattered; Retake Faronaar bonus objective |
 | Val'sharah, Highmountain, Stormheim, Suramar | Not started |
 
 **Core engine**
