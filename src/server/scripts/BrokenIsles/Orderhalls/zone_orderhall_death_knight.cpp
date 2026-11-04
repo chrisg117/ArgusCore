@@ -109,10 +109,14 @@ enum TheCallOfIcecrownData
 {
     QUEST_THE_CALL_OF_ICECROWN              = 38990,
     QUEST_OBJECTIVE_USE_DEATH_GATE          = 278748,
+    QUEST_OBJECTIVE_INTRO_SCENE             = 279705,
 
     NPC_DEATH_GATE                          = 95854,
     NPC_WAYGATE_CREDIT                      = 93970,
     NPC_INTRO_SCENE_CREDIT                  = 96227,
+
+    SPELL_THE_BLADES_OF_THE_FALLEN_PRINCE   = 190789,
+    SPELL_THE_BLADES_SCENE_END              = 190794,
 
     ZONE_ACHERUS                            = 7679
 };
@@ -121,6 +125,8 @@ static constexpr float DeathGateDistance = 4.0f;
 static constexpr float DeathGateAngle = float(M_PI / 2); // to the player's left, clear of the NPC they faced
 static constexpr float DeathGateSearchRange = 50.0f;
 static constexpr Seconds DeathGateDuration = 10min;
+static constexpr Milliseconds IntroSceneDelay = 2s;
+static constexpr Milliseconds IntroSceneFallback = 60s;
 
 // The quest's own summon (187409 -> 190089 -> 190088) aims at a target type the core does not implement, so the gate
 // is placed here: beside the player, seen by them alone, and only one at a time
@@ -153,7 +159,36 @@ public:
     }
 };
 
-// The gate is a summon and does not survive a logout: a player who left before using it gets it back
+static bool HasSeenIntroScene(Player* player)
+{
+    return player->GetQuestStatus(QUEST_THE_CALL_OF_ICECROWN) != QUEST_STATUS_INCOMPLETE
+        || player->GetQuestObjectiveData(QUEST_THE_CALL_OF_ICECROWN, QUEST_OBJECTIVE_INTRO_SCENE) > 0;
+}
+
+// The vision of the blades (190789) plays once the player stands in Acherus with the intro objective open; its end
+// (190794) credits that objective. It is checked again when it is due, and not cast while it already plays, so the
+// zone updates of one arrival cannot replay it. A scene that never reports back (a client that drops it) gets the
+// credit a minute after arrival, so the quest cannot stall on it
+static void ScheduleIntroScene(Player* player)
+{
+    if (HasSeenIntroScene(player))
+        return;
+
+    // On the player's own event queue: a logout drops both
+    player->m_Events.AddEventAtOffset([player]
+    {
+        if (!HasSeenIntroScene(player) && player->GetZoneId() == ZONE_ACHERUS && !player->HasAura(SPELL_THE_BLADES_OF_THE_FALLEN_PRINCE))
+            player->CastSpell(player, SPELL_THE_BLADES_OF_THE_FALLEN_PRINCE, CastSpellExtraArgsInit{ .TriggerFlags = TRIGGERED_FULL_MASK });
+    }, IntroSceneDelay);
+    player->m_Events.AddEventAtOffset([player]
+    {
+        if (!HasSeenIntroScene(player))
+            player->KilledMonsterCredit(NPC_INTRO_SCENE_CREDIT);
+    }, IntroSceneFallback);
+}
+
+// The gate is a summon and does not survive a logout: a player who left before using it gets it back. The intro scene
+// starts on arrival in Acherus, and on a login there when the player left before it played
 class player_dk_the_call_of_icecrown : public PlayerScript
 {
 public:
@@ -161,14 +196,24 @@ public:
 
     void OnLogin(Player* player, bool /*firstLogin*/) override
     {
-        if (player->GetQuestStatus(QUEST_THE_CALL_OF_ICECROWN) == QUEST_STATUS_INCOMPLETE)
-            SummonDeathGate(player);
+        if (player->GetQuestStatus(QUEST_THE_CALL_OF_ICECROWN) != QUEST_STATUS_INCOMPLETE)
+            return;
+
+        SummonDeathGate(player);
+        if (player->GetZoneId() == ZONE_ACHERUS)
+            ScheduleIntroScene(player);
+    }
+
+    void OnUpdateZone(Player* player, uint32 newZone, uint32 /*newArea*/) override
+    {
+        if (newZone == ZONE_ACHERUS)
+            ScheduleIntroScene(player);
     }
 };
 
 // 187753 - Death Gate (to Acherus)
-// The quest's first step: the summoned gate and the player's own Death Gate both cast it. The arrival scene credit
-// rides along, since the scene the data names has no package here
+// The quest's first step: the summoned gate and the player's own Death Gate both cast it. The intro scene waits for the
+// arrival in Acherus (player_dk_the_call_of_icecrown): from Dalaran the teleport lands after the spell's hit
 class spell_dk_the_call_of_icecrown_death_gate : public SpellScript
 {
     void HandleAfterHit() const
@@ -178,12 +223,35 @@ class spell_dk_the_call_of_icecrown_death_gate : public SpellScript
             return;
 
         player->KilledMonsterCredit(NPC_WAYGATE_CREDIT);
-        player->KilledMonsterCredit(NPC_INTRO_SCENE_CREDIT);
     }
 
     void Register() override
     {
         AfterHit += SpellHitFn(spell_dk_the_call_of_icecrown_death_gate::HandleAfterHit);
+    }
+};
+
+// Scene 1076 (package 1466, "Looting the Blades"), played by 190789 on arrival in Acherus: watched or skipped, its end
+// casts 190794, which lifts the scene's aura and phase and credits The Call of Icecrown's intro objective
+class scene_dk_the_blades_of_the_fallen_prince : public SceneScript
+{
+public:
+    scene_dk_the_blades_of_the_fallen_prince() : SceneScript("scene_dk_the_blades_of_the_fallen_prince") { }
+
+    void OnSceneComplete(Player* player, uint32 /*sceneInstanceID*/, SceneTemplate const* /*sceneTemplate*/) override
+    {
+        EndScene(player);
+    }
+
+    void OnSceneCancel(Player* player, uint32 /*sceneInstanceID*/, SceneTemplate const* /*sceneTemplate*/) override
+    {
+        EndScene(player);
+    }
+
+private:
+    static void EndScene(Player* player)
+    {
+        player->CastSpell(player, SPELL_THE_BLADES_SCENE_END, CastSpellExtraArgsInit{ .TriggerFlags = TRIGGERED_FULL_MASK });
     }
 };
 
@@ -215,6 +283,9 @@ void AddSC_orderhall_death_knight()
 
     // Playerchoice
     new playerchoice_the_pact_of_necessity();
+
+    // Scenes
+    new scene_dk_the_blades_of_the_fallen_prince();
 
     // Spellscripts
     RegisterSpellScript(spell_dk_force_specialization);
