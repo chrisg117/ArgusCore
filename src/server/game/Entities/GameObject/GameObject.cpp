@@ -1965,6 +1965,8 @@ bool GameObject::LoadFromDB(ObjectGuid::LowType spawnId, Map* map, bool addToMap
     uint32 artKit = data->artKit;
 
     m_spawnId = spawnId;
+    // Create() chooses the AI, and GetScriptId() reads the spawn's own ScriptName from this data
+    m_goData = data;
     m_respawnCompatibilityMode = ((data->spawnGroupData->flags & SPAWNGROUP_FLAG_COMPATIBILITY_MODE) != 0);
     if (!Create(entry, map, data->spawnPoint, data->rotation, animprogress, go_state, artKit, !m_respawnCompatibilityMode, spawnId))
         return false;
@@ -2012,8 +2014,6 @@ bool GameObject::LoadFromDB(ObjectGuid::LowType spawnId, Map* map, bool addToMap
         m_respawnDelayTime = -data->spawntimesecs;
         m_respawnTime = 0;
     }
-
-    m_goData = data;
 
     m_stringIds[AsUnderlyingType(StringIdType::Spawn)] = &data->StringId;
 
