@@ -22,6 +22,8 @@
 #include "ScriptMgr.h"
 #include "AreaTrigger.h"
 #include "AreaTriggerAI.h"
+#include "Conversation.h"
+#include "Creature.h"
 #include "DB2Stores.h"
 #include "GameEventSender.h"
 #include "GameObject.h"
@@ -29,9 +31,13 @@
 #include "InstanceScenario.h"
 #include "InstanceScript.h"
 #include "Map.h"
+#include "MotionMaster.h"
+#include "ObjectAccessor.h"
 #include "Player.h"
+#include "ScriptedCreature.h"
 #include "SharedDefines.h"
 #include "SpellMgr.h"
+#include "SpellScript.h"
 
 #define DataHeader "IcecrownCitadelScenario"
 
@@ -40,6 +46,7 @@ enum IcecrownCitadelScenarioData
     MAP_ICECROWN_CITADEL_SCENARIO               = 1480,
 
     QUEST_THE_CALL_OF_ICECROWN                  = 38990,
+    QUEST_OBJECTIVE_INTRO_SCENE                 = 279705,
 
     SCENARIO_STEP_THE_CALL_OF_THE_NORTH         = 1809,
     SCENARIO_STEP_THE_GATES_ARE_OPEN            = 1973,
@@ -49,16 +56,32 @@ enum IcecrownCitadelScenarioData
 
     SPELL_DEATH_GATE_TO_ACHERUS                 = 187753,
     SPELL_ENTER_ICECROWN_CREDIT                 = 185861,
+    SPELL_FROST_DK_ENTRANCE                     = 196966, // conversation 744, Mograine's welcome
+    SPELL_ICECROWN_MOGRAINE_PING                = 188022,
+
+    NPC_HIGHLORD_DARION_MOGRAINE                = 95193,
+
+    // The Lich King's "Enter, $n, there is much to be done." (line 1773) as a talking head; no sniffed conversation
+    CONVERSATION_THE_LICH_KING_ENTER            = 14800001,
 
     WORLD_SAFE_LOC_ACHERUS_AREA                 = 5095,
-    WORLD_SAFE_LOC_DOOR_TO_DEATHBRINGERS_RISE   = 5076,
     WORLD_SAFE_LOC_DEATHBRINGERS_RISE           = 5075,
     WORLD_SAFE_LOC_THE_SPIRE_AREA               = 5214,
 
-    DATA_ENTERED_THE_CITADEL                    = 1
+    DATA_ENTERED_THE_CITADEL                    = 1,
+
+    POINT_MOGRAINE_RAMP_FOOT                    = 1,
+    POINT_MOGRAINE_RAMP_MIDDLE                  = 2,
+    POINT_MOGRAINE_RAMP_TOP                     = 3
 };
 
 static constexpr Milliseconds SendBackDelay = 2s;
+static constexpr Milliseconds MograineWait = 2s;
+
+// Mograine's walk from the landing up the ramp to Acherus's exit, on the 1480 mesh; he stops beside the path at the top
+static constexpr Position MograineRampFoot   = { -704.00f, 2205.87f, 535.96f };
+static constexpr Position MograineRampMiddle = { -692.53f, 2206.67f, 541.56f };
+static constexpr Position MograineRampTop    = { -683.50f, 2210.50f, 545.11f };
 
 static bool IsOnStep(Map const* map, uint32 stepId)
 {
@@ -124,20 +147,70 @@ public:
     }
 };
 
-// 202244 - Scourge Transporter, across the bone bridge from Acherus: opens the gate to Icecrown and carries the
-// player to Saurfang's door. Once the gate is open it only carries them
-struct go_icc_scenario_scourge_transporter : public GameObjectAI
+// 95193 - Highlord Darion Mograine, at the landing beside the citadel. Pinged by the first player to stand on the
+// landing (188022), he walks up the ramp to Acherus's exit, stops beside it, turns back to the player and speaks
+// (744 Frost DK - Entrance). Once per scenario: he stays at the top afterwards
+struct npc_icc_scenario_darion_mograine : public ScriptedAI
 {
-    using GameObjectAI::GameObjectAI;
+    using ScriptedAI::ScriptedAI;
 
-    bool OnGossipHello(Player* player) override
+    void SetGUID(ObjectGuid const& guid, int32 /*id*/) override
     {
-        // The core passes a game event on to the scenario only for a player who is its source
-        if (IsOnStep(me->GetMap(), SCENARIO_STEP_THE_CALL_OF_THE_NORTH))
-            GameEvents::Trigger(GAME_EVENT_OPEN_THE_GATE_TO_ICECROWN, player, nullptr);
+        if (!_playerGuid.IsEmpty())
+            return;
 
-        TeleportToSafeLoc(player, WORLD_SAFE_LOC_DOOR_TO_DEATHBRINGERS_RISE);
-        return true;
+        _playerGuid = guid;
+        me->m_Events.AddEventAtOffset([this]
+        {
+            me->SetWalk(true);
+            me->GetMotionMaster()->MovePoint(POINT_MOGRAINE_RAMP_FOOT, MograineRampFoot);
+        }, MograineWait);
+    }
+
+    void MovementInform(uint32 type, uint32 pointId) override
+    {
+        if (type != POINT_MOTION_TYPE)
+            return;
+
+        switch (pointId)
+        {
+            case POINT_MOGRAINE_RAMP_FOOT:
+                me->GetMotionMaster()->MovePoint(POINT_MOGRAINE_RAMP_MIDDLE, MograineRampMiddle);
+                break;
+            case POINT_MOGRAINE_RAMP_MIDDLE:
+                me->GetMotionMaster()->MovePoint(POINT_MOGRAINE_RAMP_TOP, MograineRampTop);
+                break;
+            case POINT_MOGRAINE_RAMP_TOP:
+                if (Player* player = ObjectAccessor::GetPlayer(*me, _playerGuid))
+                {
+                    me->SetFacingToObject(player);
+                    player->CastSpell(player, SPELL_FROST_DK_ENTRANCE, CastSpellExtraArgsInit{ .TriggerFlags = TRIGGERED_FULL_MASK });
+                }
+                break;
+            default:
+                break;
+        }
+    }
+
+private:
+    ObjectGuid _playerGuid;
+};
+
+// The transporter pad on the lower deck belongs to the map. Stepping onto it opens the gate to Icecrown (step 1's
+// criteria is event 47614) and the Lich King bids the player enter; it does not carry them, they walk on to the door
+struct at_icc_scenario_scourge_transporter : AreaTriggerAI
+{
+    using AreaTriggerAI::AreaTriggerAI;
+
+    void OnUnitEnter(Unit* unit) override
+    {
+        Player* player = unit->ToPlayer();
+        if (!player || !BelongsInTheScenario(player) || !IsOnStep(at->GetMap(), SCENARIO_STEP_THE_CALL_OF_THE_NORTH))
+            return;
+
+        // The core passes a game event on to the scenario only for a player who is its source
+        GameEvents::Trigger(GAME_EVENT_OPEN_THE_GATE_TO_ICECROWN, player, nullptr);
+        Conversation::CreateConversation(CONVERSATION_THE_LICH_KING_ENTER, player, *player, player->GetGUID());
     }
 };
 
@@ -165,9 +238,45 @@ struct at_icc_scenario_door_to_deathbringers_rise : AreaTriggerAI
     }
 };
 
+// The landing beside the citadel: a death knight who stands here at the start pings Mograine. An areatrigger needs the
+// player in the world, so a login or a teleport under the loading screen does not start him unseen. On the first arrival
+// the entrance scene plays here first, and its end pings him instead (event 45596)
+struct at_icc_scenario_landing : AreaTriggerAI
+{
+    using AreaTriggerAI::AreaTriggerAI;
+
+    void OnUnitEnter(Unit* unit) override
+    {
+        Player* player = unit->ToPlayer();
+        if (!player || !BelongsInTheScenario(player) || !IsOnStep(at->GetMap(), SCENARIO_STEP_THE_CALL_OF_THE_NORTH)
+            || player->GetQuestObjectiveData(QUEST_THE_CALL_OF_ICECROWN, QUEST_OBJECTIVE_INTRO_SCENE) == 0)
+            return;
+
+        player->CastSpell(nullptr, SPELL_ICECROWN_MOGRAINE_PING, CastSpellExtraArgsInit{ .TriggerFlags = TRIGGERED_FULL_MASK });
+    }
+};
+
+// 188022 - Icecrown - Mograine Ping (aimed at Mograine by conditions)
+class spell_icc_scenario_mograine_ping : public SpellScript
+{
+    void HandleDummy(SpellEffIndex /*effIndex*/) const
+    {
+        if (Creature* mograine = GetHitCreature())
+            mograine->AI()->SetGUID(GetCaster()->GetGUID(), 0);
+    }
+
+    void Register() override
+    {
+        OnEffectHitTarget += SpellEffectFn(spell_icc_scenario_mograine_ping::HandleDummy, EFFECT_0, SPELL_EFFECT_DUMMY);
+    }
+};
+
 void AddSC_instance_icecrown_citadel_scenario()
 {
     new instance_icecrown_citadel_scenario();
-    RegisterGameObjectAI(go_icc_scenario_scourge_transporter);
+    RegisterCreatureAI(npc_icc_scenario_darion_mograine);
+    RegisterAreaTriggerAI(at_icc_scenario_scourge_transporter);
     RegisterAreaTriggerAI(at_icc_scenario_door_to_deathbringers_rise);
+    RegisterAreaTriggerAI(at_icc_scenario_landing);
+    RegisterSpellScript(spell_icc_scenario_mograine_ping);
 }

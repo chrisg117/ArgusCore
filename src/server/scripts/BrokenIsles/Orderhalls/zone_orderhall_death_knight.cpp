@@ -117,6 +117,14 @@ enum TheCallOfIcecrownData
 
     SPELL_THE_BLADES_OF_THE_FALLEN_PRINCE   = 190789,
     SPELL_THE_BLADES_SCENE_END              = 190794,
+    SPELL_LAUNCH_THE_BLADES_SCENARIO        = 188406,
+    SPELL_ICECROWN_MOGRAINE_PING            = 188022,
+    // No data names the blackout 190790 Cancel Blackout ends: a plain 7 s fade to black (screen effect 828) keeps the
+    // player from seeing the landing between the Death Gate and the scene
+    SPELL_FADE_TO_BLACK                     = 112885,
+
+    MAP_ICECROWN_CITADEL_SCENARIO           = 1480,
+    WORLD_SAFE_LOC_FROST_SCENARIO_START     = 5081,
 
     ZONE_ACHERUS                            = 7679
 };
@@ -125,8 +133,9 @@ static constexpr float DeathGateDistance = 4.0f;
 static constexpr float DeathGateAngle = float(M_PI / 2); // to the player's left, clear of the NPC they faced
 static constexpr float DeathGateSearchRange = 50.0f;
 static constexpr Seconds DeathGateDuration = 10min;
-static constexpr Milliseconds IntroSceneDelay = 2s;
+static constexpr Milliseconds AcherusArrivalDelay = 1s;
 static constexpr Milliseconds IntroSceneFallback = 60s;
+static constexpr Milliseconds FadeToBlackLimit = 10s;
 
 // The quest's own summon (187409 -> 190089 -> 190088) aims at a target type the core does not implement, so the gate
 // is placed here: beside the player, seen by them alone, and only one at a time
@@ -165,11 +174,12 @@ static bool HasSeenIntroScene(Player* player)
         || player->GetQuestObjectiveData(QUEST_THE_CALL_OF_ICECROWN, QUEST_OBJECTIVE_INTRO_SCENE) > 0;
 }
 
-// The vision of the blades (190789) plays once the player stands in Acherus with the intro objective open; its end
-// (190794) credits that objective. It is checked again when it is due, and not cast while it already plays, so the
-// zone updates of one arrival cannot replay it. A scene that never reports back (a client that drops it) gets the
-// credit a minute after arrival, so the quest cannot stall on it
-static void ScheduleIntroScene(Player* player)
+// The entrance scene (190789, package 1467: bone drakes over the Spire, Acherus docked on Icecrown) is framed on the
+// player's own position, so it plays on map 1480 at the landing, the first time the player arrives there. Its end
+// (190794) credits the intro objective and sends event 45596, which starts Mograine. Each step is checked again when
+// it is due: the zone updates of one arrival, or a login, cannot play it twice. A scene that never reports back (a
+// client that drops it) is ended a minute after arrival
+static void HandleScenarioArrival(Player* player)
 {
     if (HasSeenIntroScene(player))
         return;
@@ -177,18 +187,47 @@ static void ScheduleIntroScene(Player* player)
     // On the player's own event queue: a logout drops both
     player->m_Events.AddEventAtOffset([player]
     {
-        if (!HasSeenIntroScene(player) && player->GetZoneId() == ZONE_ACHERUS && !player->HasAura(SPELL_THE_BLADES_OF_THE_FALLEN_PRINCE))
-            player->CastSpell(player, SPELL_THE_BLADES_OF_THE_FALLEN_PRINCE, CastSpellExtraArgsInit{ .TriggerFlags = TRIGGERED_FULL_MASK });
-    }, IntroSceneDelay);
+        if (HasSeenIntroScene(player) || player->GetMapId() != MAP_ICECROWN_CITADEL_SCENARIO || player->IsBeingTeleported()
+            || player->HasAura(SPELL_THE_BLADES_OF_THE_FALLEN_PRINCE))
+            return;
+
+        player->RemoveAurasDueToSpell(SPELL_FADE_TO_BLACK);
+        player->CastSpell(player, SPELL_THE_BLADES_OF_THE_FALLEN_PRINCE, CastSpellExtraArgsInit{ .TriggerFlags = TRIGGERED_FULL_MASK });
+    }, AcherusArrivalDelay);
+
     player->m_Events.AddEventAtOffset([player]
     {
-        if (!HasSeenIntroScene(player))
+        if (HasSeenIntroScene(player))
+            return;
+
+        player->RemoveAurasDueToSpell(SPELL_FADE_TO_BLACK);
+        if (player->GetMapId() == MAP_ICECROWN_CITADEL_SCENARIO && !player->IsBeingTeleported())
+            player->CastSpell(player, SPELL_THE_BLADES_SCENE_END, CastSpellExtraArgsInit{ .TriggerFlags = TRIGGERED_FULL_MASK });
+        else
             player->KilledMonsterCredit(NPC_INTRO_SCENE_CREDIT);
     }, IntroSceneFallback);
 }
 
-// The gate is a summon and does not survive a logout: a player who left before using it gets it back. The intro scene
-// starts on arrival in Acherus, and on a login there when the player left before it played
+// "While you are on this quest, you won't be able to conduct normal business in Acherus": a death knight on The Call of
+// Icecrown who stands in Acherus is sent into the Icecrown Citadel scenario
+static void HandleAcherusArrival(Player* player)
+{
+    if (player->GetQuestStatus(QUEST_THE_CALL_OF_ICECROWN) != QUEST_STATUS_INCOMPLETE)
+        return;
+
+    player->m_Events.AddEventAtOffset([player]
+    {
+        if (player->GetQuestStatus(QUEST_THE_CALL_OF_ICECROWN) != QUEST_STATUS_INCOMPLETE || player->GetZoneId() != ZONE_ACHERUS
+            || player->IsBeingTeleported())
+            return;
+
+        player->CastSpell(player, SPELL_LAUNCH_THE_BLADES_SCENARIO, CastSpellExtraArgsInit{ .TriggerFlags = TRIGGERED_FULL_MASK });
+    }, AcherusArrivalDelay);
+}
+
+// The gate is a summon and does not survive a logout: a player who left before using it gets it back. Arriving or
+// logging in in Acherus while the quest is under way leads into the scenario, and the first arrival there plays the
+// entrance scene
 class player_dk_the_call_of_icecrown : public PlayerScript
 {
 public:
@@ -196,43 +235,64 @@ public:
 
     void OnLogin(Player* player, bool /*firstLogin*/) override
     {
+        // A fade saved at logout would leave the player blind
+        player->RemoveAurasDueToSpell(SPELL_FADE_TO_BLACK);
         if (player->GetQuestStatus(QUEST_THE_CALL_OF_ICECROWN) != QUEST_STATUS_INCOMPLETE)
             return;
 
         SummonDeathGate(player);
         if (player->GetZoneId() == ZONE_ACHERUS)
-            ScheduleIntroScene(player);
+            HandleAcherusArrival(player);
+        else if (player->GetMapId() == MAP_ICECROWN_CITADEL_SCENARIO)
+            HandleScenarioArrival(player);
     }
 
     void OnUpdateZone(Player* player, uint32 newZone, uint32 /*newArea*/) override
     {
+        if (player->GetQuestStatus(QUEST_THE_CALL_OF_ICECROWN) != QUEST_STATUS_INCOMPLETE)
+            return;
+
         if (newZone == ZONE_ACHERUS)
-            ScheduleIntroScene(player);
+            HandleAcherusArrival(player);
+        else if (player->GetMapId() == MAP_ICECROWN_CITADEL_SCENARIO)
+            HandleScenarioArrival(player);
     }
 };
 
 // 187753 - Death Gate (to Acherus)
-// The quest's first step: the summoned gate and the player's own Death Gate both cast it. The intro scene waits for the
-// arrival in Acherus (player_dk_the_call_of_icecrown): from Dalaran the teleport lands after the spell's hit
+// The quest's first step: the summoned gate and the player's own Death Gate both cast it. With The Call of Icecrown
+// under way it leads straight into the scenario instead of Acherus (one loading screen, then the entrance scene)
 class spell_dk_the_call_of_icecrown_death_gate : public SpellScript
 {
-    void HandleAfterHit() const
+    void HandleTeleport(SpellEffIndex effIndex)
     {
-        Player* player = GetCaster()->ToPlayer();
+        Player* player = GetHitPlayer();
         if (!player || player->GetQuestStatus(QUEST_THE_CALL_OF_ICECROWN) != QUEST_STATUS_INCOMPLETE)
             return;
 
+        PreventHitDefaultEffect(effIndex);
         player->KilledMonsterCredit(NPC_WAYGATE_CREDIT);
+        if (!HasSeenIntroScene(player))
+        {
+            // Black from the gate to the scene; lifted when the scene starts, and in any case after a few seconds
+            player->CastSpell(player, SPELL_FADE_TO_BLACK, CastSpellExtraArgsInit{ .TriggerFlags = TRIGGERED_FULL_MASK });
+            player->m_Events.AddEventAtOffset([player]
+            {
+                player->RemoveAurasDueToSpell(SPELL_FADE_TO_BLACK);
+            }, FadeToBlackLimit);
+        }
+
+        player->CastSpell(player, SPELL_LAUNCH_THE_BLADES_SCENARIO, CastSpellExtraArgsInit{ .TriggerFlags = TRIGGERED_FULL_MASK });
     }
 
     void Register() override
     {
-        AfterHit += SpellHitFn(spell_dk_the_call_of_icecrown_death_gate::HandleAfterHit);
+        OnEffectHitTarget += SpellEffectFn(spell_dk_the_call_of_icecrown_death_gate::HandleTeleport, EFFECT_0, SPELL_EFFECT_TELEPORT_UNITS);
     }
 };
 
-// Scene 1076 (package 1466, "Looting the Blades"), played by 190789 on arrival in Acherus: watched or skipped, its end
-// casts 190794, which lifts the scene's aura and phase and credits The Call of Icecrown's intro objective
+// Scene 1076 (package 1467, "Icecrown Entrance Scene"), played by 190789 on the first arrival on map 1480: watched or
+// skipped, its end casts 190794, which lifts the scene's aura and phase and credits The Call of Icecrown's intro objective
 class scene_dk_the_blades_of_the_fallen_prince : public SceneScript
 {
 public:
@@ -255,23 +315,44 @@ private:
     }
 };
 
-// 200428 - Death Gate (to Icecrown Citadel)
-// Its effect is a dungeon teleport the core leaves unhandled; the destination row names the citadel's gate
-class spell_dk_death_gate_icecrown : public SpellScript
+// 45596 - sent by 190794, the end of The Call of Icecrown's entrance scene. On the landing it starts Mograine's walk
+// (188022, aimed at him by conditions); anywhere else it sends the player into the scenario
+class event_dk_the_blades_of_the_fallen_prince_scene_end : public EventScript
 {
-    void HandleTeleport(SpellEffIndex effIndex) const
+public:
+    event_dk_the_blades_of_the_fallen_prince_scene_end() : EventScript("event_dk_the_blades_of_the_fallen_prince_scene_end") { }
+
+    void OnTrigger(WorldObject* /*object*/, WorldObject* invoker, uint32 /*eventId*/) override
     {
-        Player* player = GetHitPlayer();
-        if (!player)
+        Player* player = Object::ToPlayer(invoker);
+        if (!player || player->GetQuestStatus(QUEST_THE_CALL_OF_ICECROWN) != QUEST_STATUS_INCOMPLETE)
             return;
 
-        if (SpellTargetPosition const* destination = sSpellMgr->GetSpellTargetPosition(GetSpellInfo()->Id, effIndex))
-            player->TeleportTo(*destination);
+        if (player->GetMapId() == MAP_ICECROWN_CITADEL_SCENARIO)
+            player->CastSpell(nullptr, SPELL_ICECROWN_MOGRAINE_PING, CastSpellExtraArgsInit{ .TriggerFlags = TRIGGERED_FULL_MASK });
+        else
+            player->CastSpell(player, SPELL_LAUNCH_THE_BLADES_SCENARIO, CastSpellExtraArgsInit{ .TriggerFlags = TRIGGERED_FULL_MASK });
+    }
+};
+
+// 188406 - Launch The Blades of the Fallen Prince Scenario
+// A dummy: the player goes to the scenario's start, the lower deck of Acherus beside Icecrown Citadel (map 1480)
+class spell_dk_launch_the_blades_of_the_fallen_prince_scenario : public SpellScript
+{
+    void HandleDummy(SpellEffIndex /*effIndex*/) const
+    {
+        Player* player = GetHitPlayer();
+        if (!player || player->GetMapId() == MAP_ICECROWN_CITADEL_SCENARIO)
+            return;
+
+        // WorldSafeLocs keep their facing in degrees
+        if (WorldSafeLocsEntry const* start = sWorldSafeLocsStore.LookupEntry(WORLD_SAFE_LOC_FROST_SCENARIO_START))
+            player->TeleportTo(MAP_ICECROWN_CITADEL_SCENARIO, start->Loc.X, start->Loc.Y, start->Loc.Z, start->Facing * float(M_PI) / 180.0f);
     }
 
     void Register() override
     {
-        OnEffectHitTarget += SpellEffectFn(spell_dk_death_gate_icecrown::HandleTeleport, EFFECT_0, SPELL_EFFECT_TELEPORT_TO_LFG_DUNGEON);
+        OnEffectHitTarget += SpellEffectFn(spell_dk_launch_the_blades_of_the_fallen_prince_scenario::HandleDummy, EFFECT_0, SPELL_EFFECT_DUMMY);
     }
 };
 
@@ -287,9 +368,12 @@ void AddSC_orderhall_death_knight()
     // Scenes
     new scene_dk_the_blades_of_the_fallen_prince();
 
+    // Events
+    new event_dk_the_blades_of_the_fallen_prince_scene_end();
+
     // Spellscripts
     RegisterSpellScript(spell_dk_force_specialization);
     RegisterSpellScript(spell_dk_artifacts_choice_reward);
     RegisterSpellScript(spell_dk_the_call_of_icecrown_death_gate);
-    RegisterSpellScript(spell_dk_death_gate_icecrown);
+    RegisterSpellScript(spell_dk_launch_the_blades_of_the_fallen_prince_scenario);
 }
