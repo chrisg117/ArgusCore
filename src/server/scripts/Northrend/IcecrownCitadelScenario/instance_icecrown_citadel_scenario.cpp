@@ -147,9 +147,9 @@ public:
     }
 };
 
-// 95193 - Highlord Darion Mograine, at the landing beside the citadel. Pinged by the first player to stand on the
-// landing (188022), he walks up the ramp to Acherus's exit, stops beside it, turns back to the player and speaks
-// (744 Frost DK - Entrance). Once per scenario: he stays at the top afterwards
+// 95193 - Highlord Darion Mograine, at the landing beside the citadel. Pinged when the player arrives (188022), he
+// greets them at once (744 Frost DK - Entrance) and speaks as he walks up the ramp to Acherus's exit, then stops beside
+// it and turns back to the player. Once per scenario: he stays at the top afterwards
 struct npc_icc_scenario_darion_mograine : public ScriptedAI
 {
     using ScriptedAI::ScriptedAI;
@@ -160,6 +160,9 @@ struct npc_icc_scenario_darion_mograine : public ScriptedAI
             return;
 
         _playerGuid = guid;
+        if (Player* player = ObjectAccessor::GetPlayer(*me, _playerGuid))
+            player->CastSpell(player, SPELL_FROST_DK_ENTRANCE, CastSpellExtraArgsInit{ .TriggerFlags = TRIGGERED_FULL_MASK });
+
         me->m_Events.AddEventAtOffset([this]
         {
             me->SetWalk(true);
@@ -182,10 +185,7 @@ struct npc_icc_scenario_darion_mograine : public ScriptedAI
                 break;
             case POINT_MOGRAINE_RAMP_TOP:
                 if (Player* player = ObjectAccessor::GetPlayer(*me, _playerGuid))
-                {
                     me->SetFacingToObject(player);
-                    player->CastSpell(player, SPELL_FROST_DK_ENTRANCE, CastSpellExtraArgsInit{ .TriggerFlags = TRIGGERED_FULL_MASK });
-                }
                 break;
             default:
                 break;
