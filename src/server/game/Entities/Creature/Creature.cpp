@@ -3092,7 +3092,17 @@ float Creature::GetHealthMultiplierForTarget(WorldObject const* target) const
     if (GetLevel() < levelForTarget)
         return 1.0f;
 
-    return double(GetMaxHealthByLevel(levelForTarget)) / double(GetCreateHealth());
+    // The ratio between the health the creature would have at the level it shows this target and the health it has at
+    // its own level. Both sides come from GenerateHealth, which already applies HealthModifier, so the modifier cancels
+    // as it does in GetDamageMultiplierForTarget.
+    CreatureTemplate const* cInfo = GetCreatureTemplate();
+    CreatureDifficulty const* creatureDifficulty = GetCreatureDifficulty();
+    uint32 healthForTarget = sObjectMgr->GetCreatureBaseStats(levelForTarget, cInfo->unit_class)->GenerateHealth(creatureDifficulty);
+    uint32 healthForOwnLevel = sObjectMgr->GetCreatureBaseStats(GetLevel(), cInfo->unit_class)->GenerateHealth(creatureDifficulty);
+    if (!healthForTarget || !healthForOwnLevel)
+        return 1.0f;
+
+    return double(healthForTarget) / double(healthForOwnLevel);
 }
 
 float Creature::GetBaseDamageForLevel(uint8 level) const
