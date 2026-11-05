@@ -90,11 +90,18 @@ enum IcecrownCitadelScenarioData
     SPELL_AVENGERS_SHIELD                       = 187219, // Magroth
     SPELL_HAMMER_OF_WRATH                       = 37259,  // Gavinrad
 
+    // The gargoyle gate before Baelgun: two Gatekeepers on their pressure plates and the portcullis behind them
+    NPC_STONESKIN_GATEKEEPER                    = 97320,
+    GO_SPIRE_PORTCULLIS                         = 251449,
+    SPELL_HARDENED                              = 192188,
+    BROADCAST_TEXT_GARGOYLES_LIFT_OFF           = 99548,
+
     WORLD_SAFE_LOC_ACHERUS_AREA                 = 5095,
     WORLD_SAFE_LOC_DEATHBRINGERS_RISE           = 5075,
     WORLD_SAFE_LOC_THE_SPIRE_AREA               = 5214,
 
     DATA_ENTERED_THE_CITADEL                    = 1,
+    DATA_GATEKEEPER_LIFTED                      = 2,
 
     POINT_MOGRAINE_RAMP_FOOT                    = 1,
     POINT_MOGRAINE_RAMP_MIDDLE                  = 2,
@@ -106,6 +113,9 @@ static constexpr Milliseconds MograineWait = 2s;
 static constexpr Milliseconds SpireLineDelay = 3s;
 static constexpr float SoulGreetRange = 40.0f;
 static constexpr float FragmentSearchRange = 15.0f;
+static constexpr float GargoyleGateRange = 60.0f;
+static constexpr float PressurePlateRadius = 6.0f;
+static constexpr Milliseconds PressurePlateCheck = 250ms;
 
 // Mograine's walk from the landing up the ramp to Acherus's exit, on the 1480 mesh; he stops beside the path at the top
 static constexpr Position MograineRampFoot   = { -704.00f, 2205.87f, 535.96f };
@@ -415,6 +425,130 @@ private:
     EventMap _events;
 };
 
+static void SetSpirePortcullis(WorldObject const* searcher, bool open)
+{
+    if (GameObject* portcullis = searcher->FindNearestGameObject(GO_SPIRE_PORTCULLIS, GargoyleGateRange))
+        portcullis->SetGoState(open ? GO_STATE_ACTIVE : GO_STATE_READY);
+}
+
+// 97320 Stoneskin Gatekeeper: one of the two gargoyles sitting on their pressure plates in the Spire corridor. They lift
+// off when a death knight comes near (at_icc_scenario_gargoyle_gate) and stay Hardened, heavy stone that damage cannot
+// kill but that may still be moved. Pulled back onto its own plate (its spawn point), a lifted Gatekeeper dies; when both
+// are dead the portcullis opens. A static areatrigger only sees players, so each one watches its own plate
+struct npc_icc_scenario_stoneskin_gatekeeper : public ScriptedAI
+{
+    npc_icc_scenario_stoneskin_gatekeeper(Creature* creature) : ScriptedAI(creature) { }
+
+    void JustAppeared() override
+    {
+        Land();
+    }
+
+    void JustReachedHome() override
+    {
+        // The death knight died or left: back on the plate, and the way stays open for another try
+        Land();
+        SetSpirePortcullis(me, true);
+    }
+
+    uint32 GetData(uint32 id) const override
+    {
+        return id == DATA_GATEKEEPER_LIFTED && _lifted ? 1 : 0;
+    }
+
+    void SetGUID(ObjectGuid const& guid, int32 id) override
+    {
+        if (id != DATA_GATEKEEPER_LIFTED || _lifted)
+            return;
+
+        _lifted = true;
+        _leftPlate = false;
+        me->SetImmuneToPC(false);
+        me->SetReactState(REACT_AGGRESSIVE);
+        if (Player* player = ObjectAccessor::GetPlayer(*me, guid))
+            AttackStart(player);
+    }
+
+    void JustDied(Unit* /*killer*/) override
+    {
+        std::vector<Creature*> gatekeepers;
+        me->GetCreatureListWithEntryInGrid(gatekeepers, NPC_STONESKIN_GATEKEEPER, GargoyleGateRange);
+        for (Creature* gatekeeper : gatekeepers)
+            if (gatekeeper->IsAlive())
+                return;
+
+        SetSpirePortcullis(me, true);
+    }
+
+    void UpdateAI(uint32 diff) override
+    {
+        if (_lifted && !me->IsInEvadeMode())
+        {
+            _plateTimer += Milliseconds(diff);
+            if (_plateTimer >= PressurePlateCheck)
+            {
+                _plateTimer = 0ms;
+                bool const onPlate = me->GetExactDist(me->GetHomePosition()) <= PressurePlateRadius;
+                if (!onPlate)
+                    _leftPlate = true;
+                else if (_leftPlate)
+                {
+                    // Back on its plate: the stone gives way
+                    me->RemoveAurasDueToSpell(SPELL_HARDENED);
+                    me->KillSelf();
+                    return;
+                }
+            }
+        }
+
+        UpdateVictim();
+    }
+
+private:
+    void Land()
+    {
+        _lifted = false;
+        _leftPlate = false;
+        _plateTimer = 0ms;
+        me->SetReactState(REACT_PASSIVE);
+        me->SetImmuneToPC(true);
+        if (!me->HasAura(SPELL_HARDENED))
+            DoCastSelf(SPELL_HARDENED, CastSpellExtraArgsInit{ .TriggerFlags = TRIGGERED_FULL_MASK });
+    }
+
+    bool _lifted = false;
+    bool _leftPlate = false;
+    Milliseconds _plateTimer = 0ms;
+};
+
+// The corridor before the gargoyle gate: a death knight seeking the fragments wakes the two Gatekeepers, and the
+// portcullis behind them slams shut
+struct at_icc_scenario_gargoyle_gate : AreaTriggerAI
+{
+    using AreaTriggerAI::AreaTriggerAI;
+
+    void OnUnitEnter(Unit* unit) override
+    {
+        Player* player = unit->ToPlayer();
+        if (!player || !BelongsInTheScenario(player) || !IsOnStep(at->GetMap(), SCENARIO_STEP_SEEK_THE_FRAGMENTS))
+            return;
+
+        std::vector<Creature*> gatekeepers;
+        at->GetCreatureListWithEntryInGrid(gatekeepers, NPC_STONESKIN_GATEKEEPER, GargoyleGateRange);
+        std::erase_if(gatekeepers, [](Creature const* gatekeeper)
+        {
+            return !gatekeeper->IsAlive() || gatekeeper->IsInEvadeMode() || gatekeeper->AI()->GetData(DATA_GATEKEEPER_LIFTED);
+        });
+        if (gatekeepers.empty())
+            return;
+
+        gatekeepers.front()->TextEmote(BROADCAST_TEXT_GARGOYLES_LIFT_OFF, player, true);
+        SetSpirePortcullis(at, false);
+        for (Creature* gatekeeper : gatekeepers)
+            gatekeeper->AI()->SetGUID(player->GetGUID(), DATA_GATEKEEPER_LIFTED);
+    }
+};
+
 // The landing beside the citadel: a death knight who stands here at the start pings Mograine. An areatrigger needs the
 // player in the world, so a login or a teleport under the loading screen does not start him unseen. On the first arrival
 // the entrance scene plays here first, and its end pings him instead (event 45596)
@@ -453,8 +587,10 @@ void AddSC_instance_icecrown_citadel_scenario()
     new instance_icecrown_citadel_scenario();
     RegisterCreatureAI(npc_icc_scenario_darion_mograine);
     RegisterCreatureAI(npc_icc_scenario_fragment_soul);
+    RegisterCreatureAI(npc_icc_scenario_stoneskin_gatekeeper);
     RegisterAreaTriggerAI(at_icc_scenario_scourge_transporter);
     RegisterAreaTriggerAI(at_icc_scenario_door_to_deathbringers_rise);
     RegisterAreaTriggerAI(at_icc_scenario_landing);
+    RegisterAreaTriggerAI(at_icc_scenario_gargoyle_gate);
     RegisterSpellScript(spell_icc_scenario_mograine_ping);
 }
