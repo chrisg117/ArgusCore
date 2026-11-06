@@ -23,6 +23,7 @@
 #include "AreaTrigger.h"
 #include "AreaTriggerAI.h"
 #include "Conversation.h"
+#include "ConversationAI.h"
 #include "Creature.h"
 #include "DB2Stores.h"
 #include "GameEventSender.h"
@@ -35,6 +36,7 @@
 #include "ObjectAccessor.h"
 #include "PhasingHandler.h"
 #include "Player.h"
+#include "SceneMgr.h"
 #include "ScriptedCreature.h"
 #include "SharedDefines.h"
 #include "SpellMgr.h"
@@ -54,6 +56,10 @@ enum IcecrownCitadelScenarioData
     SCENARIO_STEP_SEEK_THE_FRAGMENTS            = 1810,
     SCENARIO_STEP_TRAVEL_TO_THE_FROZEN_THRONE   = 1811,
     SCENARIO_STEP_POWER_OVERWHELMING            = 1812,
+    SCENARIO_STEP_THE_PURGE                     = 1814,
+    SCENARIO_STEP_THE_HUNGERING_COLD            = 2224,
+    SCENARIO_STEP_DEATHS_MARCH                  = 1827,
+    SCENARIO_STEP_YOU_HAVE_YOUR_ORDERS          = 2923,
 
     GAME_EVENT_OPEN_THE_GATE_TO_ICECROWN        = 47614,
     GAME_EVENT_ENTER_ICECROWN_CITADEL           = 45677,
@@ -81,6 +87,31 @@ enum IcecrownCitadelScenarioData
     CONVERSATION_MAGROTH                        = 14800005,
     CONVERSATION_GAVINRAD                       = 14800006,
     CONVERSATION_BEHOLD_THE_HILT                = 14800007, // line 1785, "Behold, the hilt of Frostmourne..."
+    CONVERSATION_SPIRITS_REMAIN                 = 14800008, // lines 1782-1783, "It is done..." / "...purge them"
+    CONVERSATION_THE_LICH_KINGS_BLESSING        = 14800010, // lines 1786-1787, the sigil
+    CONVERSATION_YOUR_ORDERS                    = 14800011, // lines 1788-1789, the Broken Isles
+
+    // The Purge: inside the blades the death knight fights Arthas while Ner'zhul, out of reach, lashes out. Nothing in the
+    // client sends 1814's event; Arthas's death does. No sniff: Ner'zhul's spells are the client's frost spells of the shape
+    // the user describes (a cast nuke and a ground blast)
+    NPC_ARTHAS                                  = 95941,
+    NPC_NERZHUL                                 = 95946,
+    GAME_EVENT_THE_PURGE                        = 45607,
+    SPELL_NERZHUL_FROSTBOLT                     = 195063,
+    SPELL_NERZHUL_ICY_BLAST                     = 160090, // a missile at the target's spot, 5 yd blast and a slow
+    SPELL_BLADES_OF_THE_FALLEN_PRINCE           = 186389, // 1.5 s channel back to the throne (spell_target_position)
+
+    // The blades on the throne: opening them plays "Looting the Blades"; taking 128292 casts Blade Credit, which counts
+    // "Obtain the Blades of the Fallen Prince", step 2224 (event 49193) and plays "You have done well" (197001, conversation 750)
+    ITEM_BLADES_OF_THE_FALLEN_PRINCE            = 128292,
+    SCENE_LOOTING_THE_BLADES                    = 14800001, // package 1466
+    SPELL_BLADE_CREDIT                          = 197092,
+
+    // The Lich King's blessing at his seat (1827: event 45753, which nothing sends), then his orders and the Acherus Waygate
+    // (2923: event 54787, sent on its use; 186039 Icecrown Waygate takes the player to Acherus)
+    GAME_EVENT_DEATHS_MARCH                     = 45753,
+    GAME_EVENT_YOU_HAVE_YOUR_ORDERS             = 54787,
+    GO_ACHERUS_WAYGATE                          = 242469,
 
     NPC_BAELGUN_FLAMEBEARD                      = 93948,
     NPC_HALAHK_THE_DEATHBRINGER                 = 93949,
@@ -142,7 +173,9 @@ static constexpr float HiltSearchRange = 30.0f;
 // The hilt's model plays its whole sequence (snow pile, Frostmourne whole, the shatter, the hilt rising) when it is created
 // in GO_STATE_ACTIVE; the user counted 3 to 5 s on the live test (step 14), so the twin blades take its place after 6 s
 static constexpr Milliseconds HiltSequenceDuration = 6s;
-static constexpr Milliseconds IntoFrostmourneDelay = 3s;
+static constexpr Milliseconds PurgeReturnDelay = 2s;
+static constexpr Milliseconds HeldBladesCreditDelay = 3s; // after 186389's 1.5 s channel and its teleport
+static constexpr float PurgeSearchRange = 60.0f;
 static constexpr float GargoyleGateRange = 60.0f;
 static constexpr float PressurePlateRadius = 6.0f;
 static constexpr Milliseconds PressurePlateCheck = 250ms;
@@ -156,6 +189,9 @@ static constexpr Position MograineRampTop    = { -683.50f, 2210.50f, 545.11f };
 
 // Inside Frostmourne, where The Purge is fought: 631's own room inside the blade (Harvest Soul's destination, 73655)
 static constexpr Position InsideFrostmourne  = { 495.708f, -2523.76f, 1049.87f, 0.0f };
+
+// The Acherus Waygate, raised on the Frozen Throne's platform with the Lich King's orders
+static constexpr Position AcherusWaygateSpot = { 518.00f, -2140.00f, 840.86f, 1.57f };
 
 static bool IsOnStep(Map const* map, uint32 stepId)
 {
@@ -171,10 +207,22 @@ static void TeleportToSafeLoc(Player* player, uint32 worldSafeLocId)
         player->NearTeleportTo(loc->Loc.X, loc->Loc.Y, loc->Loc.Z, loc->Facing * float(M_PI) / 180.0f);
 }
 
-// Only a death knight on The Call of Icecrown belongs here (a login inside after the quest, or a GM's `go`)
+// Only a death knight on The Call of Icecrown belongs here (a login inside after the quest, or a GM's `go`). Taking the
+// blades completes the quest's objectives, and the scenario's last steps still follow, so a complete quest belongs too
 static bool BelongsInTheScenario(Player const* player)
 {
-    return player->GetClass() == CLASS_DEATH_KNIGHT && player->GetQuestStatus(QUEST_THE_CALL_OF_ICECROWN) == QUEST_STATUS_INCOMPLETE;
+    if (player->GetClass() != CLASS_DEATH_KNIGHT)
+        return false;
+
+    QuestStatus const status = player->GetQuestStatus(QUEST_THE_CALL_OF_ICECROWN);
+    return status == QUEST_STATUS_INCOMPLETE || status == QUEST_STATUS_COMPLETE;
+}
+
+// The player is still in the scenario, on the given step
+static bool IsInTheScenarioOnStep(Player const* player, uint32 stepId)
+{
+    return player->IsInWorld() && player->GetMapId() == MAP_ICECROWN_CITADEL_SCENARIO && BelongsInTheScenario(player)
+        && IsOnStep(player->GetMap(), stepId);
 }
 
 class instance_icecrown_citadel_scenario : public InstanceMapScript
@@ -711,8 +759,8 @@ struct at_icc_scenario_spire_teleporter : AreaTriggerAI
 // 45692 - sent by 186253 Forging, the 4 s cast the Hilt of Frostmourne's click starts. The fragments are forged: the
 // blades are reforged (186203, whose 186202 counts "Power Overwhelming"). The hilt plays its sequence: its model does so
 // only when created in GO_STATE_ACTIVE (a live state change shows the second half), so the clicked hilt gives way to a fresh
-// one in that state. Once it has risen the twin blades hang in its place (247386, looted on the return), and the death knight
-// is drawn inside Frostmourne for The Purge
+// one in that state. Once it has risen the twin blades hang in its place (247386, out of reach until the return from The
+// Purge), the Lich King speaks of the spirits within, and when he is done the death knight is drawn inside Frostmourne
 class event_icc_scenario_fragments_forged : public EventScript
 {
 public:
@@ -752,11 +800,247 @@ public:
 
         player->m_Events.AddEventAtOffset([player]
         {
-            if (player->GetMapId() == MAP_ICECROWN_CITADEL_SCENARIO && BelongsInTheScenario(player))
+            if (!IsInTheScenarioOnStep(player, SCENARIO_STEP_THE_PURGE))
+                return;
+
+            // The teleport waits for the lines (conversation_icc_scenario_spirits_remain)
+            if (!Conversation::CreateConversation(CONVERSATION_SPIRITS_REMAIN, player, *player, player->GetGUID()))
                 player->NearTeleportTo(InsideFrostmourne);
-        }, HiltSequenceDuration + IntoFrostmourneDelay);
+        }, HiltSequenceDuration);
     }
 };
+
+// 14800008 - "It is done. From the shards of Frostmourne the twin blades are born!..." / "...Enter into the spiritual realm
+// within and purge them of all that resist your domination!": at its end the death knight is drawn inside the blades
+class conversation_icc_scenario_spirits_remain : public ConversationAI
+{
+public:
+    using ConversationAI::ConversationAI;
+
+    // OnRemove runs inside RemoveFromWorld (also on a logout or a map unload), so the teleport goes on the player's events
+    void OnRemove() override
+    {
+        if (Player* player = ObjectAccessor::GetPlayer(*conversation, conversation->GetPrivateObjectOwner()))
+            player->m_Events.AddEventAtOffset([player]
+            {
+                if (IsInTheScenarioOnStep(player, SCENARIO_STEP_THE_PURGE))
+                    player->NearTeleportTo(InsideFrostmourne);
+            }, 0ms);
+    }
+};
+
+enum PurgeEvents
+{
+    EVENT_NERZHUL_FROSTBOLT = 1,
+    EVENT_NERZHUL_ICY_BLAST
+};
+
+// 95941 Arthas, within the blades: the soul the death knight purges. A plain melee fight; his death ends The Purge (event
+// 45607), his body stays, and the death knight is carried back to the throne (186389)
+struct npc_icc_scenario_purge_arthas : public ScriptedAI
+{
+    using ScriptedAI::ScriptedAI;
+
+    void JustDied(Unit* killer) override
+    {
+        Player* player = killer ? killer->GetCharmerOrOwnerPlayerOrPlayerItself() : nullptr;
+        if (!player || !IsInTheScenarioOnStep(player, SCENARIO_STEP_THE_PURGE))
+            return;
+
+        GameEvents::Trigger(GAME_EVENT_THE_PURGE, player, me);
+
+        player->m_Events.AddEventAtOffset([player]
+        {
+            if (!IsInTheScenarioOnStep(player, SCENARIO_STEP_THE_HUNGERING_COLD))
+                return;
+
+            player->CastSpell(player, SPELL_BLADES_OF_THE_FALLEN_PRINCE, CastSpellExtraArgsInit{ .TriggerFlags = TRIGGERED_FULL_MASK });
+
+            // A death knight who already holds the blades (taken on an earlier run) has nothing to loot: once back on the
+            // throne, Blade Credit counts them
+            player->m_Events.AddEventAtOffset([player]
+            {
+                if (player->HasItemCount(ITEM_BLADES_OF_THE_FALLEN_PRINCE)
+                    && IsInTheScenarioOnStep(player, SCENARIO_STEP_THE_HUNGERING_COLD))
+                    player->CastSpell(player, SPELL_BLADE_CREDIT, CastSpellExtraArgsInit{ .TriggerFlags = TRIGGERED_FULL_MASK });
+            }, HeldBladesCreditDelay);
+        }, PurgeReturnDelay);
+    }
+};
+
+// 95946 Ner'zhul, within the blades: out of reach (not selectable, takes no damage), he lashes out at whoever fights Arthas
+struct npc_icc_scenario_purge_nerzhul : public ScriptedAI
+{
+    using ScriptedAI::ScriptedAI;
+
+    void JustAppeared() override
+    {
+        me->SetReactState(REACT_PASSIVE);
+        me->SetUnitFlag(UNIT_FLAG_UNINTERACTIBLE);
+        me->SetControlled(true, UNIT_STATE_ROOT);
+    }
+
+    void DamageTaken(Unit* /*attacker*/, uint32& damage, DamageEffectType /*damageType*/, SpellInfo const* /*spellInfo*/) override
+    {
+        damage = 0;
+    }
+
+    void EnterEvadeMode(EvadeReason /*why*/) override { }
+
+    void UpdateAI(uint32 diff) override
+    {
+        Creature* arthas = me->FindNearestCreature(NPC_ARTHAS, PurgeSearchRange);
+        Unit* target = arthas && arthas->IsInCombat() ? arthas->GetVictim() : nullptr;
+        if (!target)
+        {
+            if (_fighting)
+            {
+                _fighting = false;
+                _events.Reset();
+                me->CombatStop(true);
+            }
+            return;
+        }
+
+        if (!_fighting)
+        {
+            _fighting = true;
+            _events.ScheduleEvent(EVENT_NERZHUL_FROSTBOLT, 4s);
+            _events.ScheduleEvent(EVENT_NERZHUL_ICY_BLAST, 10s);
+        }
+
+        _events.Update(diff);
+        if (me->HasUnitState(UNIT_STATE_CASTING))
+            return;
+
+        while (uint32 eventId = _events.ExecuteEvent())
+        {
+            switch (eventId)
+            {
+                case EVENT_NERZHUL_FROSTBOLT:
+                    me->SetFacingToObject(target);
+                    DoCast(target, SPELL_NERZHUL_FROSTBOLT);
+                    _events.Repeat(8s);
+                    break;
+                case EVENT_NERZHUL_ICY_BLAST:
+                    DoCast(target, SPELL_NERZHUL_ICY_BLAST);
+                    _events.Repeat(15s);
+                    break;
+                default:
+                    break;
+            }
+        }
+    }
+
+private:
+    EventMap _events;
+    bool _fighting = false;
+};
+
+// 247386 Blades of the Fallen Prince, hanging on the Frozen Throne after The Purge. Opening them plays "Looting the Blades";
+// once the blades (128292, their only loot) are taken, Blade Credit counts the objective and step 2224 and plays the Lich
+// King's "You have done well". The core has no hook for an item looted from a chest, and the loot release names no looter,
+// so the opener is remembered. They hang there from the reforging on, but can be taken only on The Hungering Cold
+struct go_icc_scenario_blades_of_the_fallen_prince : public GameObjectAI
+{
+    using GameObjectAI::GameObjectAI;
+
+    void UpdateAI(uint32 /*diff*/) override
+    {
+        bool const takeable = IsOnStep(me->GetMap(), SCENARIO_STEP_THE_HUNGERING_COLD);
+        if (takeable == !me->HasFlag(GO_FLAG_NOT_SELECTABLE))
+            return;
+
+        if (takeable)
+            me->RemoveFlag(GO_FLAG_NOT_SELECTABLE);
+        else
+            me->SetFlag(GO_FLAG_NOT_SELECTABLE);
+    }
+
+    void OnLootStateChanged(uint32 state, Unit* unit) override
+    {
+        if (state == GO_ACTIVATED)
+        {
+            Player* player = unit ? unit->ToPlayer() : nullptr;
+            if (!player || !IsInTheScenarioOnStep(player, SCENARIO_STEP_THE_HUNGERING_COLD) || _opener == player->GetGUID())
+                return;
+
+            _opener = player->GetGUID();
+            player->GetSceneMgr().PlayScene(SCENE_LOOTING_THE_BLADES);
+        }
+        else if (state == GO_JUST_DEACTIVATED)
+        {
+            Player* player = ObjectAccessor::GetPlayer(*me, _opener);
+            if (player && player->HasItemCount(ITEM_BLADES_OF_THE_FALLEN_PRINCE)
+                && IsInTheScenarioOnStep(player, SCENARIO_STEP_THE_HUNGERING_COLD))
+                player->CastSpell(player, SPELL_BLADE_CREDIT, CastSpellExtraArgsInit{ .TriggerFlags = TRIGGERED_FULL_MASK });
+        }
+    }
+
+private:
+    ObjectGuid _opener;
+};
+
+// The Lich King's seat at the top of the Frozen Throne: "Ascend to my throne and receive your charge." A death knight who
+// reaches it once the blades are taken receives his blessing
+struct at_icc_scenario_frozen_throne_seat : AreaTriggerAI
+{
+    using AreaTriggerAI::AreaTriggerAI;
+
+    void OnUnitEnter(Unit* unit) override
+    {
+        Player* player = unit->ToPlayer();
+        if (!player || !IsInTheScenarioOnStep(player, SCENARIO_STEP_DEATHS_MARCH) || _blessed.contains(player->GetGUID()))
+            return;
+
+        _blessed.insert(player->GetGUID());
+        Conversation::CreateConversation(CONVERSATION_THE_LICH_KINGS_BLESSING, player, *player, player->GetGUID());
+    }
+
+private:
+    GuidUnorderedSet _blessed;
+};
+
+// 14800010 - "Where the weak showed mercy, you did not hesitate to strike..." / "I now mark you with my sigil...": the
+// blessing counts Death's March; then the Lich King gives his orders and the Acherus Waygate rises on the platform
+class conversation_icc_scenario_the_lich_kings_blessing : public ConversationAI
+{
+public:
+    using ConversationAI::ConversationAI;
+
+    void OnRemove() override
+    {
+        if (Player* player = ObjectAccessor::GetPlayer(*conversation, conversation->GetPrivateObjectOwner()))
+            player->m_Events.AddEventAtOffset([player]
+            {
+                if (!IsInTheScenarioOnStep(player, SCENARIO_STEP_DEATHS_MARCH))
+                    return;
+
+                GameEvents::Trigger(GAME_EVENT_DEATHS_MARCH, player, nullptr);
+                Conversation::CreateConversation(CONVERSATION_YOUR_ORDERS, player, *player, player->GetGUID());
+                player->SummonGameObject(GO_ACHERUS_WAYGATE, AcherusWaygateSpot,
+                    QuaternionData::fromEulerAnglesZYX(AcherusWaygateSpot.GetOrientation(), 0.0f, 0.0f), 0s);
+            }, 0ms);
+    }
+};
+
+// 186039 - Icecrown Waygate (the Acherus Waygate's spell): leaving the Frozen Throne by it ends the scenario. The event goes
+// before the teleport (191275) takes the player off the map
+class spell_icc_scenario_icecrown_waygate : public SpellScript
+{
+    void HandleBeforeCast()
+    {
+        if (Player* player = GetCaster()->ToPlayer())
+            if (IsInTheScenarioOnStep(player, SCENARIO_STEP_YOU_HAVE_YOUR_ORDERS))
+                GameEvents::Trigger(GAME_EVENT_YOU_HAVE_YOUR_ORDERS, player, nullptr);
+    }
+
+    void Register() override
+    {
+        BeforeCast += SpellCastFn(spell_icc_scenario_icecrown_waygate::HandleBeforeCast);
+    }
+};
+
 
 // The landing beside the citadel: a death knight who stands here at the start pings Mograine. An areatrigger needs the
 // player in the world, so a login or a teleport under the loading screen does not start him unseen. On the first arrival
@@ -804,5 +1088,12 @@ void AddSC_instance_icecrown_citadel_scenario()
     RegisterAreaTriggerAI(at_icc_scenario_gargoyle_gate);
     RegisterAreaTriggerAI(at_icc_scenario_spire_teleporter);
     new event_icc_scenario_fragments_forged();
+    RegisterConversationAI(conversation_icc_scenario_spirits_remain);
+    RegisterCreatureAI(npc_icc_scenario_purge_arthas);
+    RegisterCreatureAI(npc_icc_scenario_purge_nerzhul);
+    RegisterGameObjectAI(go_icc_scenario_blades_of_the_fallen_prince);
+    RegisterAreaTriggerAI(at_icc_scenario_frozen_throne_seat);
+    RegisterConversationAI(conversation_icc_scenario_the_lich_kings_blessing);
+    RegisterSpellScript(spell_icc_scenario_icecrown_waygate);
     RegisterSpellScript(spell_icc_scenario_mograine_ping);
 }
