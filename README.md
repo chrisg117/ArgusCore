@@ -23,7 +23,7 @@ What is finished and playable on the `dev` branch. Kept short on purpose; update
 |-------|-----------------|------------|
 | Shadow Priest | Playable: opening quests, "Blade in Twilight" scenario, Netherlight Temple entry | Started: hall entry and mission table |
 | Demon Hunter | In progress: Havoc playable; Vengeance not started | Started: Fel Hammer opening, forge and nether crucible; campaign slice 1 playable (champions, troops, missions, upgrades); Scouting Map zone choice (Azsuna tested) |
-| Death Knight | In progress: The Call To War, A Pact of Necessity, and The Call of Icecrown through Seek the Fragments playable (Frost) | Started: hall founded at The Call To War; the Death Gate leads into the Icecrown scenario, with its entrance scene, Mograine's walk, the transporter pad, the door to the Spire, the four souls guarding the Fragments of Frostmourne and the gargoyle gate before Baelgun built; the Spire's trash and the teleporter next |
+| Death Knight | In progress: The Call To War, A Pact of Necessity, and The Call of Icecrown through Seek the Fragments playable (Frost) | Started: hall founded at The Call To War; the Death Gate leads into the Icecrown scenario, with its entrance scene, Mograine's walk, the transporter pad, the door to the Spire, the four souls guarding the Fragments of Frostmourne the gargoyle gate before Baelgun and the Spire's trash built; the teleporter to the Frozen Throne next |
 | All other classes | Not started | Not started |
 
 Shared class hall engine (foundation, talents, followers, shipments, missions, follower growth, mission extras, mission rewards): complete.

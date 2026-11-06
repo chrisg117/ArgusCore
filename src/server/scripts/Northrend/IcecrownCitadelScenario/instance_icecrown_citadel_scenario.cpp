@@ -96,6 +96,17 @@ enum IcecrownCitadelScenarioData
     SPELL_HARDENED                              = 192188,
     BROADCAST_TEXT_GARGOYLES_LIFT_OFF           = 99548,
 
+    // The Spire's trash. No sniff: the ids are the client's spells of the name and shape the recording shows
+    NPC_SPECTRAL_KNIGHT                         = 94907,
+    NPC_PHANTOM_MAGE                            = 94913,
+    NPC_ANGUISHED_SOUL                          = 95433,
+    NPC_PHANTOM_SWORDSMAN                       = 95434,
+    NPC_SPECTRAL_KNIGHT_2                       = 97659,
+    SPELL_FROSTBOLT                             = 195063, // Phantom Mage
+    SPELL_SPECTRAL_SLASH                        = 189288, // Phantom Swordsman, Spectral Knights
+    SPELL_CHARGE                                = 190329, // Spectral Knights
+    SPELL_WAIL_OF_THE_DEAD                      = 192651, // Anguished Soul
+
     WORLD_SAFE_LOC_ACHERUS_AREA                 = 5095,
     WORLD_SAFE_LOC_DEATHBRINGERS_RISE           = 5075,
     WORLD_SAFE_LOC_THE_SPIRE_AREA               = 5214,
@@ -116,6 +127,8 @@ static constexpr float FragmentSearchRange = 15.0f;
 static constexpr float GargoyleGateRange = 60.0f;
 static constexpr float PressurePlateRadius = 6.0f;
 static constexpr Milliseconds PressurePlateCheck = 250ms;
+static constexpr float PhantomMageRange = 25.0f;
+static constexpr float KnightChargeMinRange = 8.0f;
 
 // Mograine's walk from the landing up the ramp to Acherus's exit, on the 1480 mesh; he stops beside the path at the top
 static constexpr Position MograineRampFoot   = { -704.00f, 2205.87f, 535.96f };
@@ -425,6 +438,107 @@ private:
     EventMap _events;
 };
 
+enum SpireTrashEvents
+{
+    EVENT_FROSTBOLT = 1,
+    EVENT_SPECTRAL_SLASH,
+    EVENT_KNIGHT_CHARGE,
+    EVENT_WAIL_OF_THE_DEAD
+};
+
+// The Spire's trash between the fragments: Phantom Mages and Swordsmen at the landing, Spectral Knights before Halahk,
+// Anguished Souls before Magroth and a pack around Gavinrad. Simple kits; the mage keeps its distance and casts
+struct npc_icc_scenario_spire_trash : public ScriptedAI
+{
+    npc_icc_scenario_spire_trash(Creature* creature) : ScriptedAI(creature) { }
+
+    void Reset() override
+    {
+        _events.Reset();
+    }
+
+    void AttackStart(Unit* who) override
+    {
+        if (me->GetEntry() != NPC_PHANTOM_MAGE)
+        {
+            ScriptedAI::AttackStart(who);
+            return;
+        }
+
+        if (who && me->Attack(who, false))
+            me->GetMotionMaster()->MoveChase(who, PhantomMageRange, 0.0f);
+    }
+
+    void JustEngagedWith(Unit* who) override
+    {
+        switch (me->GetEntry())
+        {
+            case NPC_PHANTOM_MAGE:
+                _events.ScheduleEvent(EVENT_FROSTBOLT, 1s);
+                break;
+            case NPC_PHANTOM_SWORDSMAN:
+                _events.ScheduleEvent(EVENT_SPECTRAL_SLASH, 4s);
+                break;
+            case NPC_SPECTRAL_KNIGHT:
+            case NPC_SPECTRAL_KNIGHT_2:
+                if (me->GetDistance(who) >= KnightChargeMinRange)
+                    DoCast(who, SPELL_CHARGE);
+                _events.ScheduleEvent(EVENT_SPECTRAL_SLASH, 5s);
+                _events.ScheduleEvent(EVENT_KNIGHT_CHARGE, 15s);
+                break;
+            case NPC_ANGUISHED_SOUL:
+                _events.ScheduleEvent(EVENT_WAIL_OF_THE_DEAD, 2s);
+                break;
+            default:
+                break;
+        }
+    }
+
+    void UpdateAI(uint32 diff) override
+    {
+        if (!UpdateVictim())
+            return;
+
+        _events.Update(diff);
+        if (me->HasUnitState(UNIT_STATE_CASTING))
+            return;
+
+        while (uint32 eventId = _events.ExecuteEvent())
+        {
+            switch (eventId)
+            {
+                case EVENT_FROSTBOLT:
+                    DoCastVictim(SPELL_FROSTBOLT);
+                    _events.Repeat(9s, 12s);
+                    break;
+                case EVENT_SPECTRAL_SLASH:
+                    DoCastVictim(SPELL_SPECTRAL_SLASH);
+                    _events.Repeat(8s, 10s);
+                    break;
+                case EVENT_KNIGHT_CHARGE:
+                    // Only a target out of melee is worth charging; otherwise look again shortly
+                    if (me->GetVictim() && me->GetDistance(me->GetVictim()) >= KnightChargeMinRange)
+                    {
+                        DoCastVictim(SPELL_CHARGE);
+                        _events.Repeat(15s);
+                    }
+                    else
+                        _events.Repeat(2s);
+                    break;
+                case EVENT_WAIL_OF_THE_DEAD:
+                    DoCastVictim(SPELL_WAIL_OF_THE_DEAD);
+                    _events.Repeat(6s, 8s);
+                    break;
+                default:
+                    break;
+            }
+        }
+    }
+
+private:
+    EventMap _events;
+};
+
 static void SetSpirePortcullis(WorldObject const* searcher, bool open)
 {
     if (GameObject* portcullis = searcher->FindNearestGameObject(GO_SPIRE_PORTCULLIS, GargoyleGateRange))
@@ -588,6 +702,7 @@ void AddSC_instance_icecrown_citadel_scenario()
     RegisterCreatureAI(npc_icc_scenario_darion_mograine);
     RegisterCreatureAI(npc_icc_scenario_fragment_soul);
     RegisterCreatureAI(npc_icc_scenario_stoneskin_gatekeeper);
+    RegisterCreatureAI(npc_icc_scenario_spire_trash);
     RegisterAreaTriggerAI(at_icc_scenario_scourge_transporter);
     RegisterAreaTriggerAI(at_icc_scenario_door_to_deathbringers_rise);
     RegisterAreaTriggerAI(at_icc_scenario_landing);
