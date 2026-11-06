@@ -51,6 +51,7 @@ enum IcecrownCitadelScenarioData
     SCENARIO_STEP_THE_CALL_OF_THE_NORTH         = 1809,
     SCENARIO_STEP_THE_GATES_ARE_OPEN            = 1973,
     SCENARIO_STEP_SEEK_THE_FRAGMENTS            = 1810,
+    SCENARIO_STEP_TRAVEL_TO_THE_FROZEN_THRONE   = 1811,
 
     GAME_EVENT_OPEN_THE_GATE_TO_ICECROWN        = 47614,
     GAME_EVENT_ENTER_ICECROWN_CITADEL           = 45677,
@@ -59,6 +60,7 @@ enum IcecrownCitadelScenarioData
     SPELL_ENTER_ICECROWN_CREDIT                 = 185861,
     SPELL_FROST_DK_ENTRANCE                     = 196966, // conversation 744, Mograine's welcome
     SPELL_ICECROWN_MOGRAINE_PING                = 188022,
+    SPELL_TELEPORT_TO_THRONE                    = 185869, // teleports to the Frozen Throne and sends event 45597 (step 1811)
 
     NPC_HIGHLORD_DARION_MOGRAINE                = 95193,
 
@@ -123,7 +125,9 @@ static constexpr Milliseconds SendBackDelay = 2s;
 static constexpr Milliseconds MograineWait = 2s;
 static constexpr Milliseconds SpireLineDelay = 3s;
 static constexpr float SoulGreetRange = 40.0f;
-static constexpr float FragmentSearchRange = 15.0f;
+// A soul often dies well away from its fragment, chased or pulled by the player (pass 5: Magroth at ~18 yd, Gavinrad at
+// ~21 yd); each fragment entry is unique in the instance, so the range only bounds the grid search
+static constexpr float FragmentSearchRange = 100.0f;
 static constexpr float GargoyleGateRange = 60.0f;
 static constexpr float PressurePlateRadius = 6.0f;
 static constexpr Milliseconds PressurePlateCheck = 250ms;
@@ -663,6 +667,22 @@ struct at_icc_scenario_gargoyle_gate : AreaTriggerAI
     }
 };
 
+// The Scourge Teleporter at the heart of the Spire: with the four fragments gathered, a death knight who steps onto it is
+// carried to the Frozen Throne. The spell's own event counts the step; before the fragments are in, the pad does nothing
+struct at_icc_scenario_spire_teleporter : AreaTriggerAI
+{
+    using AreaTriggerAI::AreaTriggerAI;
+
+    void OnUnitEnter(Unit* unit) override
+    {
+        Player* player = unit->ToPlayer();
+        if (!player || !BelongsInTheScenario(player) || !IsOnStep(at->GetMap(), SCENARIO_STEP_TRAVEL_TO_THE_FROZEN_THRONE))
+            return;
+
+        player->CastSpell(player, SPELL_TELEPORT_TO_THRONE, true);
+    }
+};
+
 // The landing beside the citadel: a death knight who stands here at the start pings Mograine. An areatrigger needs the
 // player in the world, so a login or a teleport under the loading screen does not start him unseen. On the first arrival
 // the entrance scene plays here first, and its end pings him instead (event 45596)
@@ -707,5 +727,6 @@ void AddSC_instance_icecrown_citadel_scenario()
     RegisterAreaTriggerAI(at_icc_scenario_door_to_deathbringers_rise);
     RegisterAreaTriggerAI(at_icc_scenario_landing);
     RegisterAreaTriggerAI(at_icc_scenario_gargoyle_gate);
+    RegisterAreaTriggerAI(at_icc_scenario_spire_teleporter);
     RegisterSpellScript(spell_icc_scenario_mograine_ping);
 }
