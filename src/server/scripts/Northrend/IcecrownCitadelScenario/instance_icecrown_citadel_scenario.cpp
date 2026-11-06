@@ -33,6 +33,7 @@
 #include "Map.h"
 #include "MotionMaster.h"
 #include "ObjectAccessor.h"
+#include "PhasingHandler.h"
 #include "Player.h"
 #include "ScriptedCreature.h"
 #include "SharedDefines.h"
@@ -52,6 +53,7 @@ enum IcecrownCitadelScenarioData
     SCENARIO_STEP_THE_GATES_ARE_OPEN            = 1973,
     SCENARIO_STEP_SEEK_THE_FRAGMENTS            = 1810,
     SCENARIO_STEP_TRAVEL_TO_THE_FROZEN_THRONE   = 1811,
+    SCENARIO_STEP_POWER_OVERWHELMING            = 1812,
 
     GAME_EVENT_OPEN_THE_GATE_TO_ICECROWN        = 47614,
     GAME_EVENT_ENTER_ICECROWN_CITADEL           = 45677,
@@ -62,6 +64,13 @@ enum IcecrownCitadelScenarioData
     SPELL_ICECROWN_MOGRAINE_PING                = 188022,
     SPELL_TELEPORT_TO_THRONE                    = 185869, // teleports to the Frozen Throne and sends event 45597 (step 1811)
 
+    // The Frozen Throne: the hilt of Frostmourne in its ice. Its click casts 186264 Forging (the goober's own spell), whose
+    // 4 s cast 186253 sends event 45692 when the fragments are forged
+    GO_HILT_OF_FROSTMOURNE                      = 242502,
+    GO_BLADES_OF_THE_FALLEN_PRINCE              = 247386,
+    GAME_EVENT_FRAGMENTS_FORGED                 = 45692,
+    SPELL_RETRIEVING_THE_TWIN_BLADES            = 186203, // force-casts 186202, which sends event 45608 (step 1812)
+
     NPC_HIGHLORD_DARION_MOGRAINE                = 95193,
 
     // The Lich King's "Enter, $n, there is much to be done." (line 1773) as a talking head; no sniffed conversation
@@ -71,6 +80,7 @@ enum IcecrownCitadelScenarioData
     CONVERSATION_HALAHK                         = 14800004,
     CONVERSATION_MAGROTH                        = 14800005,
     CONVERSATION_GAVINRAD                       = 14800006,
+    CONVERSATION_BEHOLD_THE_HILT                = 14800007, // line 1785, "Behold, the hilt of Frostmourne..."
 
     NPC_BAELGUN_FLAMEBEARD                      = 93948,
     NPC_HALAHK_THE_DEATHBRINGER                 = 93949,
@@ -128,6 +138,11 @@ static constexpr float SoulGreetRange = 40.0f;
 // A soul often dies well away from its fragment, chased or pulled by the player (pass 5: Magroth at ~18 yd, Gavinrad at
 // ~21 yd); each fragment entry is unique in the instance, so the range only bounds the grid search
 static constexpr float FragmentSearchRange = 100.0f;
+static constexpr float HiltSearchRange = 30.0f;
+// The hilt's model plays its whole sequence (snow pile, Frostmourne whole, the shatter, the hilt rising) when it is created
+// in GO_STATE_ACTIVE; the user counted 3 to 5 s on the live test (step 14), so the twin blades take its place after 6 s
+static constexpr Milliseconds HiltSequenceDuration = 6s;
+static constexpr Milliseconds IntoFrostmourneDelay = 3s;
 static constexpr float GargoyleGateRange = 60.0f;
 static constexpr float PressurePlateRadius = 6.0f;
 static constexpr Milliseconds PressurePlateCheck = 250ms;
@@ -138,6 +153,9 @@ static constexpr float KnightChargeMinRange = 8.0f;
 static constexpr Position MograineRampFoot   = { -704.00f, 2205.87f, 535.96f };
 static constexpr Position MograineRampMiddle = { -692.53f, 2206.67f, 541.56f };
 static constexpr Position MograineRampTop    = { -683.50f, 2210.50f, 545.11f };
+
+// Inside Frostmourne, where The Purge is fought: 631's own room inside the blade (Harvest Soul's destination, 73655)
+static constexpr Position InsideFrostmourne  = { 495.708f, -2523.76f, 1049.87f, 0.0f };
 
 static bool IsOnStep(Map const* map, uint32 stepId)
 {
@@ -680,6 +698,63 @@ struct at_icc_scenario_spire_teleporter : AreaTriggerAI
             return;
 
         player->CastSpell(player, SPELL_TELEPORT_TO_THRONE, true);
+
+        // On the throne the Lich King shows the player the hilt
+        player->m_Events.AddEventAtOffset([player]
+        {
+            if (player->GetMapId() == MAP_ICECROWN_CITADEL_SCENARIO && IsOnStep(player->GetMap(), SCENARIO_STEP_POWER_OVERWHELMING))
+                Conversation::CreateConversation(CONVERSATION_BEHOLD_THE_HILT, player, *player, player->GetGUID());
+        }, SpireLineDelay);
+    }
+};
+
+// 45692 - sent by 186253 Forging, the 4 s cast the Hilt of Frostmourne's click starts. The fragments are forged: the
+// blades are reforged (186203, whose 186202 counts "Power Overwhelming"). The hilt plays its sequence: its model does so
+// only when created in GO_STATE_ACTIVE (a live state change shows the second half), so the clicked hilt gives way to a fresh
+// one in that state. Once it has risen the twin blades hang in its place (247386, looted on the return), and the death knight
+// is drawn inside Frostmourne for The Purge
+class event_icc_scenario_fragments_forged : public EventScript
+{
+public:
+    event_icc_scenario_fragments_forged() : EventScript("event_icc_scenario_fragments_forged") { }
+
+    void OnTrigger(WorldObject* /*object*/, WorldObject* invoker, uint32 /*eventId*/) override
+    {
+        Player* player = Object::ToPlayer(invoker);
+        if (!player || player->GetMapId() != MAP_ICECROWN_CITADEL_SCENARIO || !BelongsInTheScenario(player)
+            || !IsOnStep(player->GetMap(), SCENARIO_STEP_POWER_OVERWHELMING))
+            return;
+
+        player->CastSpell(player, SPELL_RETRIEVING_THE_TWIN_BLADES, CastSpellExtraArgsInit{ .TriggerFlags = TRIGGERED_FULL_MASK });
+
+        if (GameObject* hilt = player->FindNearestGameObject(GO_HILT_OF_FROSTMOURNE, HiltSearchRange))
+        {
+            Position const spot = hilt->GetPosition();
+            QuaternionData const rotation = QuaternionData::fromEulerAnglesZYX(spot.GetOrientation(), 0.0f, 0.0f);
+            Map* map = hilt->GetMap();
+            if (GameObject* sequence = GameObject::CreateGameObject(GO_HILT_OF_FROSTMOURNE, map, spot, rotation, 255, GO_STATE_ACTIVE))
+            {
+                PhasingHandler::InheritPhaseShift(sequence, hilt);
+                sequence->SetRespawnTime(0);
+                sequence->SetSpawnedByDefault(false);
+                sequence->SetFlag(GO_FLAG_NOT_SELECTABLE);
+                map->AddToMap(sequence);
+
+                // On the hilt itself, so the blades hang there even if the death knight is gone by then
+                sequence->m_Events.AddEventAtOffset([sequence]
+                {
+                    sequence->SummonGameObject(GO_BLADES_OF_THE_FALLEN_PRINCE, *sequence, QuaternionData::fromEulerAnglesZYX(sequence->GetOrientation(), 0.0f, 0.0f), 0s);
+                    sequence->DespawnOrUnsummon();
+                }, HiltSequenceDuration);
+            }
+            hilt->DespawnOrUnsummon();
+        }
+
+        player->m_Events.AddEventAtOffset([player]
+        {
+            if (player->GetMapId() == MAP_ICECROWN_CITADEL_SCENARIO && BelongsInTheScenario(player))
+                player->NearTeleportTo(InsideFrostmourne);
+        }, HiltSequenceDuration + IntoFrostmourneDelay);
     }
 };
 
@@ -728,5 +803,6 @@ void AddSC_instance_icecrown_citadel_scenario()
     RegisterAreaTriggerAI(at_icc_scenario_landing);
     RegisterAreaTriggerAI(at_icc_scenario_gargoyle_gate);
     RegisterAreaTriggerAI(at_icc_scenario_spire_teleporter);
+    new event_icc_scenario_fragments_forged();
     RegisterSpellScript(spell_icc_scenario_mograine_ping);
 }
