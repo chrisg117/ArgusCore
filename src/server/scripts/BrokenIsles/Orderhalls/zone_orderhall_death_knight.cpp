@@ -17,10 +17,16 @@
 
 #include "ScriptMgr.h"
 #include "DB2Stores.h"
+#include "GameObject.h"
+#include "GameObjectAI.h"
+#include "GameTables.h"
+#include "Item.h"
 #include "Log.h"
 #include "Player.h"
+#include "ScriptedCreature.h"
 #include "PlayerChoice.h"
 #include "QuestDef.h"
+#include "SpellAuras.h"
 #include "SpellInfo.h"
 #include "SpellMgr.h"
 #include "SpellScript.h"
@@ -356,6 +362,84 @@ class spell_dk_launch_the_blades_of_the_fallen_prince_scenario : public SpellScr
     }
 };
 
+enum AcherusHallOpeningData
+{
+    QUEST_KEEPING_YOUR_EDGE                 = 39757,
+    QUEST_ADVANCED_RUNECARVING              = 39761,
+
+    NPC_TELEPORTER_BUNNY                    = 104848 // Keeping Your Edge: "Take the teleporter to the second level of Acherus"
+};
+
+// The two ends of the hall's teleporter: the deck end at 39757's objective POI, the upper end above it (the user's ping)
+static Position const AcherusTeleporterDeck = { -1464.00f, 1124.00f, 270.50f, 0.0f };
+static Position const AcherusTeleporterUpper = { -1460.06f, 1130.99f, 314.70f, 0.0f };
+static constexpr float AcherusTeleporterSplitZ = 285.0f; // between the deck end and the upper end
+
+// 1220002 - Acherus Teleporter (fork data: the data has no Legion teleporter object for Acherus)
+// One object at each end; a click sends the death knight to the other end. Going up credits Keeping Your Edge
+struct go_acherus_hall_teleporter : GameObjectAI
+{
+    go_acherus_hall_teleporter(GameObject* go) : GameObjectAI(go) { }
+
+    bool OnGossipHello(Player* player) override
+    {
+        bool const goingUp = me->GetPositionZ() < AcherusTeleporterSplitZ;
+        Position const& destination = goingUp ? AcherusTeleporterUpper : AcherusTeleporterDeck;
+        player->NearTeleportTo(destination.GetPositionX(), destination.GetPositionY(), destination.GetPositionZ(),
+            player->GetOrientation());
+
+        if (goingUp && player->GetQuestStatus(QUEST_KEEPING_YOUR_EDGE) == QUEST_STATUS_INCOMPLETE)
+            player->KilledMonsterCredit(NPC_TELEPORTER_BUNNY);
+
+        return true;
+    }
+};
+
+// 245433 - Soul Forge
+// Advanced Runecarving has the first trait bought, and the blades have no artifact power when they are won: as at the
+// priest's and the demon hunter's forges, the forge gives the first trait's cost to a weapon nothing has been bought for
+struct go_acherus_soul_forge : GameObjectAI
+{
+    go_acherus_soul_forge(GameObject* go) : GameObjectAI(go) { }
+
+    bool OnGossipHello(Player* player) override
+    {
+        if (player->GetQuestStatus(QUEST_ADVANCED_RUNECARVING) != QUEST_STATUS_INCOMPLETE)
+            return false;
+
+        Aura const* artifactAura = player->GetAura(ARTIFACTS_ALL_WEAPONS_GENERAL_WEAPON_EQUIPPED_PASSIVE);
+        Item* artifact = artifactAura ? player->GetItemByGuid(artifactAura->GetCastItemGUID()) : nullptr;
+        if (!artifact || artifact->GetTotalPurchasedArtifactPowers())
+            return false;
+
+        if (GtArtifactLevelXPEntry const* firstTrait = sArtifactLevelXPGameTable.GetRow(1))
+        {
+            uint64 cost = uint64(firstTrait->XP);
+            uint64 artifactPower = artifact->GetUInt64Value(ITEM_FIELD_ARTIFACT_XP);
+            if (artifactPower < cost)
+                artifact->GiveArtifactXp(cost - artifactPower, nullptr, 0);
+        }
+
+        // The forge's window opens as it would
+        return false;
+    }
+};
+
+// The Command Map (102589) over the hall's mission table. The template's scale (8, set for the priest's hall) lets
+// its model's sheen show through the green mist in Acherus; at 2 it stays inside the table and can still be clicked.
+// The adventure map opens from the npcflag, not from this AI
+static constexpr float AcherusCommandMapScale = 2.0f;
+
+struct npc_acherus_command_map : ScriptedAI
+{
+    npc_acherus_command_map(Creature* creature) : ScriptedAI(creature) { }
+
+    void JustAppeared() override
+    {
+        me->SetObjectScale(AcherusCommandMapScale);
+    }
+};
+
 void AddSC_orderhall_death_knight()
 {
     // Quests
@@ -376,4 +460,7 @@ void AddSC_orderhall_death_knight()
     RegisterSpellScript(spell_dk_artifacts_choice_reward);
     RegisterSpellScript(spell_dk_the_call_of_icecrown_death_gate);
     RegisterSpellScript(spell_dk_launch_the_blades_of_the_fallen_prince_scenario);
+    RegisterGameObjectAI(go_acherus_hall_teleporter);
+    RegisterGameObjectAI(go_acherus_soul_forge);
+    RegisterCreatureAI(npc_acherus_command_map);
 }

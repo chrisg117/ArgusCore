@@ -90,6 +90,8 @@ enum IcecrownCitadelScenarioData
     CONVERSATION_SPIRITS_REMAIN                 = 14800008, // lines 1782-1783, "It is done..." / "...purge them"
     CONVERSATION_THE_LICH_KINGS_BLESSING        = 14800010, // lines 1786-1787, the sigil
     CONVERSATION_YOUR_ORDERS                    = 14800011, // lines 1788-1789, the Broken Isles
+    CONVERSATION_DEATH_KNIGHTS_OF_ACHERUS       = 14800012, // line 1794, "Death Knights of Acherus, I send to you $n..."
+    CONVERSATION_DEATH_KNIGHTS_OF_ACHERUS_F     = 14800013, // line 1795, its female variant
 
     // The Purge: inside the blades the death knight fights Arthas while Ner'zhul, out of reach, lashes out. Nothing in the
     // client sends 1814's event; Arthas's death does. No sniff: Ner'zhul's spells are the client's frost spells of the shape
@@ -179,6 +181,9 @@ static constexpr float PurgeSearchRange = 60.0f;
 static constexpr float GargoyleGateRange = 60.0f;
 static constexpr float PressurePlateRadius = 6.0f;
 static constexpr Milliseconds PressurePlateCheck = 250ms;
+static constexpr Milliseconds AcherusLandingCheck = 1s;
+static constexpr uint8 AcherusLandingChecks = 30;
+static constexpr uint32 MapBrokenIsles = 1220;
 static constexpr float PhantomMageRange = 25.0f;
 static constexpr float KnightChargeMinRange = 8.0f;
 
@@ -1024,6 +1029,28 @@ public:
     }
 };
 
+// Once the waygate has set the death knight down in Acherus, the Lich King names them to the Ebon Blade as his enforcer
+// (line 1794, or 1795 for a woman; no data plays it, so a talking head of ours). Checked each second until the
+// player is in the world on the Broken Isles, for as long as a loading screen may take
+static void SayDeathKnightsOfAcherus(Player* player, uint8 checksLeft)
+{
+    player->m_Events.AddEventAtOffset([player, checksLeft]
+    {
+        if (!player->IsInWorld() || player->IsBeingTeleported() || player->GetMapId() != MapBrokenIsles)
+        {
+            if (checksLeft > 1)
+                SayDeathKnightsOfAcherus(player, checksLeft - 1);
+            return;
+        }
+
+        if (player->GetQuestStatus(QUEST_THE_CALL_OF_ICECROWN) != QUEST_STATUS_COMPLETE)
+            return;
+
+        Conversation::CreateConversation(player->GetNativeGender() == GENDER_FEMALE ? CONVERSATION_DEATH_KNIGHTS_OF_ACHERUS_F
+            : CONVERSATION_DEATH_KNIGHTS_OF_ACHERUS, player, *player, player->GetGUID());
+    }, AcherusLandingCheck);
+}
+
 // 186039 - Icecrown Waygate (the Acherus Waygate's spell): leaving the Frozen Throne by it ends the scenario. The event goes
 // before the teleport (191275) takes the player off the map
 class spell_icc_scenario_icecrown_waygate : public SpellScript
@@ -1031,8 +1058,13 @@ class spell_icc_scenario_icecrown_waygate : public SpellScript
     void HandleBeforeCast()
     {
         if (Player* player = GetCaster()->ToPlayer())
+        {
             if (IsInTheScenarioOnStep(player, SCENARIO_STEP_YOU_HAVE_YOUR_ORDERS))
+            {
                 GameEvents::Trigger(GAME_EVENT_YOU_HAVE_YOUR_ORDERS, player, nullptr);
+                SayDeathKnightsOfAcherus(player, AcherusLandingChecks);
+            }
+        }
     }
 
     void Register() override
