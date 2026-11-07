@@ -16,12 +16,15 @@
  */
 
 #include "ScriptMgr.h"
+#include "ClassHall.h"
 #include "DB2Stores.h"
 #include "GameObject.h"
 #include "GameObjectAI.h"
 #include "GameTables.h"
 #include "Item.h"
 #include "Log.h"
+#include "MotionMaster.h"
+#include "ObjectAccessor.h"
 #include "Player.h"
 #include "ScriptedCreature.h"
 #include "PlayerChoice.h"
@@ -30,6 +33,7 @@
 #include "SpellInfo.h"
 #include "SpellMgr.h"
 #include "SpellScript.h"
+#include "TaskScheduler.h"
 #include "TemporarySummon.h"
 
 enum APactOfNecessityData
@@ -440,18 +444,200 @@ struct npc_acherus_command_map : ScriptedAI
     }
 };
 
+// The Firstborn Rises (42484), in Durotar. The data stages the raise: Raise Horseman - Aura (213932, from spell_area)
+// puts 213614 on the override bar; 213614 force-casts the 10 s Raise Horseman (213633), which summons the invisible
+// anchor 107597 at the raise spot and gives the credit (213679). Nothing in the data seats Nazgrim on the anchor or plays
+// the exchange, so Thassarian does it here. The speaker of each line is the one its voice file is named for
+// (vo_703_thassarian_04/05, vo_703_nazgrim_02/03, vo_703_thassarian_06/07); the order follows the lines' sense
+enum TheFirstbornRises
+{
+    QUEST_THE_FIRSTBORN_RISES           = 42484,
+
+    NPC_THASSARIAN_DUROTAR              = 107554,
+    NPC_NAZGRIM_RAISED                  = 107602,
+    NPC_RAISE_ANCHOR_DEATH_GATE         = 95854,    // the gate 190088 summons; picked from the preview lineup
+
+    SPELL_RAISE_HORSEMAN_BUTTON         = 213614,
+    SPELL_NAZGRIM_GHOST_VISUAL          = 224864,   // Shadowy Ghost Visual State, Blue; picked from the preview lineup
+
+    TALK_THASSARIAN_IT_IS_TIME          = 0,        // 112575, on accepting the quest
+    TALK_THASSARIAN_DEATHLORD_CALLS     = 1,        // 112573, as the raise begins
+    TALK_THASSARIAN_LONG_ENOUGH         = 2,        // 112588
+    TALK_THASSARIAN_INDEED_YOU_SHALL    = 3,        // 112589
+    TALK_NAZGRIM_I_LIVE_AGAIN           = 0,        // 112584
+    TALK_NAZGRIM_SAY_NO_MORE            = 1,        // 112587
+
+    ACTION_RAISE_BEGUN                  = 1,
+    DATA_RAISE_ANCHOR                   = 1,
+    POINT_NAZGRIM_DEATH_GATE            = 1
+};
+
+static constexpr Seconds RaiseDeathGateDuration = 90s;
+
+// 107554 - Thassarian (Durotar)
+struct npc_thassarian_the_firstborn_rises : public ScriptedAI
+{
+    npc_thassarian_the_firstborn_rises(Creature* creature) : ScriptedAI(creature), _sceneRunning(false) { }
+
+    void OnQuestAccept(Player* player, Quest const* quest) override
+    {
+        if (quest->GetQuestId() == QUEST_THE_FIRSTBORN_RISES)
+            Talk(TALK_THASSARIAN_IT_IS_TIME, player);
+    }
+
+    void DoAction(int32 action) override
+    {
+        if (action == ACTION_RAISE_BEGUN && !_sceneRunning)
+            Talk(TALK_THASSARIAN_DEATHLORD_CALLS);
+    }
+
+    // The anchor has appeared: Nazgrim appears on it as a kneeling ghost, stands, speaks with Thassarian and walks out
+    // through a Death Gate. The anchor, summoned with an infinite duration, goes with him. (Retail raises the kneeling
+    // model straight up out of the ground; a spline makes the client drop the kneel, so he appears on the floor)
+    void SetGUID(ObjectGuid const& guid, int32 id) override
+    {
+        if (id != DATA_RAISE_ANCHOR)
+            return;
+
+        Creature* anchor = ObjectAccessor::GetCreature(*me, guid);
+        if (!anchor)
+            return;
+
+        if (_sceneRunning)
+        {
+            anchor->DespawnOrUnsummon();
+            return;
+        }
+
+        // Only the player who raised him sees the ghost and the gate
+        ObjectGuid raiserGuid = anchor->IsSummon() ? anchor->ToTempSummon()->GetSummonerGUID() : ObjectGuid::Empty;
+        Position pos = anchor->GetPosition();
+        pos.SetOrientation(anchor->GetAbsoluteAngle(me));
+        Creature* nazgrim = me->SummonCreature(NPC_NAZGRIM_RAISED, pos, TEMPSUMMON_MANUAL_DESPAWN, 0s, 0, 0, raiserGuid);
+        if (!nazgrim)
+        {
+            anchor->DespawnOrUnsummon();
+            return;
+        }
+
+        _sceneRunning = true;
+        nazgrim->SetStandState(UNIT_STAND_STATE_KNEEL);
+        nazgrim->CastSpell(nazgrim, SPELL_NAZGRIM_GHOST_VISUAL, true);
+        me->SetFacingToObject(nazgrim);
+
+        ObjectGuid nazgrimGuid = nazgrim->GetGUID();
+        _scheduler.Schedule(5s, [this, nazgrimGuid](TaskContext /*context*/)
+        {
+            if (Creature* nazgrim = ObjectAccessor::GetCreature(*me, nazgrimGuid))
+            {
+                nazgrim->SetStandState(UNIT_STAND_STATE_STAND);
+                nazgrim->AI()->Talk(TALK_NAZGRIM_I_LIVE_AGAIN);
+            }
+        });
+        _scheduler.Schedule(11s, [this](TaskContext /*context*/) { Talk(TALK_THASSARIAN_LONG_ENOUGH); });
+        _scheduler.Schedule(18s, [this, nazgrimGuid](TaskContext /*context*/)
+        {
+            if (Creature* nazgrim = ObjectAccessor::GetCreature(*me, nazgrimGuid))
+                nazgrim->AI()->Talk(TALK_NAZGRIM_SAY_NO_MORE);
+        });
+        _scheduler.Schedule(23s, [this](TaskContext /*context*/) { Talk(TALK_THASSARIAN_INDEED_YOU_SHALL); });
+        // The gate opens a few yards ahead of Nazgrim, turned to face him, and he walks into it
+        _scheduler.Schedule(27s, [this, nazgrimGuid, raiserGuid](TaskContext /*context*/)
+        {
+            Creature* nazgrim = ObjectAccessor::GetCreature(*me, nazgrimGuid);
+            if (!nazgrim)
+                return;
+
+            Position gatePos = nazgrim->GetNearPosition(4.0f, 0.0f);
+            gatePos.SetOrientation(Position::NormalizeOrientation(nazgrim->GetOrientation() + float(M_PI)));
+            // Summoned by Thassarian so it outlasts Nazgrim, and left clickable: once he is through, the raiser can take it
+            // back to Acherus (its spellclick, 187753 Death Gate)
+            me->SummonCreature(NPC_RAISE_ANCHOR_DEATH_GATE, gatePos, TEMPSUMMON_TIMED_DESPAWN, RaiseDeathGateDuration, 0, 0, raiserGuid);
+            _gatePos = gatePos;
+        });
+        _scheduler.Schedule(28500ms, [this, nazgrimGuid](TaskContext /*context*/)
+        {
+            if (Creature* nazgrim = ObjectAccessor::GetCreature(*me, nazgrimGuid))
+            {
+                nazgrim->SetWalk(true);
+                nazgrim->GetMotionMaster()->MovePoint(POINT_NAZGRIM_DEATH_GATE, _gatePos, false);
+            }
+        });
+        // About 1.6 s of walking at 2.5 yd/s: he disappears as he reaches the gate
+        _scheduler.Schedule(30200ms, [this, nazgrimGuid, guid](TaskContext /*context*/)
+        {
+            if (Creature* nazgrim = ObjectAccessor::GetCreature(*me, nazgrimGuid))
+                nazgrim->DespawnOrUnsummon();
+            if (Creature* anchor = ObjectAccessor::GetCreature(*me, guid))
+                anchor->DespawnOrUnsummon();
+            me->SetFacingTo(me->GetHomePosition().GetOrientation());
+            _sceneRunning = false;
+        });
+    }
+
+    void UpdateAI(uint32 diff) override
+    {
+        _scheduler.Update(diff);
+    }
+
+private:
+    TaskScheduler _scheduler;
+    bool _sceneRunning;
+    Position _gatePos;
+};
+
+// 107597 - Nazgrim Vehicle: the raise's invisible anchor, summoned by 213633 at the raise spot
+struct npc_the_firstborn_rises_anchor : public ScriptedAI
+{
+    npc_the_firstborn_rises_anchor(Creature* creature) : ScriptedAI(creature) { }
+
+    void IsSummonedBy(WorldObject* /*summoner*/) override
+    {
+        if (Creature* thassarian = me->FindNearestCreature(NPC_THASSARIAN_DUROTAR, 60.0f))
+            thassarian->AI()->SetGUID(me->GetGUID(), DATA_RAISE_ANCHOR);
+        else
+            me->DespawnOrUnsummon();
+    }
+};
+
+// 213614 - Raise Horseman (the override bar button)
+class spell_dk_the_firstborn_rises_raise_horseman : public SpellScript
+{
+    void HandleAfterCast()
+    {
+        if (Creature* thassarian = GetCaster()->FindNearestCreature(NPC_THASSARIAN_DUROTAR, 60.0f))
+            thassarian->AI()->DoAction(ACTION_RAISE_BEGUN);
+    }
+
+    void Register() override
+    {
+        AfterCast += SpellCastFn(spell_dk_the_firstborn_rises_raise_horseman::HandleAfterCast);
+    }
+};
+
 // Spread the Word (43265): its objective is a kill credit for the tutorial mission (1210, Nazgrim sent to Dalaran), which
 // nothing in the data gives; it is given when the mission succeeds, as the objective reads ("Complete the mission")
 enum DeathKnightCampaignMissions
 {
     MISSION_SPREAD_THE_WORD         = 1210,
-    NPC_SENT_ON_TUTORIAL_MISSION    = 105479
+    NPC_SENT_ON_TUTORIAL_MISSION    = 105479,
+    QUEST_SPREAD_THE_WORD           = 43265
 };
 
 class player_dk_campaign_tutorial_missions : public PlayerScript
 {
 public:
-    player_dk_campaign_tutorial_missions() : PlayerScript("player_dk_campaign_tutorial_missions", { PLAYERHOOK_ON_CLASS_HALL_MISSION_SUCCEED }) { }
+    player_dk_campaign_tutorial_missions() : PlayerScript("player_dk_campaign_tutorial_missions", { PLAYERHOOK_ON_CLASS_HALL_MISSION_SUCCEED, PLAYERHOOK_ON_QUEST_STATUS_CHANGE }) { }
+
+    // The mission's condition is met on accepting the quest; offer it now rather than at the next once-a-minute look
+    void OnQuestStatusChange(Player* player, uint32 questId) override
+    {
+        if (questId != QUEST_SPREAD_THE_WORD || player->GetQuestStatus(questId) != QUEST_STATUS_INCOMPLETE)
+            return;
+
+        if (ClassHall* classHall = player->GetClassHall())
+            classHall->GetMissions().OfferMissions(true);
+    }
 
     void OnClassHallMissionSucceed(Player* player, uint32 garrMissionId) override
     {
@@ -484,4 +670,7 @@ void AddSC_orderhall_death_knight()
     RegisterGameObjectAI(go_acherus_soul_forge);
     RegisterCreatureAI(npc_acherus_command_map);
     new player_dk_campaign_tutorial_missions();
+    RegisterCreatureAI(npc_thassarian_the_firstborn_rises);
+    RegisterCreatureAI(npc_the_firstborn_rises_anchor);
+    RegisterSpellScript(spell_dk_the_firstborn_rises_raise_horseman);
 }
