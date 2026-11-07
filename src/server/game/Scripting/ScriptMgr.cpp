@@ -2166,6 +2166,16 @@ void ScriptMgr::OnMovieComplete(Player* player, uint32 movieId)
     CALL_ENABLED_HOOKS(sPlayerHooks, PLAYERHOOK_ON_MOVIE_COMPLETE, script->OnMovieComplete(player, movieId));
 }
 
+void ScriptMgr::OnClassHallMissionStart(Player* player, uint32 garrMissionId)
+{
+    CALL_ENABLED_HOOKS(sPlayerHooks, PLAYERHOOK_ON_CLASS_HALL_MISSION_START, script->OnClassHallMissionStart(player, garrMissionId));
+}
+
+void ScriptMgr::OnClassHallMissionSucceed(Player* player, uint32 garrMissionId)
+{
+    CALL_ENABLED_HOOKS(sPlayerHooks, PLAYERHOOK_ON_CLASS_HALL_MISSION_SUCCEED, script->OnClassHallMissionSucceed(player, garrMissionId));
+}
+
 void ScriptMgr::OnPlayerChoiceResponse(WorldObject* object, Player* player, PlayerChoice const* choice, PlayerChoiceResponse const* response)
 {
     ASSERT(choice);
@@ -3091,6 +3101,14 @@ void PlayerScript::OnPlayerRepop(Player* /*player*/)
 }
 
 void PlayerScript::OnMovieComplete(Player* /*player*/, uint32 /*movieId*/)
+{
+}
+
+void PlayerScript::OnClassHallMissionStart(Player* /*player*/, uint32 /*garrMissionId*/)
+{
+}
+
+void PlayerScript::OnClassHallMissionSucceed(Player* /*player*/, uint32 /*garrMissionId*/)
 {
 }
 

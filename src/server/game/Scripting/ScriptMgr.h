@@ -738,7 +738,9 @@ enum PlayerHook : uint16_t
     PLAYERHOOK_ON_QUEST_STATUS_CHANGE        = 26,
     PLAYERHOOK_ON_PLAYER_REPOP               = 27,
     PLAYERHOOK_ON_MOVIE_COMPLETE             = 28,
-    PLAYERHOOK_END                           = 29,
+    PLAYERHOOK_ON_CLASS_HALL_MISSION_START   = 29,
+    PLAYERHOOK_ON_CLASS_HALL_MISSION_SUCCEED = 30,
+    PLAYERHOOK_END                           = 31,
 };
 
 class TC_GAME_API PlayerScript : public ScriptObject
@@ -845,6 +847,12 @@ class TC_GAME_API PlayerScript : public ScriptObject
 
         // Called when a player completes a movie
         virtual void OnMovieComplete(Player* player, uint32 movieId);
+
+        // Called when a player sends followers on a class hall mission
+        virtual void OnClassHallMissionStart(Player* player, uint32 garrMissionId);
+
+        // Called when a player's class hall mission succeeds
+        virtual void OnClassHallMissionSucceed(Player* player, uint32 garrMissionId);
 };
 
 class TC_GAME_API AccountScript : public ScriptObject
@@ -1298,6 +1306,8 @@ class TC_GAME_API ScriptMgr
         void OnQuestStatusChange(Player* player, uint32 questId);
         void OnPlayerRepop(Player* player);
         void OnMovieComplete(Player* player, uint32 movieId);
+        void OnClassHallMissionStart(Player* player, uint32 garrMissionId);
+        void OnClassHallMissionSucceed(Player* player, uint32 garrMissionId);
         void OnPlayerChoiceResponse(WorldObject *object, Player* player, PlayerChoice const* choice, PlayerChoiceResponse const* response);
 
     public: /* AccountScript */

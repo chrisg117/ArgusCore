@@ -30,6 +30,7 @@
 #include "Log.h"
 #include "Player.h"
 #include "Random.h"
+#include "ScriptMgr.h"
 #include <algorithm>
 #include <cmath>
 #include <random>
@@ -633,6 +634,7 @@ void ClassHallMissions::StartMission(ObjectGuid npcGuid, uint32 garrMissionId, s
             followers.SetFollowerMission(followerDbId, garrMissionId);
 
         ++_sessionMissionCount;
+        sScriptMgr->OnClassHallMissionStart(_owner, garrMissionId);
     }
 
     if (mission)
@@ -723,6 +725,7 @@ void ClassHallMissions::CompleteMission(ObjectGuid npcGuid, uint32 garrMissionId
     {
         mission.PacketInfo.MissionState = CLASS_HALL_MISSION_STATE_COMPLETED;
         _owner->UpdateCriteria(CriteriaType::SucceedGarrisonMission, garrMissionId);
+        sScriptMgr->OnClassHallMissionSucceed(_owner, garrMissionId);
 
         // the chance over 100 is the chance of the bonus rewards, as the client shows it; the result is
         // told to the client in the state of the mission in the complete reply, below
