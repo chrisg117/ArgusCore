@@ -440,6 +440,26 @@ struct npc_acherus_command_map : ScriptedAI
     }
 };
 
+// Spread the Word (43265): its objective is a kill credit for the tutorial mission (1210, Nazgrim sent to Dalaran), which
+// nothing in the data gives; it is given when the mission succeeds, as the objective reads ("Complete the mission")
+enum DeathKnightCampaignMissions
+{
+    MISSION_SPREAD_THE_WORD         = 1210,
+    NPC_SENT_ON_TUTORIAL_MISSION    = 105479
+};
+
+class player_dk_campaign_tutorial_missions : public PlayerScript
+{
+public:
+    player_dk_campaign_tutorial_missions() : PlayerScript("player_dk_campaign_tutorial_missions", { PLAYERHOOK_ON_CLASS_HALL_MISSION_SUCCEED }) { }
+
+    void OnClassHallMissionSucceed(Player* player, uint32 garrMissionId) override
+    {
+        if (garrMissionId == MISSION_SPREAD_THE_WORD)
+            player->KilledMonsterCredit(NPC_SENT_ON_TUTORIAL_MISSION);
+    }
+};
+
 void AddSC_orderhall_death_knight()
 {
     // Quests
@@ -463,4 +483,5 @@ void AddSC_orderhall_death_knight()
     RegisterGameObjectAI(go_acherus_hall_teleporter);
     RegisterGameObjectAI(go_acherus_soul_forge);
     RegisterCreatureAI(npc_acherus_command_map);
+    new player_dk_campaign_tutorial_missions();
 }
