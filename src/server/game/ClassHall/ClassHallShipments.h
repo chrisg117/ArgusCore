@@ -45,12 +45,12 @@ namespace WorldPackets
 class TC_GAME_API ClassHallShipments
 {
 public:
-    // how the object of a container looks to the owner: the client takes a display other than the object's own
-    // for "ready" and the in-progress flag for "in progress"
+    // how the object of a container looks to the owner: the client reads the container's working display with its
+    // working spell visual as "in progress", and any other display than the object's own as "ready"
     struct ObjectLook
     {
-        uint32 DisplayId = 0;   // 0: the object's own
-        bool InProgress = false;
+        uint32 DisplayId = 0;
+        uint32 SpellVisualId = 0;
     };
 
     ClassHallShipments(Player* owner, ClassHall* classHall);

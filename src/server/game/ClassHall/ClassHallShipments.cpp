@@ -291,8 +291,8 @@ void ClassHallShipments::CompleteShipments(uint32 charShipmentContainerId)
         UpdateObjects(charShipmentContainerId);
 }
 
-// ready orders show the container's display for their count, orders being made its working display and the
-// in-progress flag; with no orders the object keeps its own display, which the client shows as "Awaiting Orders"
+// ready orders show the container's display for their count, orders being made its working display and working
+// spell visual; with no orders the object keeps its own display, which the client shows as "Awaiting Orders"
 Optional<ClassHallShipments::ObjectLook> ClassHallShipments::GetObjectLook(uint32 charShipmentContainerId) const
 {
     CharShipmentContainerEntry const* container = sCharShipmentContainerStore.LookupEntry(charShipmentContainerId);
@@ -318,7 +318,7 @@ Optional<ClassHallShipments::ObjectLook> ClassHallShipments::GetObjectLook(uint3
     else if (inProgress)
     {
         look.DisplayId = container->WorkingDisplayInfoID;
-        look.InProgress = true;
+        look.SpellVisualId = container->WorkingSpellVisualID;
     }
     else
         return {};
@@ -368,7 +368,7 @@ void ClassHallShipments::UpdateObjects(uint32 charShipmentContainerId) const
             continue;
 
         go->ForceValuesUpdateAtIndex(GAMEOBJECT_DISPLAYID);
-        go->ForceValuesUpdateAtIndex(GAMEOBJECT_FLAGS);
+        go->ForceValuesUpdateAtIndex(GAMEOBJECT_SPELL_VISUAL_ID);
     }
 }
 
