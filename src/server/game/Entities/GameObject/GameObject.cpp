@@ -2024,7 +2024,7 @@ bool GameObject::LoadFromDB(ObjectGuid::LowType spawnId, Map* map, bool addToMap
     return true;
 }
 
-/*static*/ bool GameObject::DeleteFromDB(ObjectGuid::LowType spawnId)
+/*static*/ bool GameObject::UnloadSpawn(ObjectGuid::LowType spawnId)
 {
     GameObjectData const* data = sObjectMgr->GetGameObjectData(spawnId);
     if (!data)
@@ -2049,6 +2049,13 @@ bool GameObject::LoadFromDB(ObjectGuid::LowType spawnId, Map* map, bool addToMap
     sObjectMgr->DeleteGameObjectData(spawnId);
 
     CharacterDatabase.CommitTransaction(charTrans);
+    return true;
+}
+
+/*static*/ bool GameObject::DeleteFromDB(ObjectGuid::LowType spawnId)
+{
+    if (!UnloadSpawn(spawnId))
+        return false;
 
     WorldDatabaseTransaction trans = WorldDatabase.BeginTransaction();
 

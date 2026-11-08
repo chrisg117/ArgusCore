@@ -212,6 +212,8 @@ class TC_GAME_API GameObject : public WorldObject, public GridObject<GameObject>
         void SaveToDB(uint32 mapid, std::vector<Difficulty> const& spawnDifficulties);
         bool LoadFromDB(ObjectGuid::LowType spawnId, Map* map, bool addToMap, bool = true); // arg4 is unused, only present to match the signature on Creature
         static bool DeleteFromDB(ObjectGuid::LowType spawnId);
+        // the in-memory half of DeleteFromDB: despawn on every map, drop respawn times and the spawn data; the DB rows stay
+        static bool UnloadSpawn(ObjectGuid::LowType spawnId);
 
         ObjectGuid GetCreatorGUID() const override { return GetGuidValue(GAMEOBJECT_FIELD_CREATED_BY); }
         void SetOwnerGUID(ObjectGuid owner)

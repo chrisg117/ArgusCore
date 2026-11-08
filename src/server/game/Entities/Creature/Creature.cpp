@@ -2013,7 +2013,7 @@ bool Creature::hasInvolvedQuest(uint32 quest_id) const
     return sObjectMgr->GetCreatureQuestInvolvedRelations(GetEntry()).HasQuest(quest_id);
 }
 
-/*static*/ bool Creature::DeleteFromDB(ObjectGuid::LowType spawnId)
+/*static*/ bool Creature::UnloadSpawn(ObjectGuid::LowType spawnId)
 {
     CreatureData const* data = sObjectMgr->GetCreatureData(spawnId);
     if (!data)
@@ -2038,6 +2038,13 @@ bool Creature::hasInvolvedQuest(uint32 quest_id) const
     sObjectMgr->DeleteCreatureData(spawnId);
 
     CharacterDatabase.CommitTransaction(charTrans);
+    return true;
+}
+
+/*static*/ bool Creature::DeleteFromDB(ObjectGuid::LowType spawnId)
+{
+    if (!UnloadSpawn(spawnId))
+        return false;
 
     WorldDatabaseTransaction trans = WorldDatabase.BeginTransaction();
 

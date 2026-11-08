@@ -1170,12 +1170,43 @@ void ObjectMgr::CheckCreatureMovement(char const* table, uint64 id, CreatureMove
     }
 }
 
+namespace
+{
+    // the column order LoadCreatureRow reads; the reload command appends a WHERE clause
+    //                                     0              1   2    3           4           5           6            7        8             9              10
+    constexpr char CreatureSpawnQuery[] = "SELECT creature.guid, id, map, position_x, position_y, position_z, orientation, modelid, equipment_id, spawntimesecs, wander_distance, "
+    //   11               12            13            14                 15          16           17                18                   19                    20
+        "currentwaypoint, curHealthPct, MovementType, spawnDifficulties, eventEntry, poolSpawnId, creature.npcflag, creature.unit_flags, creature.unit_flags2, creature.unit_flags3, "
+    //   21                      22                23                   24                       25                   26
+        "creature.phaseUseFlags, creature.phaseid, creature.phasegroup, creature.terrainSwapMap, creature.ScriptName, creature.StringId "
+        "FROM creature "
+        "LEFT OUTER JOIN game_event_creature ON creature.guid = game_event_creature.guid "
+        "LEFT OUTER JOIN pool_members ON pool_members.type = 0 AND creature.guid = pool_members.spawnId";
+
+    // the column order LoadGameObjectRow reads
+    //                                       0                1   2    3           4           5           6
+    constexpr char GameObjectSpawnQuery[] = "SELECT gameobject.guid, id, map, position_x, position_y, position_z, orientation, "
+    //   7          8          9          10         11             12            13     14                 15          16
+        "rotation0, rotation1, rotation2, rotation3, spawntimesecs, animprogress, state, spawnDifficulties, eventEntry, poolSpawnId, "
+    //   17             18       19          20              21          22
+        "phaseUseFlags, phaseid, phasegroup, terrainSwapMap, ScriptName, StringId "
+        "FROM gameobject LEFT OUTER JOIN game_event_gameobject ON gameobject.guid = game_event_gameobject.guid "
+        "LEFT OUTER JOIN pool_members ON pool_members.type = 1 AND gameobject.guid = pool_members.spawnId";
+
+    // the column order LoadCreatureAddonRow reads
+    //                                       0     1        2      3           4         5         6            7         8      9          10               11            12                      13
+    constexpr char CreatureAddonQuery[] = "SELECT guid, PathId, mount, StandState, AnimTier, VisFlags, SheathState, PvPFlags, emote, aiAnimKit, movementAnimKit, meleeAnimKit, visibilityDistanceType, auras FROM creature_addon";
+
+    // the column order LoadGameObjectAddonRow reads
+    //                                         0     1                 2                 3                 4                 5                 6                  7              8            9
+    constexpr char GameObjectAddonQuery[] = "SELECT guid, parent_rotation0, parent_rotation1, parent_rotation2, parent_rotation3, invisibilityType, invisibilityValue, WorldEffectID, AIAnimKitID, Flags FROM gameobject_addon";
+}
+
 void ObjectMgr::LoadCreatureAddons()
 {
     uint32 oldMSTime = getMSTime();
 
-    //                                               0     1        2      3           4         5         6            7         8      9          10               11            12                      13
-    QueryResult result = WorldDatabase.Query("SELECT guid, PathId, mount, StandState, AnimTier, VisFlags, SheathState, PvPFlags, emote, aiAnimKit, movementAnimKit, meleeAnimKit, visibilityDistanceType, auras FROM creature_addon");
+    QueryResult result = WorldDatabase.Query(CreatureAddonQuery);
 
     if (!result)
     {
@@ -1186,133 +1217,137 @@ void ObjectMgr::LoadCreatureAddons()
     uint32 count = 0;
     do
     {
-        Field* fields = result->Fetch();
-
-        ObjectGuid::LowType guid = fields[0].GetUInt64();
-
-        CreatureData const* creData = GetCreatureData(guid);
-        if (!creData)
-        {
-            TC_LOG_ERROR("sql.sql", "Creature (GUID: {}) does not exist but has a record in `creature_addon`", guid);
-            continue;
-        }
-
-        CreatureAddon& creatureAddon = _creatureAddonStore[guid];
-
-        creatureAddon.PathId = fields[1].GetUInt32();
-        if (creData->movementType == WAYPOINT_MOTION_TYPE && !creatureAddon.PathId)
-        {
-            const_cast<CreatureData*>(creData)->movementType = IDLE_MOTION_TYPE;
-            TC_LOG_ERROR("sql.sql", "Creature (GUID {}) has movement type set to WAYPOINT_MOTION_TYPE but no path assigned", guid);
-        }
-
-        creatureAddon.mount                     = fields[2].GetUInt32();
-        creatureAddon.standState                = fields[3].GetUInt8();
-        creatureAddon.animTier                  = fields[4].GetUInt8();
-        creatureAddon.visFlags                  = fields[5].GetUInt8();
-        creatureAddon.sheathState               = fields[6].GetUInt8();
-        creatureAddon.pvpFlags                  = fields[7].GetUInt8();
-        creatureAddon.emote                     = fields[8].GetUInt32();
-        creatureAddon.aiAnimKit                 = fields[9].GetUInt16();
-        creatureAddon.movementAnimKit           = fields[10].GetUInt16();
-        creatureAddon.meleeAnimKit              = fields[11].GetUInt16();
-        creatureAddon.visibilityDistanceType    = VisibilityDistanceType(fields[12].GetUInt8());
-
-        for (std::string_view aura : Trinity::Tokenize(fields[13].GetStringView(), ' ', false))
-        {
-            SpellInfo const* spellInfo = nullptr;
-            if (Optional<uint32> spellId = Trinity::StringTo<uint32>(aura))
-                spellInfo = sSpellMgr->GetSpellInfo(*spellId, DIFFICULTY_NONE);
-
-            if (!spellInfo)
-            {
-                TC_LOG_ERROR("sql.sql", "Creature (GUID: {}) has wrong spell '{}' defined in `auras` field in `creature_addon`.", guid, std::string(aura));
-                continue;
-            }
-
-            if (spellInfo->HasAura(SPELL_AURA_CONTROL_VEHICLE))
-                TC_LOG_ERROR("sql.sql", "Creature (GUID: {}) has SPELL_AURA_CONTROL_VEHICLE aura {} defined in `auras` field in `creature_addon`.", guid, spellInfo->Id);
-
-            if (std::find(creatureAddon.auras.begin(), creatureAddon.auras.end(), spellInfo->Id) != creatureAddon.auras.end())
-            {
-                TC_LOG_ERROR("sql.sql", "Creature (GUID: {}) has duplicate aura (spell {}) in `auras` field in `creature_addon`.", guid, spellInfo->Id);
-                continue;
-            }
-
-            if (spellInfo->GetDuration() > 0)
-            {
-                TC_LOG_ERROR("sql.sql", "Creature (GUID: {}) has temporary aura (spell {}) in `auras` field in `creature_addon`.", guid, spellInfo->Id);
-                continue;
-            }
-
-            creatureAddon.auras.push_back(spellInfo->Id);
-        }
-
-        if (creatureAddon.mount)
-        {
-            if (!sCreatureDisplayInfoStore.LookupEntry(creatureAddon.mount))
-            {
-                TC_LOG_ERROR("sql.sql", "Creature (GUID: {}) has invalid displayInfoId ({}) for mount defined in `creature_addon`", guid, creatureAddon.mount);
-                creatureAddon.mount = 0;
-            }
-        }
-
-        if (creatureAddon.standState >= MAX_UNIT_STAND_STATE)
-        {
-            TC_LOG_ERROR("sql.sql", "Creature (GUID: {}) has invalid unit stand state ({}) defined in `creature_addon`. Truncated to 0.", guid, creatureAddon.standState);
-            creatureAddon.standState = 0;
-        }
-
-        if (AnimTier(creatureAddon.animTier) >= AnimTier::Max)
-        {
-            TC_LOG_ERROR("sql.sql", "Creature (GUID: {}) has invalid animation tier ({}) defined in `creature_addon`. Truncated to 0.", guid, creatureAddon.animTier);
-            creatureAddon.animTier = 0;
-        }
-
-        if (creatureAddon.sheathState >= MAX_SHEATH_STATE)
-        {
-            TC_LOG_ERROR("sql.sql", "Creature (GUID: {}) has invalid sheath state ({}) defined in `creature_addon`. Truncated to 0.", guid, creatureAddon.sheathState);
-            creatureAddon.sheathState = 0;
-        }
-
-        // PvPFlags don't need any checking for the time being since they cover the entire range of a byte
-
-        if (!sEmotesStore.LookupEntry(creatureAddon.emote))
-        {
-            TC_LOG_ERROR("sql.sql", "Creature (GUID: {}) has invalid emote ({}) defined in `creature_addon`.", guid, creatureAddon.emote);
-            creatureAddon.emote = 0;
-        }
-
-        if (creatureAddon.aiAnimKit && !sAnimKitStore.LookupEntry(creatureAddon.aiAnimKit))
-        {
-            TC_LOG_ERROR("sql.sql", "Creature (GUID: {}) has invalid aiAnimKit ({}) defined in `creature_addon`.", guid, creatureAddon.aiAnimKit);
-            creatureAddon.aiAnimKit = 0;
-        }
-
-        if (creatureAddon.movementAnimKit && !sAnimKitStore.LookupEntry(creatureAddon.movementAnimKit))
-        {
-            TC_LOG_ERROR("sql.sql", "Creature (GUID: {}) has invalid movementAnimKit ({}) defined in `creature_addon`.", guid, creatureAddon.movementAnimKit);
-            creatureAddon.movementAnimKit = 0;
-        }
-
-        if (creatureAddon.meleeAnimKit && !sAnimKitStore.LookupEntry(creatureAddon.meleeAnimKit))
-        {
-            TC_LOG_ERROR("sql.sql", "Creature (GUID: {}) has invalid meleeAnimKit ({}) defined in `creature_addon`.", guid, creatureAddon.meleeAnimKit);
-            creatureAddon.meleeAnimKit = 0;
-        }
-
-        if (creatureAddon.visibilityDistanceType >= VisibilityDistanceType::Max)
-        {
-            TC_LOG_ERROR("sql.sql", "Creature (GUID: {}) has invalid visibilityDistanceType ({}) defined in `creature_addon`.",
-                guid, AsUnderlyingType(creatureAddon.visibilityDistanceType));
-            creatureAddon.visibilityDistanceType = VisibilityDistanceType::Normal;
-        }
-
-        ++count;
+        if (LoadCreatureAddonRow(result->Fetch()))
+            ++count;
     }
     while (result->NextRow());
 
     TC_LOG_INFO("server.loading", ">> Loaded {} creature addons in {} ms", count, GetMSTimeDiffToNow(oldMSTime));
+}
+
+bool ObjectMgr::LoadCreatureAddonRow(Field* fields)
+{
+    ObjectGuid::LowType guid = fields[0].GetUInt64();
+
+    CreatureData const* creData = GetCreatureData(guid);
+    if (!creData)
+    {
+        TC_LOG_ERROR("sql.sql", "Creature (GUID: {}) does not exist but has a record in `creature_addon`", guid);
+        return false;
+    }
+
+    CreatureAddon& creatureAddon = _creatureAddonStore[guid];
+
+    creatureAddon.PathId = fields[1].GetUInt32();
+    if (creData->movementType == WAYPOINT_MOTION_TYPE && !creatureAddon.PathId)
+    {
+        const_cast<CreatureData*>(creData)->movementType = IDLE_MOTION_TYPE;
+        TC_LOG_ERROR("sql.sql", "Creature (GUID {}) has movement type set to WAYPOINT_MOTION_TYPE but no path assigned", guid);
+    }
+
+    creatureAddon.mount                     = fields[2].GetUInt32();
+    creatureAddon.standState                = fields[3].GetUInt8();
+    creatureAddon.animTier                  = fields[4].GetUInt8();
+    creatureAddon.visFlags                  = fields[5].GetUInt8();
+    creatureAddon.sheathState               = fields[6].GetUInt8();
+    creatureAddon.pvpFlags                  = fields[7].GetUInt8();
+    creatureAddon.emote                     = fields[8].GetUInt32();
+    creatureAddon.aiAnimKit                 = fields[9].GetUInt16();
+    creatureAddon.movementAnimKit           = fields[10].GetUInt16();
+    creatureAddon.meleeAnimKit              = fields[11].GetUInt16();
+    creatureAddon.visibilityDistanceType    = VisibilityDistanceType(fields[12].GetUInt8());
+
+    for (std::string_view aura : Trinity::Tokenize(fields[13].GetStringView(), ' ', false))
+    {
+        SpellInfo const* spellInfo = nullptr;
+        if (Optional<uint32> spellId = Trinity::StringTo<uint32>(aura))
+            spellInfo = sSpellMgr->GetSpellInfo(*spellId, DIFFICULTY_NONE);
+
+        if (!spellInfo)
+        {
+            TC_LOG_ERROR("sql.sql", "Creature (GUID: {}) has wrong spell '{}' defined in `auras` field in `creature_addon`.", guid, std::string(aura));
+            continue;
+        }
+
+        if (spellInfo->HasAura(SPELL_AURA_CONTROL_VEHICLE))
+            TC_LOG_ERROR("sql.sql", "Creature (GUID: {}) has SPELL_AURA_CONTROL_VEHICLE aura {} defined in `auras` field in `creature_addon`.", guid, spellInfo->Id);
+
+        if (std::find(creatureAddon.auras.begin(), creatureAddon.auras.end(), spellInfo->Id) != creatureAddon.auras.end())
+        {
+            TC_LOG_ERROR("sql.sql", "Creature (GUID: {}) has duplicate aura (spell {}) in `auras` field in `creature_addon`.", guid, spellInfo->Id);
+            continue;
+        }
+
+        if (spellInfo->GetDuration() > 0)
+        {
+            TC_LOG_ERROR("sql.sql", "Creature (GUID: {}) has temporary aura (spell {}) in `auras` field in `creature_addon`.", guid, spellInfo->Id);
+            continue;
+        }
+
+        creatureAddon.auras.push_back(spellInfo->Id);
+    }
+
+    if (creatureAddon.mount)
+    {
+        if (!sCreatureDisplayInfoStore.LookupEntry(creatureAddon.mount))
+        {
+            TC_LOG_ERROR("sql.sql", "Creature (GUID: {}) has invalid displayInfoId ({}) for mount defined in `creature_addon`", guid, creatureAddon.mount);
+            creatureAddon.mount = 0;
+        }
+    }
+
+    if (creatureAddon.standState >= MAX_UNIT_STAND_STATE)
+    {
+        TC_LOG_ERROR("sql.sql", "Creature (GUID: {}) has invalid unit stand state ({}) defined in `creature_addon`. Truncated to 0.", guid, creatureAddon.standState);
+        creatureAddon.standState = 0;
+    }
+
+    if (AnimTier(creatureAddon.animTier) >= AnimTier::Max)
+    {
+        TC_LOG_ERROR("sql.sql", "Creature (GUID: {}) has invalid animation tier ({}) defined in `creature_addon`. Truncated to 0.", guid, creatureAddon.animTier);
+        creatureAddon.animTier = 0;
+    }
+
+    if (creatureAddon.sheathState >= MAX_SHEATH_STATE)
+    {
+        TC_LOG_ERROR("sql.sql", "Creature (GUID: {}) has invalid sheath state ({}) defined in `creature_addon`. Truncated to 0.", guid, creatureAddon.sheathState);
+        creatureAddon.sheathState = 0;
+    }
+
+    // PvPFlags don't need any checking for the time being since they cover the entire range of a byte
+
+    if (!sEmotesStore.LookupEntry(creatureAddon.emote))
+    {
+        TC_LOG_ERROR("sql.sql", "Creature (GUID: {}) has invalid emote ({}) defined in `creature_addon`.", guid, creatureAddon.emote);
+        creatureAddon.emote = 0;
+    }
+
+    if (creatureAddon.aiAnimKit && !sAnimKitStore.LookupEntry(creatureAddon.aiAnimKit))
+    {
+        TC_LOG_ERROR("sql.sql", "Creature (GUID: {}) has invalid aiAnimKit ({}) defined in `creature_addon`.", guid, creatureAddon.aiAnimKit);
+        creatureAddon.aiAnimKit = 0;
+    }
+
+    if (creatureAddon.movementAnimKit && !sAnimKitStore.LookupEntry(creatureAddon.movementAnimKit))
+    {
+        TC_LOG_ERROR("sql.sql", "Creature (GUID: {}) has invalid movementAnimKit ({}) defined in `creature_addon`.", guid, creatureAddon.movementAnimKit);
+        creatureAddon.movementAnimKit = 0;
+    }
+
+    if (creatureAddon.meleeAnimKit && !sAnimKitStore.LookupEntry(creatureAddon.meleeAnimKit))
+    {
+        TC_LOG_ERROR("sql.sql", "Creature (GUID: {}) has invalid meleeAnimKit ({}) defined in `creature_addon`.", guid, creatureAddon.meleeAnimKit);
+        creatureAddon.meleeAnimKit = 0;
+    }
+
+    if (creatureAddon.visibilityDistanceType >= VisibilityDistanceType::Max)
+    {
+        TC_LOG_ERROR("sql.sql", "Creature (GUID: {}) has invalid visibilityDistanceType ({}) defined in `creature_addon`.",
+            guid, AsUnderlyingType(creatureAddon.visibilityDistanceType));
+        creatureAddon.visibilityDistanceType = VisibilityDistanceType::Normal;
+    }
+
+    return true;
 }
 
 void ObjectMgr::LoadGameObjectAddons()
@@ -1321,8 +1356,7 @@ void ObjectMgr::LoadGameObjectAddons()
 
     _mapWideGameObjectSpawnStore.clear();
 
-    //                                               0     1                 2                 3                 4                 5                 6                  7              8            9
-    QueryResult result = WorldDatabase.Query("SELECT guid, parent_rotation0, parent_rotation1, parent_rotation2, parent_rotation3, invisibilityType, invisibilityValue, WorldEffectID, AIAnimKitID, Flags FROM gameobject_addon");
+    QueryResult result = WorldDatabase.Query(GameObjectAddonQuery);
 
     if (!result)
     {
@@ -1333,64 +1367,68 @@ void ObjectMgr::LoadGameObjectAddons()
     uint32 count = 0;
     do
     {
-        Field* fields = result->Fetch();
-
-        ObjectGuid::LowType guid = fields[0].GetUInt64();
-
-        GameObjectData const* goData = GetGameObjectData(guid);
-        if (!goData)
-        {
-            TC_LOG_ERROR("sql.sql", "GameObject (GUID: {}) does not exist but has a record in `gameobject_addon`", guid);
-            continue;
-        }
-
-        GameObjectAddon& gameObjectAddon = _gameObjectAddonStore[guid];
-        gameObjectAddon.ParentRotation = QuaternionData(fields[1].GetFloat(), fields[2].GetFloat(), fields[3].GetFloat(), fields[4].GetFloat());
-        gameObjectAddon.invisibilityType = InvisibilityType(fields[5].GetUInt8());
-        gameObjectAddon.InvisibilityValue = fields[6].GetUInt32();
-        gameObjectAddon.WorldEffectID = fields[7].GetUInt32();
-        gameObjectAddon.AIAnimKitID   = fields[8].GetUInt32();
-        gameObjectAddon.Flags         = fields[9].GetUInt32();
-
-        if (gameObjectAddon.invisibilityType >= TOTAL_INVISIBILITY_TYPES)
-        {
-            TC_LOG_ERROR("sql.sql", "GameObject (GUID: {}) has invalid InvisibilityType in `gameobject_addon`, disabled invisibility", guid);
-            gameObjectAddon.invisibilityType = INVISIBILITY_GENERAL;
-            gameObjectAddon.InvisibilityValue = 0;
-        }
-
-        if (gameObjectAddon.invisibilityType && !gameObjectAddon.InvisibilityValue)
-        {
-            TC_LOG_ERROR("sql.sql", "GameObject (GUID: {}) has InvisibilityType set but has no InvisibilityValue in `gameobject_addon`, set to 1", guid);
-            gameObjectAddon.InvisibilityValue = 1;
-        }
-
-        if (!gameObjectAddon.ParentRotation.isUnit())
-        {
-            TC_LOG_ERROR("sql.sql", "GameObject (GUID: {}) has invalid parent rotation in `gameobject_addon`, set to default", guid);
-            gameObjectAddon.ParentRotation = QuaternionData();
-        }
-
-        if (gameObjectAddon.WorldEffectID && !sWorldEffectStore.LookupEntry(gameObjectAddon.WorldEffectID))
-        {
-            TC_LOG_ERROR("sql.sql", "GameObject (GUID: {}) has invalid WorldEffectID ({}) in `gameobject_addon`, set to 0.", guid, gameObjectAddon.WorldEffectID);
-            gameObjectAddon.WorldEffectID = 0;
-        }
-
-        if (gameObjectAddon.AIAnimKitID && !sAnimKitStore.LookupEntry(gameObjectAddon.AIAnimKitID))
-        {
-            TC_LOG_ERROR("sql.sql", "GameObject (GUID: {}) has invalid AIAnimKitID ({}) in `gameobject_addon`, set to 0.", guid, gameObjectAddon.AIAnimKitID);
-            gameObjectAddon.AIAnimKitID = 0;
-        }
-
-        if (gameObjectAddon.Flags & GAMEOBJECT_ADDON_FLAG_MAP_WIDE)
-            _mapWideGameObjectSpawnStore[goData->mapId].push_back(guid);
-
-        ++count;
+        if (LoadGameObjectAddonRow(result->Fetch()))
+            ++count;
     }
     while (result->NextRow());
 
     TC_LOG_INFO("server.loading", ">> Loaded {} gameobject addons in {} ms", count, GetMSTimeDiffToNow(oldMSTime));
+}
+
+bool ObjectMgr::LoadGameObjectAddonRow(Field* fields)
+{
+    ObjectGuid::LowType guid = fields[0].GetUInt64();
+
+    GameObjectData const* goData = GetGameObjectData(guid);
+    if (!goData)
+    {
+        TC_LOG_ERROR("sql.sql", "GameObject (GUID: {}) does not exist but has a record in `gameobject_addon`", guid);
+        return false;
+    }
+
+    GameObjectAddon& gameObjectAddon = _gameObjectAddonStore[guid];
+    gameObjectAddon.ParentRotation = QuaternionData(fields[1].GetFloat(), fields[2].GetFloat(), fields[3].GetFloat(), fields[4].GetFloat());
+    gameObjectAddon.invisibilityType = InvisibilityType(fields[5].GetUInt8());
+    gameObjectAddon.InvisibilityValue = fields[6].GetUInt32();
+    gameObjectAddon.WorldEffectID = fields[7].GetUInt32();
+    gameObjectAddon.AIAnimKitID   = fields[8].GetUInt32();
+    gameObjectAddon.Flags         = fields[9].GetUInt32();
+
+    if (gameObjectAddon.invisibilityType >= TOTAL_INVISIBILITY_TYPES)
+    {
+        TC_LOG_ERROR("sql.sql", "GameObject (GUID: {}) has invalid InvisibilityType in `gameobject_addon`, disabled invisibility", guid);
+        gameObjectAddon.invisibilityType = INVISIBILITY_GENERAL;
+        gameObjectAddon.InvisibilityValue = 0;
+    }
+
+    if (gameObjectAddon.invisibilityType && !gameObjectAddon.InvisibilityValue)
+    {
+        TC_LOG_ERROR("sql.sql", "GameObject (GUID: {}) has InvisibilityType set but has no InvisibilityValue in `gameobject_addon`, set to 1", guid);
+        gameObjectAddon.InvisibilityValue = 1;
+    }
+
+    if (!gameObjectAddon.ParentRotation.isUnit())
+    {
+        TC_LOG_ERROR("sql.sql", "GameObject (GUID: {}) has invalid parent rotation in `gameobject_addon`, set to default", guid);
+        gameObjectAddon.ParentRotation = QuaternionData();
+    }
+
+    if (gameObjectAddon.WorldEffectID && !sWorldEffectStore.LookupEntry(gameObjectAddon.WorldEffectID))
+    {
+        TC_LOG_ERROR("sql.sql", "GameObject (GUID: {}) has invalid WorldEffectID ({}) in `gameobject_addon`, set to 0.", guid, gameObjectAddon.WorldEffectID);
+        gameObjectAddon.WorldEffectID = 0;
+    }
+
+    if (gameObjectAddon.AIAnimKitID && !sAnimKitStore.LookupEntry(gameObjectAddon.AIAnimKitID))
+    {
+        TC_LOG_ERROR("sql.sql", "GameObject (GUID: {}) has invalid AIAnimKitID ({}) in `gameobject_addon`, set to 0.", guid, gameObjectAddon.AIAnimKitID);
+        gameObjectAddon.AIAnimKitID = 0;
+    }
+
+    if (gameObjectAddon.Flags & GAMEOBJECT_ADDON_FLAG_MAP_WIDE)
+        _mapWideGameObjectSpawnStore[goData->mapId].push_back(guid);
+
+    return true;
 }
 
 std::vector<ObjectGuid::LowType> const* ObjectMgr::GetMapWideGameObjectSpawns(uint32 mapId) const
@@ -2126,19 +2164,20 @@ std::vector<Difficulty> ObjectMgr::ParseSpawnDifficulties(std::string_view diffi
     return difficulties;
 }
 
+
+ObjectMgr::SpawnMaskMap ObjectMgr::BuildSpawnMasks()
+{
+    SpawnMaskMap spawnMasks;
+    for (MapDifficultyEntry const* mapDifficulty : sMapDifficultyStore)
+        spawnMasks[mapDifficulty->MapID].insert(Difficulty(mapDifficulty->DifficultyID));
+    return spawnMasks;
+}
+
 void ObjectMgr::LoadCreatures()
 {
     uint32 oldMSTime = getMSTime();
 
-    //                                               0              1   2    3           4           5           6            7        8             9              10
-    QueryResult result = WorldDatabase.Query("SELECT creature.guid, id, map, position_x, position_y, position_z, orientation, modelid, equipment_id, spawntimesecs, wander_distance, "
-    //   11               12            13            14                 15          16           17                18                   19                    20
-        "currentwaypoint, curHealthPct, MovementType, spawnDifficulties, eventEntry, poolSpawnId, creature.npcflag, creature.unit_flags, creature.unit_flags2, creature.unit_flags3, "
-    //   21                      22                23                   24                       25                   26
-        "creature.phaseUseFlags, creature.phaseid, creature.phasegroup, creature.terrainSwapMap, creature.ScriptName, creature.StringId "
-        "FROM creature "
-        "LEFT OUTER JOIN game_event_creature ON creature.guid = game_event_creature.guid "
-        "LEFT OUTER JOIN pool_members ON pool_members.type = 0 AND creature.guid = pool_members.spawnId");
+    QueryResult result = WorldDatabase.Query(CreatureSpawnQuery);
 
     if (!result)
     {
@@ -2147,9 +2186,7 @@ void ObjectMgr::LoadCreatures()
     }
 
     // Build single time for check spawnmask
-    std::unordered_map<uint32, std::set<Difficulty>> spawnMasks;
-    for (MapDifficultyEntry const* mapDifficulty : sMapDifficultyStore)
-        spawnMasks[mapDifficulty->MapID].insert(Difficulty(mapDifficulty->DifficultyID));
+    SpawnMaskMap spawnMasks = BuildSpawnMasks();
 
     PhaseShift phaseShift;
 
@@ -2157,256 +2194,261 @@ void ObjectMgr::LoadCreatures()
 
     do
     {
-        Field* fields = result->Fetch();
-
-        ObjectGuid::LowType guid = fields[0].GetUInt64();
-        uint32 entry        = fields[1].GetUInt32();
-
-        CreatureTemplate const* cInfo = GetCreatureTemplate(entry);
-        if (!cInfo)
-        {
-            TC_LOG_ERROR("sql.sql", "Table `creature` has creature (GUID: {}) with non existing creature entry {}, skipped.", guid, entry);
-            continue;
-        }
-
-        CreatureData& data = _creatureDataStore[guid];
-        data.spawnId        = guid;
-        data.id             = entry;
-        data.mapId          = fields[2].GetUInt16();
-        data.spawnPoint.Relocate(fields[3].GetFloat(), fields[4].GetFloat(), fields[5].GetFloat(), fields[6].GetFloat());
-        if (uint32 displayId = fields[7].GetUInt32())
-            data.display.emplace(displayId, DEFAULT_PLAYER_DISPLAY_SCALE, 1.0f);
-        data.equipmentId    = fields[8].GetInt8();
-        data.spawntimesecs  = fields[9].GetUInt32();
-        data.wander_distance = fields[10].GetFloat();
-        data.currentwaypoint = fields[11].GetUInt32();
-        data.curHealthPct   = fields[12].GetUInt32();
-        data.movementType   = fields[13].GetUInt8();
-        data.spawnDifficulties = ParseSpawnDifficulties(fields[14].GetStringView(), "creature", guid, data.mapId, spawnMasks[data.mapId]);
-        int16 gameEvent     = fields[15].GetInt8();
-        data.poolId         = fields[16].GetUInt32();
-        data.npcflag        = fields[17].GetUInt64OrNull();
-        data.unit_flags     = fields[18].GetUInt32OrNull();
-        data.unit_flags2    = fields[19].GetUInt32OrNull();
-        data.unit_flags3    = fields[20].GetUInt32OrNull();
-        data.phaseUseFlags  = fields[21].GetUInt8();
-        data.phaseId        = fields[22].GetUInt32();
-        data.phaseGroup     = fields[23].GetUInt32();
-        data.terrainSwapMap = fields[24].GetInt32();
-        data.scriptId       = GetScriptId(fields[25].GetString());
-        data.StringId       = fields[26].GetString();
-        data.spawnGroupData = IsTransportMap(data.mapId) ? GetLegacySpawnGroup() : GetDefaultSpawnGroup(); // transport spawns default to compatibility group
-
-        MapEntry const* mapEntry = sMapStore.LookupEntry(data.mapId);
-        if (!mapEntry)
-        {
-            TC_LOG_ERROR("sql.sql", "Table `creature` has creature (GUID: {}) that spawned at nonexistent map (Id: {}), skipped.", guid, data.mapId);
-            continue;
-        }
-
-        if (sWorld->getBoolConfig(CONFIG_CREATURE_CHECK_INVALID_POSITION))
-        {
-            if (VMAP::IVMapManager* vmgr = VMAP::VMapFactory::createOrGetVMapManager())
-            {
-                if (vmgr->isMapLoadingEnabled() && !IsTransportMap(data.mapId))
-                {
-                    GridCoord gridCoord = Trinity::ComputeGridCoord(data.spawnPoint.GetPositionX(), data.spawnPoint.GetPositionY());
-                    int gx = (MAX_NUMBER_OF_GRIDS - 1) - gridCoord.x_coord;
-                    int gy = (MAX_NUMBER_OF_GRIDS - 1) - gridCoord.y_coord;
-
-                    VMAP::LoadResult result = vmgr->existsMap((sWorld->GetDataPath() + "vmaps").c_str(), data.mapId, gx, gy);
-                    if (result != VMAP::LoadResult::Success)
-                        TC_LOG_ERROR("sql.sql", "Table `creature` has creature (GUID: {} Entry: {} MapID: {}) spawned on a possible invalid position ({})",
-                            guid, data.id, data.mapId, data.spawnPoint.ToString());
-                }
-            }
-        }
-
-        if (data.spawnDifficulties.empty())
-        {
-            TC_LOG_ERROR("sql.sql", "Table `creature` has creature (GUID: {}) that is not spawned in any difficulty, skipped.", guid);
-            continue;
-        }
-
-        if (data.display.has_value())
-        {
-            if (!GetCreatureModelInfo(data.display->CreatureDisplayID))
-            {
-                TC_LOG_ERROR("sql.sql", "Table `creature` has creature (GUID: {} Entry: {}) with invalid `modelid` {}, ignoring.", guid, data.id, data.display->CreatureDisplayID);
-                data.display.reset();
-            }
-        }
-
-        // -1 random, 0 no equipment
-        if (data.equipmentId != 0)
-        {
-            if (!GetEquipmentInfo(data.id, data.equipmentId))
-            {
-                TC_LOG_ERROR("sql.sql", "Table `creature` has creature (Entry: {}) with equipment_id {} not found in table `creature_equip_template`, set to no equipment.", data.id, data.equipmentId);
-                data.equipmentId = 0;
-            }
-        }
-
-        if (cInfo->flags_extra & CREATURE_FLAG_EXTRA_INSTANCE_BIND)
-        {
-            if (!mapEntry->IsDungeon())
-                TC_LOG_ERROR("sql.sql", "Table `creature` has creature (GUID: {} Entry: {}) with `creature_template`.`flags_extra` including CREATURE_FLAG_EXTRA_INSTANCE_BIND but creature is not in instance.", guid, data.id);
-        }
-
-        if (data.movementType >= MAX_DB_MOTION_TYPE)
-        {
-            TC_LOG_ERROR("sql.sql", "Table `creature` has creature (GUID: {} Entry: {}) with wrong movement generator type ({}), ignored and set to IDLE.", guid, data.id, data.movementType);
-            data.movementType = IDLE_MOTION_TYPE;
-        }
-
-        if (data.wander_distance < 0.0f)
-        {
-            TC_LOG_ERROR("sql.sql", "Table `creature` has creature (GUID: {} Entry: {}) with `wander_distance`< 0, set to 0.", guid, data.id);
-            data.wander_distance = 0.0f;
-        }
-        else if (data.wander_distance > 0.0f && data.wander_distance < 0.1f)
-        {
-            TC_LOG_ERROR("sql.sql", "Table `creature` has creature (GUID: {} Entry: {}) with `wander_distance` below the allowed minimum distance of 0.1, set to 0.", guid, data.id);
-            data.wander_distance = 0.0f;
-        }
-        else if (data.movementType == RANDOM_MOTION_TYPE)
-        {
-            if (G3D::fuzzyEq(data.wander_distance, 0.0f))
-            {
-                TC_LOG_ERROR("sql.sql", "Table `creature` has creature (GUID: {} Entry: {}) with `MovementType`=1 (random movement) but with `wander_distance`=0, replace by idle movement type (0).", guid, data.id);
-                data.movementType = IDLE_MOTION_TYPE;
-            }
-        }
-        else if (data.movementType == IDLE_MOTION_TYPE)
-        {
-            if (data.wander_distance != 0.0f)
-            {
-                TC_LOG_ERROR("sql.sql", "Table `creature` has creature (GUID: {} Entry: {}) with `MovementType`=0 (idle) have `wander_distance`<>0, set to 0.", guid, data.id);
-                data.wander_distance = 0.0f;
-            }
-        }
-
-        if (data.phaseUseFlags & ~PHASE_USE_FLAGS_ALL)
-        {
-            TC_LOG_ERROR("sql.sql", "Table `creature` have creature (GUID: {} Entry: {}) has unknown `phaseUseFlags` set, removed unknown value.", guid, data.id);
-            data.phaseUseFlags &= PHASE_USE_FLAGS_ALL;
-        }
-
-        if (data.phaseUseFlags & PHASE_USE_FLAGS_ALWAYS_VISIBLE && data.phaseUseFlags & PHASE_USE_FLAGS_INVERSE)
-        {
-            TC_LOG_ERROR("sql.sql", "Table `creature` have creature (GUID: {} Entry: {}) has both `phaseUseFlags` PHASE_USE_FLAGS_ALWAYS_VISIBLE and PHASE_USE_FLAGS_INVERSE,"
-                " removing PHASE_USE_FLAGS_INVERSE.", guid, data.id);
-            data.phaseUseFlags &= ~PHASE_USE_FLAGS_INVERSE;
-        }
-
-        if (data.phaseGroup && data.phaseId)
-        {
-            TC_LOG_ERROR("sql.sql", "Table `creature` have creature (GUID: {} Entry: {}) with both `phaseid` and `phasegroup` set, `phasegroup` set to 0", guid, data.id);
-            data.phaseGroup = 0;
-        }
-
-        if (data.phaseId)
-        {
-            if (!sPhaseStore.LookupEntry(data.phaseId))
-            {
-                TC_LOG_ERROR("sql.sql", "Table `creature` have creature (GUID: {} Entry: {}) with `phaseid` {} does not exist, set to 0", guid, data.id, data.phaseId);
-                data.phaseId = 0;
-            }
-        }
-
-        if (data.phaseGroup)
-        {
-            if (!sDB2Manager.GetPhasesForGroup(data.phaseGroup))
-            {
-                TC_LOG_ERROR("sql.sql", "Table `creature` have creature (GUID: {} Entry: {}) with `phasegroup` {} does not exist, set to 0", guid, data.id, data.phaseGroup);
-                data.phaseGroup = 0;
-            }
-        }
-
-        if (data.terrainSwapMap != -1)
-        {
-            MapEntry const* terrainSwapEntry = sMapStore.LookupEntry(data.terrainSwapMap);
-            if (!terrainSwapEntry)
-            {
-                TC_LOG_ERROR("sql.sql", "Table `creature` have creature (GUID: {} Entry: {}) with `terrainSwapMap` {} does not exist, set to -1", guid, data.id, data.terrainSwapMap);
-                data.terrainSwapMap = -1;
-            }
-            else if (terrainSwapEntry->ParentMapID != int16(data.mapId))
-            {
-                TC_LOG_ERROR("sql.sql", "Table `creature` have creature (GUID: {} Entry: {}) with `terrainSwapMap` {} which cannot be used on spawn map, set to -1", guid, data.id, data.terrainSwapMap);
-                data.terrainSwapMap = -1;
-            }
-        }
-
-        if (data.unit_flags.has_value())
-        {
-            if (uint32 disallowedUnitFlags = (*data.unit_flags & ~UNIT_FLAG_ALLOWED))
-            {
-                TC_LOG_ERROR("sql.sql", "Table `creature` has creature (GUID: {} Entry: {}) with disallowed `unit_flags` {}, removing incorrect flag.", guid, data.id, disallowedUnitFlags);
-                *data.unit_flags &= UNIT_FLAG_ALLOWED;
-            }
-        }
-
-        if (data.unit_flags2.has_value())
-        {
-            if (uint32 disallowedUnitFlags2 = (*data.unit_flags2 & ~UNIT_FLAG2_ALLOWED))
-            {
-                TC_LOG_ERROR("sql.sql", "Table `creature` has creature (GUID: {} Entry: {}) with disallowed `unit_flags2` {}, removing incorrect flag.", guid, data.id, disallowedUnitFlags2);
-                *data.unit_flags2 &= UNIT_FLAG2_ALLOWED;
-            }
-
-            if (*data.unit_flags2 & UNIT_FLAG2_FEIGN_DEATH && (!data.unit_flags.has_value() || !(*data.unit_flags & (UNIT_FLAG_IMMUNE_TO_PC | UNIT_FLAG_IMMUNE_TO_NPC))))
-            {
-                TC_LOG_ERROR("sql.sql", "Table `creature` has creature (GUID: {} Entry: {}) has UNIT_FLAG2_FEIGN_DEATH set without IMMUNE_TO_PC | IMMUNE_TO_NPC, removing incorrect flag.", guid, data.id);
-                *data.unit_flags2 &= ~UNIT_FLAG2_FEIGN_DEATH;
-            }
-        }
-
-        if (data.unit_flags3.has_value())
-        {
-            if (uint32 disallowedUnitFlags3 = (*data.unit_flags3 & ~UNIT_FLAG3_ALLOWED))
-            {
-                TC_LOG_ERROR("sql.sql", "Table `creature` has creature (GUID: {} Entry: {}) with disallowed `unit_flags3` {}, removing incorrect flag.", guid, data.id, disallowedUnitFlags3);
-                *data.unit_flags3 &= UNIT_FLAG3_ALLOWED;
-            }
-
-            if (*data.unit_flags3 & UNIT_FLAG3_FAKE_DEAD && (!data.unit_flags.has_value() || !(*data.unit_flags & (UNIT_FLAG_IMMUNE_TO_PC | UNIT_FLAG_IMMUNE_TO_NPC))))
-            {
-                TC_LOG_ERROR("sql.sql", "Table `creature` has creature (GUID: {} Entry: {}) has UNIT_FLAG3_FAKE_DEAD set without IMMUNE_TO_PC | IMMUNE_TO_NPC, removing incorrect flag.", guid, data.id);
-                *data.unit_flags3 &= ~UNIT_FLAG3_FAKE_DEAD;
-            }
-        }
-
-        uint32 healthPct = std::clamp<uint32>(data.curHealthPct, 1, 100);
-        if (data.curHealthPct != healthPct)
-        {
-            TC_LOG_ERROR("sql.sql", "Table `creature` has creature (GUID: {} Entry: {}) with invalid `curHealthPct` {}, set to {}.", guid, data.id, data.curHealthPct, healthPct);
-            data.curHealthPct = healthPct;
-        }
-
-        if (sWorld->getBoolConfig(CONFIG_CALCULATE_CREATURE_ZONE_AREA_DATA))
-        {
-            uint32 zoneId = 0;
-            uint32 areaId = 0;
-            PhasingHandler::InitDbVisibleMapId(phaseShift, data.terrainSwapMap);
-            sTerrainMgr.GetZoneAndAreaId(phaseShift, zoneId, areaId, data.mapId, data.spawnPoint);
-
-            WorldDatabasePreparedStatement* stmt = WorldDatabase.GetPreparedStatement(WORLD_UPD_CREATURE_ZONE_AREA_DATA);
-
-            stmt->setUInt32(0, zoneId);
-            stmt->setUInt32(1, areaId);
-            stmt->setUInt64(2, guid);
-
-            WorldDatabase.Execute(stmt);
-        }
-
-        // Add to grid if not managed by the game event
-        if (gameEvent == 0)
-            AddCreatureToGrid(&data);
+        LoadCreatureRow(result->Fetch(), spawnMasks, phaseShift);
     }
     while (result->NextRow());
 
     TC_LOG_INFO("server.loading", ">> Loaded {} creatures in {} ms", _creatureDataStore.size(), GetMSTimeDiffToNow(oldMSTime));
+}
+
+bool ObjectMgr::LoadCreatureRow(Field* fields, SpawnMaskMap& spawnMasks, PhaseShift& phaseShift)
+{
+    ObjectGuid::LowType guid = fields[0].GetUInt64();
+    uint32 entry        = fields[1].GetUInt32();
+
+    CreatureTemplate const* cInfo = GetCreatureTemplate(entry);
+    if (!cInfo)
+    {
+        TC_LOG_ERROR("sql.sql", "Table `creature` has creature (GUID: {}) with non existing creature entry {}, skipped.", guid, entry);
+        return false;
+    }
+
+    CreatureData& data = _creatureDataStore[guid];
+    data.spawnId        = guid;
+    data.id             = entry;
+    data.mapId          = fields[2].GetUInt16();
+    data.spawnPoint.Relocate(fields[3].GetFloat(), fields[4].GetFloat(), fields[5].GetFloat(), fields[6].GetFloat());
+    if (uint32 displayId = fields[7].GetUInt32())
+        data.display.emplace(displayId, DEFAULT_PLAYER_DISPLAY_SCALE, 1.0f);
+    data.equipmentId    = fields[8].GetInt8();
+    data.spawntimesecs  = fields[9].GetUInt32();
+    data.wander_distance = fields[10].GetFloat();
+    data.currentwaypoint = fields[11].GetUInt32();
+    data.curHealthPct   = fields[12].GetUInt32();
+    data.movementType   = fields[13].GetUInt8();
+    data.spawnDifficulties = ParseSpawnDifficulties(fields[14].GetStringView(), "creature", guid, data.mapId, spawnMasks[data.mapId]);
+    int16 gameEvent     = fields[15].GetInt8();
+    data.poolId         = fields[16].GetUInt32();
+    data.npcflag        = fields[17].GetUInt64OrNull();
+    data.unit_flags     = fields[18].GetUInt32OrNull();
+    data.unit_flags2    = fields[19].GetUInt32OrNull();
+    data.unit_flags3    = fields[20].GetUInt32OrNull();
+    data.phaseUseFlags  = fields[21].GetUInt8();
+    data.phaseId        = fields[22].GetUInt32();
+    data.phaseGroup     = fields[23].GetUInt32();
+    data.terrainSwapMap = fields[24].GetInt32();
+    data.scriptId       = GetScriptId(fields[25].GetString());
+    data.StringId       = fields[26].GetString();
+    data.spawnGroupData = IsTransportMap(data.mapId) ? GetLegacySpawnGroup() : GetDefaultSpawnGroup(); // transport spawns default to compatibility group
+
+    MapEntry const* mapEntry = sMapStore.LookupEntry(data.mapId);
+    if (!mapEntry)
+    {
+        TC_LOG_ERROR("sql.sql", "Table `creature` has creature (GUID: {}) that spawned at nonexistent map (Id: {}), skipped.", guid, data.mapId);
+        return false;
+    }
+
+    if (sWorld->getBoolConfig(CONFIG_CREATURE_CHECK_INVALID_POSITION))
+    {
+        if (VMAP::IVMapManager* vmgr = VMAP::VMapFactory::createOrGetVMapManager())
+        {
+            if (vmgr->isMapLoadingEnabled() && !IsTransportMap(data.mapId))
+            {
+                GridCoord gridCoord = Trinity::ComputeGridCoord(data.spawnPoint.GetPositionX(), data.spawnPoint.GetPositionY());
+                int gx = (MAX_NUMBER_OF_GRIDS - 1) - gridCoord.x_coord;
+                int gy = (MAX_NUMBER_OF_GRIDS - 1) - gridCoord.y_coord;
+
+                VMAP::LoadResult result = vmgr->existsMap((sWorld->GetDataPath() + "vmaps").c_str(), data.mapId, gx, gy);
+                if (result != VMAP::LoadResult::Success)
+                    TC_LOG_ERROR("sql.sql", "Table `creature` has creature (GUID: {} Entry: {} MapID: {}) spawned on a possible invalid position ({})",
+                        guid, data.id, data.mapId, data.spawnPoint.ToString());
+            }
+        }
+    }
+
+    if (data.spawnDifficulties.empty())
+    {
+        TC_LOG_ERROR("sql.sql", "Table `creature` has creature (GUID: {}) that is not spawned in any difficulty, skipped.", guid);
+        return false;
+    }
+
+    if (data.display.has_value())
+    {
+        if (!GetCreatureModelInfo(data.display->CreatureDisplayID))
+        {
+            TC_LOG_ERROR("sql.sql", "Table `creature` has creature (GUID: {} Entry: {}) with invalid `modelid` {}, ignoring.", guid, data.id, data.display->CreatureDisplayID);
+            data.display.reset();
+        }
+    }
+
+    // -1 random, 0 no equipment
+    if (data.equipmentId != 0)
+    {
+        if (!GetEquipmentInfo(data.id, data.equipmentId))
+        {
+            TC_LOG_ERROR("sql.sql", "Table `creature` has creature (Entry: {}) with equipment_id {} not found in table `creature_equip_template`, set to no equipment.", data.id, data.equipmentId);
+            data.equipmentId = 0;
+        }
+    }
+
+    if (cInfo->flags_extra & CREATURE_FLAG_EXTRA_INSTANCE_BIND)
+    {
+        if (!mapEntry->IsDungeon())
+            TC_LOG_ERROR("sql.sql", "Table `creature` has creature (GUID: {} Entry: {}) with `creature_template`.`flags_extra` including CREATURE_FLAG_EXTRA_INSTANCE_BIND but creature is not in instance.", guid, data.id);
+    }
+
+    if (data.movementType >= MAX_DB_MOTION_TYPE)
+    {
+        TC_LOG_ERROR("sql.sql", "Table `creature` has creature (GUID: {} Entry: {}) with wrong movement generator type ({}), ignored and set to IDLE.", guid, data.id, data.movementType);
+        data.movementType = IDLE_MOTION_TYPE;
+    }
+
+    if (data.wander_distance < 0.0f)
+    {
+        TC_LOG_ERROR("sql.sql", "Table `creature` has creature (GUID: {} Entry: {}) with `wander_distance`< 0, set to 0.", guid, data.id);
+        data.wander_distance = 0.0f;
+    }
+    else if (data.wander_distance > 0.0f && data.wander_distance < 0.1f)
+    {
+        TC_LOG_ERROR("sql.sql", "Table `creature` has creature (GUID: {} Entry: {}) with `wander_distance` below the allowed minimum distance of 0.1, set to 0.", guid, data.id);
+        data.wander_distance = 0.0f;
+    }
+    else if (data.movementType == RANDOM_MOTION_TYPE)
+    {
+        if (G3D::fuzzyEq(data.wander_distance, 0.0f))
+        {
+            TC_LOG_ERROR("sql.sql", "Table `creature` has creature (GUID: {} Entry: {}) with `MovementType`=1 (random movement) but with `wander_distance`=0, replace by idle movement type (0).", guid, data.id);
+            data.movementType = IDLE_MOTION_TYPE;
+        }
+    }
+    else if (data.movementType == IDLE_MOTION_TYPE)
+    {
+        if (data.wander_distance != 0.0f)
+        {
+            TC_LOG_ERROR("sql.sql", "Table `creature` has creature (GUID: {} Entry: {}) with `MovementType`=0 (idle) have `wander_distance`<>0, set to 0.", guid, data.id);
+            data.wander_distance = 0.0f;
+        }
+    }
+
+    if (data.phaseUseFlags & ~PHASE_USE_FLAGS_ALL)
+    {
+        TC_LOG_ERROR("sql.sql", "Table `creature` have creature (GUID: {} Entry: {}) has unknown `phaseUseFlags` set, removed unknown value.", guid, data.id);
+        data.phaseUseFlags &= PHASE_USE_FLAGS_ALL;
+    }
+
+    if (data.phaseUseFlags & PHASE_USE_FLAGS_ALWAYS_VISIBLE && data.phaseUseFlags & PHASE_USE_FLAGS_INVERSE)
+    {
+        TC_LOG_ERROR("sql.sql", "Table `creature` have creature (GUID: {} Entry: {}) has both `phaseUseFlags` PHASE_USE_FLAGS_ALWAYS_VISIBLE and PHASE_USE_FLAGS_INVERSE,"
+            " removing PHASE_USE_FLAGS_INVERSE.", guid, data.id);
+        data.phaseUseFlags &= ~PHASE_USE_FLAGS_INVERSE;
+    }
+
+    if (data.phaseGroup && data.phaseId)
+    {
+        TC_LOG_ERROR("sql.sql", "Table `creature` have creature (GUID: {} Entry: {}) with both `phaseid` and `phasegroup` set, `phasegroup` set to 0", guid, data.id);
+        data.phaseGroup = 0;
+    }
+
+    if (data.phaseId)
+    {
+        if (!sPhaseStore.LookupEntry(data.phaseId))
+        {
+            TC_LOG_ERROR("sql.sql", "Table `creature` have creature (GUID: {} Entry: {}) with `phaseid` {} does not exist, set to 0", guid, data.id, data.phaseId);
+            data.phaseId = 0;
+        }
+    }
+
+    if (data.phaseGroup)
+    {
+        if (!sDB2Manager.GetPhasesForGroup(data.phaseGroup))
+        {
+            TC_LOG_ERROR("sql.sql", "Table `creature` have creature (GUID: {} Entry: {}) with `phasegroup` {} does not exist, set to 0", guid, data.id, data.phaseGroup);
+            data.phaseGroup = 0;
+        }
+    }
+
+    if (data.terrainSwapMap != -1)
+    {
+        MapEntry const* terrainSwapEntry = sMapStore.LookupEntry(data.terrainSwapMap);
+        if (!terrainSwapEntry)
+        {
+            TC_LOG_ERROR("sql.sql", "Table `creature` have creature (GUID: {} Entry: {}) with `terrainSwapMap` {} does not exist, set to -1", guid, data.id, data.terrainSwapMap);
+            data.terrainSwapMap = -1;
+        }
+        else if (terrainSwapEntry->ParentMapID != int16(data.mapId))
+        {
+            TC_LOG_ERROR("sql.sql", "Table `creature` have creature (GUID: {} Entry: {}) with `terrainSwapMap` {} which cannot be used on spawn map, set to -1", guid, data.id, data.terrainSwapMap);
+            data.terrainSwapMap = -1;
+        }
+    }
+
+    if (data.unit_flags.has_value())
+    {
+        if (uint32 disallowedUnitFlags = (*data.unit_flags & ~UNIT_FLAG_ALLOWED))
+        {
+            TC_LOG_ERROR("sql.sql", "Table `creature` has creature (GUID: {} Entry: {}) with disallowed `unit_flags` {}, removing incorrect flag.", guid, data.id, disallowedUnitFlags);
+            *data.unit_flags &= UNIT_FLAG_ALLOWED;
+        }
+    }
+
+    if (data.unit_flags2.has_value())
+    {
+        if (uint32 disallowedUnitFlags2 = (*data.unit_flags2 & ~UNIT_FLAG2_ALLOWED))
+        {
+            TC_LOG_ERROR("sql.sql", "Table `creature` has creature (GUID: {} Entry: {}) with disallowed `unit_flags2` {}, removing incorrect flag.", guid, data.id, disallowedUnitFlags2);
+            *data.unit_flags2 &= UNIT_FLAG2_ALLOWED;
+        }
+
+        if (*data.unit_flags2 & UNIT_FLAG2_FEIGN_DEATH && (!data.unit_flags.has_value() || !(*data.unit_flags & (UNIT_FLAG_IMMUNE_TO_PC | UNIT_FLAG_IMMUNE_TO_NPC))))
+        {
+            TC_LOG_ERROR("sql.sql", "Table `creature` has creature (GUID: {} Entry: {}) has UNIT_FLAG2_FEIGN_DEATH set without IMMUNE_TO_PC | IMMUNE_TO_NPC, removing incorrect flag.", guid, data.id);
+            *data.unit_flags2 &= ~UNIT_FLAG2_FEIGN_DEATH;
+        }
+    }
+
+    if (data.unit_flags3.has_value())
+    {
+        if (uint32 disallowedUnitFlags3 = (*data.unit_flags3 & ~UNIT_FLAG3_ALLOWED))
+        {
+            TC_LOG_ERROR("sql.sql", "Table `creature` has creature (GUID: {} Entry: {}) with disallowed `unit_flags3` {}, removing incorrect flag.", guid, data.id, disallowedUnitFlags3);
+            *data.unit_flags3 &= UNIT_FLAG3_ALLOWED;
+        }
+
+        if (*data.unit_flags3 & UNIT_FLAG3_FAKE_DEAD && (!data.unit_flags.has_value() || !(*data.unit_flags & (UNIT_FLAG_IMMUNE_TO_PC | UNIT_FLAG_IMMUNE_TO_NPC))))
+        {
+            TC_LOG_ERROR("sql.sql", "Table `creature` has creature (GUID: {} Entry: {}) has UNIT_FLAG3_FAKE_DEAD set without IMMUNE_TO_PC | IMMUNE_TO_NPC, removing incorrect flag.", guid, data.id);
+            *data.unit_flags3 &= ~UNIT_FLAG3_FAKE_DEAD;
+        }
+    }
+
+    uint32 healthPct = std::clamp<uint32>(data.curHealthPct, 1, 100);
+    if (data.curHealthPct != healthPct)
+    {
+        TC_LOG_ERROR("sql.sql", "Table `creature` has creature (GUID: {} Entry: {}) with invalid `curHealthPct` {}, set to {}.", guid, data.id, data.curHealthPct, healthPct);
+        data.curHealthPct = healthPct;
+    }
+
+    if (sWorld->getBoolConfig(CONFIG_CALCULATE_CREATURE_ZONE_AREA_DATA))
+    {
+        uint32 zoneId = 0;
+        uint32 areaId = 0;
+        PhasingHandler::InitDbVisibleMapId(phaseShift, data.terrainSwapMap);
+        sTerrainMgr.GetZoneAndAreaId(phaseShift, zoneId, areaId, data.mapId, data.spawnPoint);
+
+        WorldDatabasePreparedStatement* stmt = WorldDatabase.GetPreparedStatement(WORLD_UPD_CREATURE_ZONE_AREA_DATA);
+
+        stmt->setUInt32(0, zoneId);
+        stmt->setUInt32(1, areaId);
+        stmt->setUInt64(2, guid);
+
+        WorldDatabase.Execute(stmt);
+    }
+
+    // Add to grid if not managed by the game event
+    if (gameEvent == 0)
+        AddCreatureToGrid(&data);
+
+    return true;
 }
 
 CellObjectGuids const* ObjectMgr::GetCellObjectGuids(uint32 mapid, Difficulty spawnMode, uint32 cell_id)
@@ -2483,14 +2525,7 @@ void ObjectMgr::LoadGameObjects()
 {
     uint32 oldMSTime = getMSTime();
 
-    //                                                0                1   2    3           4           5           6
-    QueryResult result = WorldDatabase.Query("SELECT gameobject.guid, id, map, position_x, position_y, position_z, orientation, "
-    //   7          8          9          10         11             12            13     14                 15          16
-        "rotation0, rotation1, rotation2, rotation3, spawntimesecs, animprogress, state, spawnDifficulties, eventEntry, poolSpawnId, "
-    //   17             18       19          20              21          22
-        "phaseUseFlags, phaseid, phasegroup, terrainSwapMap, ScriptName, StringId "
-        "FROM gameobject LEFT OUTER JOIN game_event_gameobject ON gameobject.guid = game_event_gameobject.guid "
-        "LEFT OUTER JOIN pool_members ON pool_members.type = 1 AND gameobject.guid = pool_members.spawnId");
+    QueryResult result = WorldDatabase.Query(GameObjectSpawnQuery);
 
     if (!result)
     {
@@ -2499,9 +2534,7 @@ void ObjectMgr::LoadGameObjects()
     }
 
     // build single time for check spawnmask
-    std::unordered_map<uint32, std::set<Difficulty>> spawnMasks;
-    for (MapDifficultyEntry const* mapDifficulty : sMapDifficultyStore)
-        spawnMasks[mapDifficulty->MapID].insert(Difficulty(mapDifficulty->DifficultyID));
+    SpawnMaskMap spawnMasks = BuildSpawnMasks();
 
     PhaseShift phaseShift;
 
@@ -2509,221 +2542,226 @@ void ObjectMgr::LoadGameObjects()
 
     do
     {
-        Field* fields = result->Fetch();
-
-        ObjectGuid::LowType guid = fields[0].GetUInt64();
-        uint32 entry        = fields[1].GetUInt32();
-
-        GameObjectTemplate const* gInfo = GetGameObjectTemplate(entry);
-        if (!gInfo)
-        {
-            TC_LOG_ERROR("sql.sql", "Table `gameobject` has gameobject (GUID: {}) with non existing gameobject entry {}, skipped.", guid, entry);
-            continue;
-        }
-
-        if (!gInfo->displayId)
-        {
-            switch (gInfo->type)
-            {
-                case GAMEOBJECT_TYPE_TRAP:
-                case GAMEOBJECT_TYPE_SPELL_FOCUS:
-                    break;
-                default:
-                    TC_LOG_ERROR("sql.sql", "Gameobject (GUID: {} Entry {} GoType: {}) doesn't have a displayId ({}), not loaded.", guid, entry, gInfo->type, gInfo->displayId);
-                    break;
-            }
-        }
-
-        if (gInfo->displayId && !sGameObjectDisplayInfoStore.LookupEntry(gInfo->displayId))
-        {
-            TC_LOG_ERROR("sql.sql", "Gameobject (GUID: {} Entry {} GoType: {}) has an invalid displayId ({}), not loaded.", guid, entry, gInfo->type, gInfo->displayId);
-            continue;
-        }
-
-        GameObjectData& data = _gameObjectDataStore[guid];
-
-        data.spawnId        = guid;
-        data.id             = entry;
-        data.mapId          = fields[2].GetUInt16();
-        data.spawnPoint.Relocate(fields[3].GetFloat(), fields[4].GetFloat(), fields[5].GetFloat(), fields[6].GetFloat());
-        data.rotation.x     = fields[7].GetFloat();
-        data.rotation.y     = fields[8].GetFloat();
-        data.rotation.z     = fields[9].GetFloat();
-        data.rotation.w     = fields[10].GetFloat();
-        data.spawntimesecs  = fields[11].GetInt32();
-        data.spawnGroupData = IsTransportMap(data.mapId) ? GetLegacySpawnGroup() : GetDefaultSpawnGroup(); // transport spawns default to compatibility group
-
-        MapEntry const* mapEntry = sMapStore.LookupEntry(data.mapId);
-        if (!mapEntry)
-        {
-            TC_LOG_ERROR("sql.sql", "Table `gameobject` has gameobject (GUID: {} Entry: {}) spawned on a non-existed map (Id: {}), skip", guid, data.id, data.mapId);
-            continue;
-        }
-
-        if (sWorld->getBoolConfig(CONFIG_GAME_OBJECT_CHECK_INVALID_POSITION))
-        {
-            if (VMAP::IVMapManager* vmgr = VMAP::VMapFactory::createOrGetVMapManager())
-            {
-                if (vmgr->isMapLoadingEnabled() && !IsTransportMap(data.mapId))
-                {
-                    GridCoord gridCoord = Trinity::ComputeGridCoord(data.spawnPoint.GetPositionX(), data.spawnPoint.GetPositionY());
-                    int gx = (MAX_NUMBER_OF_GRIDS - 1) - gridCoord.x_coord;
-                    int gy = (MAX_NUMBER_OF_GRIDS - 1) - gridCoord.y_coord;
-
-                    VMAP::LoadResult result = vmgr->existsMap((sWorld->GetDataPath() + "vmaps").c_str(), data.mapId, gx, gy);
-                    if (result != VMAP::LoadResult::Success)
-                        TC_LOG_ERROR("sql.sql", "Table `gameobject` has gameobject (GUID: {} Entry: {} MapID: {}) spawned on a possible invalid position ({})",
-                            guid, data.id, data.mapId, data.spawnPoint.ToString());
-                }
-            }
-        }
-
-        if (data.spawntimesecs == 0 && gInfo->IsDespawnAtAction())
-        {
-            TC_LOG_ERROR("sql.sql", "Table `gameobject` has gameobject (GUID: {} Entry: {}) with `spawntimesecs` (0) value, but the gameobejct is marked as despawnable at action.", guid, data.id);
-        }
-
-        data.animprogress   = fields[12].GetUInt8();
-        data.artKit         = 0;
-
-        uint32 go_state     = fields[13].GetUInt8();
-        if (go_state >= MAX_GO_STATE)
-        {
-            if (gInfo->type != GAMEOBJECT_TYPE_TRANSPORT || go_state > GO_STATE_TRANSPORT_ACTIVE + MAX_GO_STATE_TRANSPORT_STOP_FRAMES)
-            {
-                TC_LOG_ERROR("sql.sql", "Table `gameobject` has gameobject (GUID: {} Entry: {}) with invalid `state` ({}) value, skip", guid, data.id, go_state);
-                continue;
-            }
-        }
-        data.goState       = GOState(go_state);
-
-        data.spawnDifficulties      = ParseSpawnDifficulties(fields[14].GetStringView(), "gameobject", guid, data.mapId, spawnMasks[data.mapId]);
-        if (data.spawnDifficulties.empty())
-        {
-            TC_LOG_ERROR("sql.sql", "Table `gameobject` has gameobject (GUID: {}) that is not spawned in any difficulty, skipped.", guid);
-            continue;
-        }
-
-        int16 gameEvent     = fields[15].GetInt8();
-        data.poolId         = fields[16].GetUInt32();
-        data.phaseUseFlags  = fields[17].GetUInt8();
-        data.phaseId        = fields[18].GetUInt32();
-        data.phaseGroup     = fields[19].GetUInt32();
-
-        if (data.phaseUseFlags & ~PHASE_USE_FLAGS_ALL)
-        {
-            TC_LOG_ERROR("sql.sql", "Table `gameobject` have gameobject (GUID: {} Entry: {}) has unknown `phaseUseFlags` set, removed unknown value.", guid, data.id);
-            data.phaseUseFlags &= PHASE_USE_FLAGS_ALL;
-        }
-
-        if (data.phaseUseFlags & PHASE_USE_FLAGS_ALWAYS_VISIBLE && data.phaseUseFlags & PHASE_USE_FLAGS_INVERSE)
-        {
-            TC_LOG_ERROR("sql.sql", "Table `gameobject` have gameobject (GUID: {} Entry: {}) has both `phaseUseFlags` PHASE_USE_FLAGS_ALWAYS_VISIBLE and PHASE_USE_FLAGS_INVERSE,"
-                " removing PHASE_USE_FLAGS_INVERSE.", guid, data.id);
-            data.phaseUseFlags &= ~PHASE_USE_FLAGS_INVERSE;
-        }
-
-        if (data.phaseGroup && data.phaseId)
-        {
-            TC_LOG_ERROR("sql.sql", "Table `gameobject` have gameobject (GUID: {} Entry: {}) with both `phaseid` and `phasegroup` set, `phasegroup` set to 0", guid, data.id);
-            data.phaseGroup = 0;
-        }
-
-        if (data.phaseId)
-        {
-            if (!sPhaseStore.LookupEntry(data.phaseId))
-            {
-                TC_LOG_ERROR("sql.sql", "Table `gameobject` have gameobject (GUID: {} Entry: {}) with `phaseid` {} does not exist, set to 0", guid, data.id, data.phaseId);
-                data.phaseId = 0;
-            }
-        }
-
-        if (data.phaseGroup)
-        {
-            if (!sDB2Manager.GetPhasesForGroup(data.phaseGroup))
-            {
-                TC_LOG_ERROR("sql.sql", "Table `gameobject` have gameobject (GUID: {} Entry: {}) with `phaseGroup` {} does not exist, set to 0", guid, data.id, data.phaseGroup);
-                data.phaseGroup = 0;
-            }
-        }
-
-        data.terrainSwapMap = fields[20].GetInt32();
-        if (data.terrainSwapMap != -1)
-        {
-            MapEntry const* terrainSwapEntry = sMapStore.LookupEntry(data.terrainSwapMap);
-            if (!terrainSwapEntry)
-            {
-                TC_LOG_ERROR("sql.sql", "Table `gameobject` have gameobject (GUID: {} Entry: {}) with `terrainSwapMap` {} does not exist, set to -1", guid, data.id, data.terrainSwapMap);
-                data.terrainSwapMap = -1;
-            }
-            else if (terrainSwapEntry->ParentMapID != int16(data.mapId))
-            {
-                TC_LOG_ERROR("sql.sql", "Table `gameobject` have gameobject (GUID: {} Entry: {}) with `terrainSwapMap` {} which cannot be used on spawn map, set to -1", guid, data.id, data.terrainSwapMap);
-                data.terrainSwapMap = -1;
-            }
-        }
-
-        data.scriptId = GetScriptId(fields[21].GetString());
-        data.StringId = fields[22].GetString();
-
-        if (data.rotation.x < -1.0f || data.rotation.x > 1.0f)
-        {
-            TC_LOG_ERROR("sql.sql", "Table `gameobject` has gameobject (GUID: {} Entry: {}) with invalid rotationX ({}) value, skip", guid, data.id, data.rotation.x);
-            continue;
-        }
-
-        if (data.rotation.y < -1.0f || data.rotation.y > 1.0f)
-        {
-            TC_LOG_ERROR("sql.sql", "Table `gameobject` has gameobject (GUID: {} Entry: {}) with invalid rotationY ({}) value, skip", guid, data.id, data.rotation.y);
-            continue;
-        }
-
-        if (data.rotation.z < -1.0f || data.rotation.z > 1.0f)
-        {
-            TC_LOG_ERROR("sql.sql", "Table `gameobject` has gameobject (GUID: {} Entry: {}) with invalid rotationZ ({}) value, skip", guid, data.id, data.rotation.z);
-            continue;
-        }
-
-        if (data.rotation.w < -1.0f || data.rotation.w > 1.0f)
-        {
-            TC_LOG_ERROR("sql.sql", "Table `gameobject` has gameobject (GUID: {} Entry: {}) with invalid rotationW ({}) value, skip", guid, data.id, data.rotation.w);
-            continue;
-        }
-
-        if (!MapManager::IsValidMapCoord(data.mapId, data.spawnPoint))
-        {
-            TC_LOG_ERROR("sql.sql", "Table `gameobject` has gameobject (GUID: {} Entry: {}) with invalid coordinates, skip", guid, data.id);
-            continue;
-        }
-
-        if (!data.rotation.isUnit())
-        {
-            TC_LOG_ERROR("sql.sql", "Table `gameobject` has gameobject (GUID: {} Entry: {}) with invalid rotation quaternion (non-unit), defaulting to orientation on Z axis only", guid, data.id);
-            data.rotation = QuaternionData::fromEulerAnglesZYX(data.spawnPoint.GetOrientation(), 0.0f, 0.0f);
-        }
-
-        if (sWorld->getBoolConfig(CONFIG_CALCULATE_GAMEOBJECT_ZONE_AREA_DATA))
-        {
-            uint32 zoneId = 0;
-            uint32 areaId = 0;
-            PhasingHandler::InitDbVisibleMapId(phaseShift, data.terrainSwapMap);
-            sTerrainMgr.GetZoneAndAreaId(phaseShift, zoneId, areaId, data.mapId, data.spawnPoint);
-
-            WorldDatabasePreparedStatement* stmt = WorldDatabase.GetPreparedStatement(WORLD_UPD_GAMEOBJECT_ZONE_AREA_DATA);
-
-            stmt->setUInt32(0, zoneId);
-            stmt->setUInt32(1, areaId);
-            stmt->setUInt64(2, guid);
-
-            WorldDatabase.Execute(stmt);
-        }
-
-        if (gameEvent == 0)                      // if not this is to be managed by GameEvent System
-            AddGameobjectToGrid(&data);
+        LoadGameObjectRow(result->Fetch(), spawnMasks, phaseShift);
     }
     while (result->NextRow());
 
     TC_LOG_INFO("server.loading", ">> Loaded {} gameobjects in {} ms", _gameObjectDataStore.size(), GetMSTimeDiffToNow(oldMSTime));
+}
+
+bool ObjectMgr::LoadGameObjectRow(Field* fields, SpawnMaskMap& spawnMasks, PhaseShift& phaseShift)
+{
+    ObjectGuid::LowType guid = fields[0].GetUInt64();
+    uint32 entry        = fields[1].GetUInt32();
+
+    GameObjectTemplate const* gInfo = GetGameObjectTemplate(entry);
+    if (!gInfo)
+    {
+        TC_LOG_ERROR("sql.sql", "Table `gameobject` has gameobject (GUID: {}) with non existing gameobject entry {}, skipped.", guid, entry);
+        return false;
+    }
+
+    if (!gInfo->displayId)
+    {
+        switch (gInfo->type)
+        {
+            case GAMEOBJECT_TYPE_TRAP:
+            case GAMEOBJECT_TYPE_SPELL_FOCUS:
+                break;
+            default:
+                TC_LOG_ERROR("sql.sql", "Gameobject (GUID: {} Entry {} GoType: {}) doesn't have a displayId ({}), not loaded.", guid, entry, gInfo->type, gInfo->displayId);
+                break;
+        }
+    }
+
+    if (gInfo->displayId && !sGameObjectDisplayInfoStore.LookupEntry(gInfo->displayId))
+    {
+        TC_LOG_ERROR("sql.sql", "Gameobject (GUID: {} Entry {} GoType: {}) has an invalid displayId ({}), not loaded.", guid, entry, gInfo->type, gInfo->displayId);
+        return false;
+    }
+
+    GameObjectData& data = _gameObjectDataStore[guid];
+
+    data.spawnId        = guid;
+    data.id             = entry;
+    data.mapId          = fields[2].GetUInt16();
+    data.spawnPoint.Relocate(fields[3].GetFloat(), fields[4].GetFloat(), fields[5].GetFloat(), fields[6].GetFloat());
+    data.rotation.x     = fields[7].GetFloat();
+    data.rotation.y     = fields[8].GetFloat();
+    data.rotation.z     = fields[9].GetFloat();
+    data.rotation.w     = fields[10].GetFloat();
+    data.spawntimesecs  = fields[11].GetInt32();
+    data.spawnGroupData = IsTransportMap(data.mapId) ? GetLegacySpawnGroup() : GetDefaultSpawnGroup(); // transport spawns default to compatibility group
+
+    MapEntry const* mapEntry = sMapStore.LookupEntry(data.mapId);
+    if (!mapEntry)
+    {
+        TC_LOG_ERROR("sql.sql", "Table `gameobject` has gameobject (GUID: {} Entry: {}) spawned on a non-existed map (Id: {}), skip", guid, data.id, data.mapId);
+        return false;
+    }
+
+    if (sWorld->getBoolConfig(CONFIG_GAME_OBJECT_CHECK_INVALID_POSITION))
+    {
+        if (VMAP::IVMapManager* vmgr = VMAP::VMapFactory::createOrGetVMapManager())
+        {
+            if (vmgr->isMapLoadingEnabled() && !IsTransportMap(data.mapId))
+            {
+                GridCoord gridCoord = Trinity::ComputeGridCoord(data.spawnPoint.GetPositionX(), data.spawnPoint.GetPositionY());
+                int gx = (MAX_NUMBER_OF_GRIDS - 1) - gridCoord.x_coord;
+                int gy = (MAX_NUMBER_OF_GRIDS - 1) - gridCoord.y_coord;
+
+                VMAP::LoadResult result = vmgr->existsMap((sWorld->GetDataPath() + "vmaps").c_str(), data.mapId, gx, gy);
+                if (result != VMAP::LoadResult::Success)
+                    TC_LOG_ERROR("sql.sql", "Table `gameobject` has gameobject (GUID: {} Entry: {} MapID: {}) spawned on a possible invalid position ({})",
+                        guid, data.id, data.mapId, data.spawnPoint.ToString());
+            }
+        }
+    }
+
+    if (data.spawntimesecs == 0 && gInfo->IsDespawnAtAction())
+    {
+        TC_LOG_ERROR("sql.sql", "Table `gameobject` has gameobject (GUID: {} Entry: {}) with `spawntimesecs` (0) value, but the gameobejct is marked as despawnable at action.", guid, data.id);
+    }
+
+    data.animprogress   = fields[12].GetUInt8();
+    data.artKit         = 0;
+
+    uint32 go_state     = fields[13].GetUInt8();
+    if (go_state >= MAX_GO_STATE)
+    {
+        if (gInfo->type != GAMEOBJECT_TYPE_TRANSPORT || go_state > GO_STATE_TRANSPORT_ACTIVE + MAX_GO_STATE_TRANSPORT_STOP_FRAMES)
+        {
+            TC_LOG_ERROR("sql.sql", "Table `gameobject` has gameobject (GUID: {} Entry: {}) with invalid `state` ({}) value, skip", guid, data.id, go_state);
+            return false;
+        }
+    }
+    data.goState       = GOState(go_state);
+
+    data.spawnDifficulties      = ParseSpawnDifficulties(fields[14].GetStringView(), "gameobject", guid, data.mapId, spawnMasks[data.mapId]);
+    if (data.spawnDifficulties.empty())
+    {
+        TC_LOG_ERROR("sql.sql", "Table `gameobject` has gameobject (GUID: {}) that is not spawned in any difficulty, skipped.", guid);
+        return false;
+    }
+
+    int16 gameEvent     = fields[15].GetInt8();
+    data.poolId         = fields[16].GetUInt32();
+    data.phaseUseFlags  = fields[17].GetUInt8();
+    data.phaseId        = fields[18].GetUInt32();
+    data.phaseGroup     = fields[19].GetUInt32();
+
+    if (data.phaseUseFlags & ~PHASE_USE_FLAGS_ALL)
+    {
+        TC_LOG_ERROR("sql.sql", "Table `gameobject` have gameobject (GUID: {} Entry: {}) has unknown `phaseUseFlags` set, removed unknown value.", guid, data.id);
+        data.phaseUseFlags &= PHASE_USE_FLAGS_ALL;
+    }
+
+    if (data.phaseUseFlags & PHASE_USE_FLAGS_ALWAYS_VISIBLE && data.phaseUseFlags & PHASE_USE_FLAGS_INVERSE)
+    {
+        TC_LOG_ERROR("sql.sql", "Table `gameobject` have gameobject (GUID: {} Entry: {}) has both `phaseUseFlags` PHASE_USE_FLAGS_ALWAYS_VISIBLE and PHASE_USE_FLAGS_INVERSE,"
+            " removing PHASE_USE_FLAGS_INVERSE.", guid, data.id);
+        data.phaseUseFlags &= ~PHASE_USE_FLAGS_INVERSE;
+    }
+
+    if (data.phaseGroup && data.phaseId)
+    {
+        TC_LOG_ERROR("sql.sql", "Table `gameobject` have gameobject (GUID: {} Entry: {}) with both `phaseid` and `phasegroup` set, `phasegroup` set to 0", guid, data.id);
+        data.phaseGroup = 0;
+    }
+
+    if (data.phaseId)
+    {
+        if (!sPhaseStore.LookupEntry(data.phaseId))
+        {
+            TC_LOG_ERROR("sql.sql", "Table `gameobject` have gameobject (GUID: {} Entry: {}) with `phaseid` {} does not exist, set to 0", guid, data.id, data.phaseId);
+            data.phaseId = 0;
+        }
+    }
+
+    if (data.phaseGroup)
+    {
+        if (!sDB2Manager.GetPhasesForGroup(data.phaseGroup))
+        {
+            TC_LOG_ERROR("sql.sql", "Table `gameobject` have gameobject (GUID: {} Entry: {}) with `phaseGroup` {} does not exist, set to 0", guid, data.id, data.phaseGroup);
+            data.phaseGroup = 0;
+        }
+    }
+
+    data.terrainSwapMap = fields[20].GetInt32();
+    if (data.terrainSwapMap != -1)
+    {
+        MapEntry const* terrainSwapEntry = sMapStore.LookupEntry(data.terrainSwapMap);
+        if (!terrainSwapEntry)
+        {
+            TC_LOG_ERROR("sql.sql", "Table `gameobject` have gameobject (GUID: {} Entry: {}) with `terrainSwapMap` {} does not exist, set to -1", guid, data.id, data.terrainSwapMap);
+            data.terrainSwapMap = -1;
+        }
+        else if (terrainSwapEntry->ParentMapID != int16(data.mapId))
+        {
+            TC_LOG_ERROR("sql.sql", "Table `gameobject` have gameobject (GUID: {} Entry: {}) with `terrainSwapMap` {} which cannot be used on spawn map, set to -1", guid, data.id, data.terrainSwapMap);
+            data.terrainSwapMap = -1;
+        }
+    }
+
+    data.scriptId = GetScriptId(fields[21].GetString());
+    data.StringId = fields[22].GetString();
+
+    if (data.rotation.x < -1.0f || data.rotation.x > 1.0f)
+    {
+        TC_LOG_ERROR("sql.sql", "Table `gameobject` has gameobject (GUID: {} Entry: {}) with invalid rotationX ({}) value, skip", guid, data.id, data.rotation.x);
+        return false;
+    }
+
+    if (data.rotation.y < -1.0f || data.rotation.y > 1.0f)
+    {
+        TC_LOG_ERROR("sql.sql", "Table `gameobject` has gameobject (GUID: {} Entry: {}) with invalid rotationY ({}) value, skip", guid, data.id, data.rotation.y);
+        return false;
+    }
+
+    if (data.rotation.z < -1.0f || data.rotation.z > 1.0f)
+    {
+        TC_LOG_ERROR("sql.sql", "Table `gameobject` has gameobject (GUID: {} Entry: {}) with invalid rotationZ ({}) value, skip", guid, data.id, data.rotation.z);
+        return false;
+    }
+
+    if (data.rotation.w < -1.0f || data.rotation.w > 1.0f)
+    {
+        TC_LOG_ERROR("sql.sql", "Table `gameobject` has gameobject (GUID: {} Entry: {}) with invalid rotationW ({}) value, skip", guid, data.id, data.rotation.w);
+        return false;
+    }
+
+    if (!MapManager::IsValidMapCoord(data.mapId, data.spawnPoint))
+    {
+        TC_LOG_ERROR("sql.sql", "Table `gameobject` has gameobject (GUID: {} Entry: {}) with invalid coordinates, skip", guid, data.id);
+        return false;
+    }
+
+    if (!data.rotation.isUnit())
+    {
+        TC_LOG_ERROR("sql.sql", "Table `gameobject` has gameobject (GUID: {} Entry: {}) with invalid rotation quaternion (non-unit), defaulting to orientation on Z axis only", guid, data.id);
+        data.rotation = QuaternionData::fromEulerAnglesZYX(data.spawnPoint.GetOrientation(), 0.0f, 0.0f);
+    }
+
+    if (sWorld->getBoolConfig(CONFIG_CALCULATE_GAMEOBJECT_ZONE_AREA_DATA))
+    {
+        uint32 zoneId = 0;
+        uint32 areaId = 0;
+        PhasingHandler::InitDbVisibleMapId(phaseShift, data.terrainSwapMap);
+        sTerrainMgr.GetZoneAndAreaId(phaseShift, zoneId, areaId, data.mapId, data.spawnPoint);
+
+        WorldDatabasePreparedStatement* stmt = WorldDatabase.GetPreparedStatement(WORLD_UPD_GAMEOBJECT_ZONE_AREA_DATA);
+
+        stmt->setUInt32(0, zoneId);
+        stmt->setUInt32(1, areaId);
+        stmt->setUInt64(2, guid);
+
+        WorldDatabase.Execute(stmt);
+    }
+
+    if (gameEvent == 0)                      // if not this is to be managed by GameEvent System
+        AddGameobjectToGrid(&data);
+
+    return true;
 }
 
 void ObjectMgr::LoadSpawnGroupTemplates()
