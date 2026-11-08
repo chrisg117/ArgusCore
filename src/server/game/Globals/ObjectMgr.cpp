@@ -8770,7 +8770,8 @@ bool ObjectMgr::ReloadSpawns(SpawnObjectType type, ObjectGuid::LowType first, Ob
                 refused.emplace(guid, "map-wide gameobject");
     }
 
-    // unload what is in memory: despawn everywhere, drop respawn times, data and addon
+    // unload what is in memory: despawn everywhere, drop respawn times, data and addon. The command runs on the
+    // world thread between map updates, so the old instances leave their maps now, before their data is freed
     uint32 unloaded = 0;
     for (ObjectGuid::LowType guid : candidates)
     {
@@ -8779,12 +8780,12 @@ bool ObjectMgr::ReloadSpawns(SpawnObjectType type, ObjectGuid::LowType first, Ob
 
         if (isCreature)
         {
-            Creature::UnloadSpawn(guid);
+            Creature::UnloadSpawn(guid, true);
             _creatureAddonStore.erase(guid);
         }
         else
         {
-            GameObject::UnloadSpawn(guid);
+            GameObject::UnloadSpawn(guid, true);
             _gameObjectAddonStore.erase(guid);
         }
         ++unloaded;
@@ -8866,8 +8867,7 @@ bool ObjectMgr::ReloadSpawns(SpawnObjectType type, ObjectGuid::LowType first, Ob
             if (std::find(data->spawnDifficulties.begin(), data->spawnDifficulties.end(), map->GetDifficultyID()) == data->spawnDifficulties.end())
                 return;
 
-            // the unloaded instance leaves the map on its next update
-            if (isCreature ? Creature::CreateCreatureFromDB(guid, map, true, true) != nullptr : GameObject::CreateGameObjectFromDB(guid, map, true) != nullptr)
+            if (isCreature ? Creature::CreateCreatureFromDB(guid, map, true, false) != nullptr : GameObject::CreateGameObjectFromDB(guid, map, true) != nullptr)
                 ++spawned;
         });
     }
@@ -8913,6 +8913,7 @@ bool ObjectMgr::ReloadSpawns(SpawnObjectType type, ObjectGuid::LowType first, Ob
             "linked_respawn", "restart");
     }
 
+    report.push_back(Trinity::StringFormat("Done: {} reloaded, {} refused, {} skipped.", loaded.size(), refused.size(), skipped.size()));
     return true;
 }
 
