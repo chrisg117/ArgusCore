@@ -621,7 +621,8 @@ enum DeathKnightCampaignMissions
 {
     MISSION_SPREAD_THE_WORD         = 1210,
     NPC_SENT_ON_TUTORIAL_MISSION    = 105479,
-    QUEST_SPREAD_THE_WORD           = 43265
+    QUEST_SPREAD_THE_WORD           = 43265,
+    QUEST_TROOPS_IN_THE_FIELD       = 43267  // mission 1211, credited by the core (SucceedGarrisonMission)
 };
 
 class player_dk_campaign_tutorial_missions : public PlayerScript
@@ -629,10 +630,14 @@ class player_dk_campaign_tutorial_missions : public PlayerScript
 public:
     player_dk_campaign_tutorial_missions() : PlayerScript("player_dk_campaign_tutorial_missions", { PLAYERHOOK_ON_CLASS_HALL_MISSION_SUCCEED, PLAYERHOOK_ON_QUEST_STATUS_CHANGE }) { }
 
-    // The mission's condition is met on accepting the quest; offer it now rather than at the next once-a-minute look
+    // Each tutorial mission's condition is met on accepting its quest; offer it now rather than at the next once-a-minute
+    // look
     void OnQuestStatusChange(Player* player, uint32 questId) override
     {
-        if (questId != QUEST_SPREAD_THE_WORD || player->GetQuestStatus(questId) != QUEST_STATUS_INCOMPLETE)
+        if (questId != QUEST_SPREAD_THE_WORD && questId != QUEST_TROOPS_IN_THE_FIELD)
+            return;
+
+        if (player->GetQuestStatus(questId) != QUEST_STATUS_INCOMPLETE)
             return;
 
         if (ClassHall* classHall = player->GetClassHall())
