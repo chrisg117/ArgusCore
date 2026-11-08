@@ -1230,6 +1230,7 @@ bool CriteriaHandler::IsCompletedCriteria(Criteria const* criteria, uint64 requi
         case CriteriaType::RecruitAnyGarrisonTroop:
         case CriteriaType::StartResearchAnyGarrisonTalent:
         case CriteriaType::StartResearchGarrisonTalent:
+        case CriteriaType::PlayerTriggerGameEvent:
         case CriteriaType::AnyoneTriggerGameEventScenario:
             return progress->Counter >= requiredAmount;
         case CriteriaType::EarnAchievement:
