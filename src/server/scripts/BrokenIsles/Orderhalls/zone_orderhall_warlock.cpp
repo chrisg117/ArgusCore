@@ -18,7 +18,9 @@
 #include "ScriptMgr.h"
 #include "DB2Stores.h"
 #include "GameObject.h"
+#include "GameObjectAI.h"
 #include "MotionMaster.h"
+#include "ObjectMgr.h"
 #include "ObjectAccessor.h"
 #include "Player.h"
 #include "PlayerChoice.h"
@@ -391,8 +393,151 @@ class spell_warlock_force_specialization : public SpellScript
     }
 };
 
+enum FindingTheScepterData
+{
+    QUEST_FINDING_THE_SCEPTER           = 43100,
+    QUEST_OBJECTIVE_BOOK_OF_MEDIVH      = 285060,
+    QUEST_OBJECTIVE_SPOKE_WITH_CALYDUS  = 285061,
+
+    AREA_CAER_DARROW                    = 2298,
+
+    NPC_CREDIT_GO_TO_CAER_DARROW        = 109659,
+    NPC_CREDIT_SHADOW_COUNCIL_INFO      = 109693,
+    NPC_CREDIT_SPOKE_WITH_CALYDUS       = 109696,
+
+    ITEM_BOOK_OF_MEDIVH                 = 139035,
+
+    SPELL_GUISE_OF_JERGOSH              = 218545,
+
+    SAY_JERGOSH_THE_BOOK_IS_OURS        = 0, // 115699
+    SAY_CALYDUS_TRICK_GULDAN            = 0, // 115708
+
+    GOSSIP_ACTION_THE_BOOK              = 3
+};
+
+// Finding the Scepter: "Go to Caer Darrow" (109659) is the island itself, area 2298; nothing in the data credits it
+class player_warlock_finding_the_scepter : public PlayerScript
+{
+public:
+    player_warlock_finding_the_scepter() : PlayerScript("player_warlock_finding_the_scepter") { }
+
+    void OnUpdateZone(Player* player, uint32 /*newZone*/, uint32 newArea) override
+    {
+        if (newArea == AREA_CAER_DARROW && player->GetQuestStatus(QUEST_FINDING_THE_SCEPTER) == QUEST_STATUS_INCOMPLETE)
+            player->KilledMonsterCredit(NPC_CREDIT_GO_TO_CAER_DARROW);
+    }
+};
+
+// 251696 Council Notice, 251697 Forgotten Letter, 251698 Logbook of Ur'dan: the Shadow Council's papers on Caer Darrow
+// (fork templates: the data has the objectives but no objects). Reading each counts its own hidden objective and one of
+// "Find information on the Shadow Council" (109693, the credit 218330 gives in the data)
+struct go_shadow_council_information : public GameObjectAI
+{
+    go_shadow_council_information(GameObject* go) : GameObjectAI(go) { }
+
+    bool OnGossipHello(Player* player) override
+    {
+        if (player->GetQuestStatus(QUEST_FINDING_THE_SCEPTER) != QUEST_STATUS_INCOMPLETE)
+            return true;
+
+        Quest const* quest = sObjectMgr->GetQuestTemplate(QUEST_FINDING_THE_SCEPTER);
+        for (QuestObjective const& objective : quest->Objectives)
+        {
+            if (objective.Type != QUEST_OBJECTIVE_GAMEOBJECT || objective.ObjectID != int32(me->GetEntry()))
+                continue;
+            if (player->GetQuestObjectiveData(objective))
+                return true; // read already
+        }
+
+        player->KillCreditGO(me->GetEntry(), me->GetGUID());
+        player->KilledMonsterCredit(NPC_CREDIT_SHADOW_COUNCIL_INFO);
+        return true;
+    }
+};
+
+// 109608 - Jergosh the Invoker: the Shadow Council's man on Caer Darrow, with the Book of Medivh. He gloats as the warlock
+// comes near and is fought; his death gives the Book (the bot cannot loot; real loot is a fidelity item)
+struct npc_jergosh_the_invoker : public ScriptedAI
+{
+    using ScriptedAI::ScriptedAI;
+
+    void JustAppeared() override
+    {
+        me->SetFaction(FACTION_MONSTER);
+        _gloated = false;
+    }
+
+    void MoveInLineOfSight(Unit* who) override
+    {
+        if (!_gloated && who->IsPlayer() && me->IsWithinDistInMap(who, 30.0f)
+            && who->ToPlayer()->GetQuestStatus(QUEST_FINDING_THE_SCEPTER) == QUEST_STATUS_INCOMPLETE)
+        {
+            _gloated = true;
+            Talk(SAY_JERGOSH_THE_BOOK_IS_OURS, who);
+        }
+        ScriptedAI::MoveInLineOfSight(who);
+    }
+
+    void JustDied(Unit* killer) override
+    {
+        Player* player = killer ? killer->GetCharmerOrOwnerPlayerOrPlayerItself() : nullptr;
+        if (player && player->GetQuestStatus(QUEST_FINDING_THE_SCEPTER) == QUEST_STATUS_INCOMPLETE
+            && !player->HasItemCount(ITEM_BOOK_OF_MEDIVH))
+            player->AddItem(ITEM_BOOK_OF_MEDIVH, 1);
+    }
+
+    void UpdateAI(uint32 /*diff*/) override
+    {
+        UpdateVictim();
+    }
+
+private:
+    bool _gloated = false;
+};
+
+// 109698 - Calydus, on Caer Darrow: with the Book in hand, the warlock tells him, and he casts Guise of Jergosh (the
+// Shadow Council will take the warlock for Jergosh; Portal Overload removes it in Ritual Ruination)
+struct npc_calydus_caer_darrow : public ScriptedAI
+{
+    using ScriptedAI::ScriptedAI;
+
+    bool OnGossipHello(Player* player) override
+    {
+        player->PrepareQuestMenu(me->GetGUID());
+        if (player->GetQuestStatus(QUEST_FINDING_THE_SCEPTER) == QUEST_STATUS_INCOMPLETE
+            && player->GetQuestObjectiveData(QUEST_FINDING_THE_SCEPTER, QUEST_OBJECTIVE_BOOK_OF_MEDIVH) > 0
+            && player->GetQuestObjectiveData(QUEST_FINDING_THE_SCEPTER, QUEST_OBJECTIVE_SPOKE_WITH_CALYDUS) == 0)
+            AddGossipItemFor(player, GossipOptionNpc::None, "I have the Book of Medivh.", GOSSIP_SENDER_MAIN, GOSSIP_ACTION_THE_BOOK);
+        SendGossipMenuFor(player, player->GetGossipTextId(me), me->GetGUID());
+        return true;
+    }
+
+    bool OnGossipSelect(Player* player, uint32 /*menuId*/, uint32 gossipListId) override
+    {
+        uint32 const action = player->PlayerTalkClass->GetGossipOptionAction(gossipListId);
+        CloseGossipMenuFor(player);
+        if (action == GOSSIP_ACTION_THE_BOOK && player->GetQuestStatus(QUEST_FINDING_THE_SCEPTER) == QUEST_STATUS_INCOMPLETE)
+        {
+            // A self-only aura (TARGET_UNIT_CASTER): the warlock wears it, so the warlock casts it
+            player->CastSpell(player, SPELL_GUISE_OF_JERGOSH, CastSpellExtraArgsInit{ .TriggerFlags = TRIGGERED_FULL_MASK });
+            player->KilledMonsterCredit(NPC_CREDIT_SPOKE_WITH_CALYDUS);
+        }
+        return true;
+    }
+
+    void OnQuestReward(Player* player, Quest const* quest, LootItemType /*type*/, uint32 /*opt*/) override
+    {
+        if (quest->GetQuestId() == QUEST_FINDING_THE_SCEPTER)
+            Talk(SAY_CALYDUS_TRICK_GULDAN, player);
+    }
+};
+
 void AddSC_orderhall_warlock()
 {
+    new player_warlock_finding_the_scepter();
+    RegisterGameObjectAI(go_shadow_council_information);
+    RegisterCreatureAI(npc_jergosh_the_invoker);
+    RegisterCreatureAI(npc_calydus_caer_darrow);
     RegisterCreatureAI(npc_risstyns_portal);
     RegisterCreatureAI(npc_ritssyn_flamescowl_the_sixth);
     RegisterCreatureAI(npc_ritssyn_flamescowl_circle_of_wills);
