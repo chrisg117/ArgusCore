@@ -2413,6 +2413,9 @@ void Player::GiveLevel(uint8 level)
 
     PushQuests();
 
+    // quests the new level unlocks change quest giver status for what is already on screen
+    UpdateVisibleObjectInteractions(true, false, true, true);
+
     sScriptMgr->OnPlayerLevelChanged(this, oldLevel);
 }
 
