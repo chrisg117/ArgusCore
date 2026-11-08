@@ -24,6 +24,7 @@ What is playable on the `dev` branch. Counts only; details live in the specs.
 | Death Knight | Acherus open, campaign through The King Rises | Frost (Blades of the Fallen Prince) |
 | Demon Hunter | Fel Hammer open, campaign slice 1 | Havoc (Twinblades of the Deceiver) |
 | Priest | Netherlight Temple entry and mission table | Shadow (Xal'atath) |
+| Warlock | Dreadscar Rift founded (The Sixth) | Destruction: in progress |
 | All other classes | None | None |
 
 **Legion zone quests**
