@@ -47,6 +47,7 @@
 #include <unordered_set>
 
 class Item;
+class PhaseShift;
 class Unit;
 class Vehicle;
 class Map;
@@ -1212,6 +1213,17 @@ class TC_GAME_API ObjectMgr
         void LoadCreatureStaticFlagsOverride();
         void LoadTempSummons();
         void LoadCreatures();
+        // one row of CreatureSpawnQuery / GameObjectSpawnQuery (ObjectMgr.cpp); false when the row was skipped
+        using SpawnMaskMap = std::unordered_map<uint32, std::set<Difficulty>>;
+        static SpawnMaskMap BuildSpawnMasks();
+        bool LoadCreatureRow(Field* fields, SpawnMaskMap& spawnMasks, PhaseShift& phaseShift);
+        bool LoadGameObjectRow(Field* fields, SpawnMaskMap& spawnMasks, PhaseShift& phaseShift);
+        // one row of the creature_addon / gameobject_addon query; false when the row was skipped
+        bool LoadCreatureAddonRow(Field* fields);
+        bool LoadGameObjectAddonRow(Field* fields);
+        // `.reload spawns`: unload, re-read and respawn the creature or gameobject rows in [first, last];
+        // refuses pool, game event, spawn group, spawn tracking, transport and map-wide spawns. Fills report with what it did.
+        bool ReloadSpawns(SpawnObjectType type, ObjectGuid::LowType first, ObjectGuid::LowType last, std::vector<std::string>& report);
         void LoadLinkedRespawn();
         bool SetCreatureLinkedRespawn(ObjectGuid::LowType guid, ObjectGuid::LowType linkedGuid);
         void LoadCreatureAddons();

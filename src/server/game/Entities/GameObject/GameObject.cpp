@@ -2024,7 +2024,7 @@ bool GameObject::LoadFromDB(ObjectGuid::LowType spawnId, Map* map, bool addToMap
     return true;
 }
 
-/*static*/ bool GameObject::DeleteFromDB(ObjectGuid::LowType spawnId)
+/*static*/ bool GameObject::UnloadSpawn(ObjectGuid::LowType spawnId, bool removeNow /*= false*/)
 {
     GameObjectData const* data = sObjectMgr->GetGameObjectData(spawnId);
     if (!data)
@@ -2033,7 +2033,7 @@ bool GameObject::LoadFromDB(ObjectGuid::LowType spawnId, Map* map, bool addToMap
     CharacterDatabaseTransaction charTrans = CharacterDatabase.BeginTransaction();
 
     sMapMgr->DoForAllMapsWithMapId(data->mapId,
-        [spawnId, charTrans](Map* map) -> void
+        [spawnId, charTrans, removeNow](Map* map) -> void
         {
             // despawn all active objects, and remove their respawns
             std::vector<GameObject*> toUnload;
@@ -2042,6 +2042,9 @@ bool GameObject::LoadFromDB(ObjectGuid::LowType spawnId, Map* map, bool addToMap
             for (GameObject* obj : toUnload)
                 map->AddObjectToRemoveList(obj);
             map->RemoveRespawnTime(SPAWN_TYPE_GAMEOBJECT, spawnId, charTrans);
+            // the spawn data is freed below, so the instances must not outlive this call
+            if (removeNow && !toUnload.empty())
+                map->RemoveAllObjectsInRemoveList();
         }
     );
 
@@ -2049,6 +2052,13 @@ bool GameObject::LoadFromDB(ObjectGuid::LowType spawnId, Map* map, bool addToMap
     sObjectMgr->DeleteGameObjectData(spawnId);
 
     CharacterDatabase.CommitTransaction(charTrans);
+    return true;
+}
+
+/*static*/ bool GameObject::DeleteFromDB(ObjectGuid::LowType spawnId)
+{
+    if (!UnloadSpawn(spawnId))
+        return false;
 
     WorldDatabaseTransaction trans = WorldDatabase.BeginTransaction();
 

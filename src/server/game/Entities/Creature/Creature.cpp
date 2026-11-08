@@ -2013,7 +2013,7 @@ bool Creature::hasInvolvedQuest(uint32 quest_id) const
     return sObjectMgr->GetCreatureQuestInvolvedRelations(GetEntry()).HasQuest(quest_id);
 }
 
-/*static*/ bool Creature::DeleteFromDB(ObjectGuid::LowType spawnId)
+/*static*/ bool Creature::UnloadSpawn(ObjectGuid::LowType spawnId, bool removeNow /*= false*/)
 {
     CreatureData const* data = sObjectMgr->GetCreatureData(spawnId);
     if (!data)
@@ -2022,7 +2022,7 @@ bool Creature::hasInvolvedQuest(uint32 quest_id) const
     CharacterDatabaseTransaction charTrans = CharacterDatabase.BeginTransaction();
 
     sMapMgr->DoForAllMapsWithMapId(data->mapId,
-        [spawnId, charTrans](Map* map) -> void
+        [spawnId, charTrans, removeNow](Map* map) -> void
         {
             // despawn all active creatures, and remove their respawns
             std::vector<Creature*> toUnload;
@@ -2031,6 +2031,9 @@ bool Creature::hasInvolvedQuest(uint32 quest_id) const
             for (Creature* creature : toUnload)
                 map->AddObjectToRemoveList(creature);
             map->RemoveRespawnTime(SPAWN_TYPE_CREATURE, spawnId, charTrans);
+            // the spawn data is freed below, so the instances must not outlive this call
+            if (removeNow && !toUnload.empty())
+                map->RemoveAllObjectsInRemoveList();
         }
     );
 
@@ -2038,6 +2041,13 @@ bool Creature::hasInvolvedQuest(uint32 quest_id) const
     sObjectMgr->DeleteCreatureData(spawnId);
 
     CharacterDatabase.CommitTransaction(charTrans);
+    return true;
+}
+
+/*static*/ bool Creature::DeleteFromDB(ObjectGuid::LowType spawnId)
+{
+    if (!UnloadSpawn(spawnId))
+        return false;
 
     WorldDatabaseTransaction trans = WorldDatabase.BeginTransaction();
 
