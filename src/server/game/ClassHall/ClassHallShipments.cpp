@@ -20,15 +20,18 @@
 #include "ClassHall.h"
 #include "DatabaseEnv.h"
 #include "DB2Stores.h"
+#include "GameObject.h"
 #include "GameTime.h"
 #include "GarrisonPackets.h"
 #include "Log.h"
+#include "ObjectAccessor.h"
 #include "Player.h"
 #include <algorithm>
+#include <set>
 #include <tuple>
 
 ClassHallShipments::ClassHallShipments(Player* owner, ClassHall* classHall) : _owner(owner), _classHall(classHall), _nextShipmentId(1),
-    _openShipment(nullptr)
+    _nextObjectsUpdate(0), _openShipment(nullptr)
 {
 }
 
@@ -144,6 +147,8 @@ void ClassHallShipments::LoadFromDB(PreparedQueryResult shipments)
         shipment.CreationTime = fields[2].GetInt64();
         shipment.Duration = fields[3].GetUInt32();
     } while (shipments->NextRow());
+
+    ScheduleObjectsUpdate();
 }
 
 void ClassHallShipments::SaveToDB(CharacterDatabaseTransaction trans) const
@@ -242,6 +247,9 @@ void ClassHallShipments::CreateShipment(CharShipmentEntry const* shipment)
     created.CreationTime = creationTime;
     created.Duration = shipment->Duration;
 
+    ScheduleObjectsUpdate();
+    UpdateObjects(shipment->ContainerID);
+
     WorldPackets::Garrison::CreateShipmentResponse createShipmentResponse;
     createShipmentResponse.ShipmentID = shipmentId;
     createShipmentResponse.ShipmentRecID = shipment->ID;
@@ -251,6 +259,7 @@ void ClassHallShipments::CreateShipment(CharShipmentEntry const* shipment)
 
 void ClassHallShipments::CompleteShipments(uint32 charShipmentContainerId)
 {
+    bool collected = false;
     for (Shipment const* shipment : GetPendingShipments(charShipmentContainerId))
     {
         if (!shipment->IsReady())
@@ -264,6 +273,7 @@ void ClassHallShipments::CompleteShipments(uint32 charShipmentContainerId)
             break;
 
         _shipments.erase(shipmentId);
+        collected = true;
 
         WorldPackets::Garrison::CompleteShipmentResponse completeShipmentResponse;
         completeShipmentResponse.ShipmentID = shipmentId;
@@ -275,6 +285,90 @@ void ClassHallShipments::CompleteShipments(uint32 charShipmentContainerId)
         // the quest credit of an order comes from this spell
         if (entry->OnCompleteSpellID)
             _owner->CastSpell(_owner, entry->OnCompleteSpellID, true);
+    }
+
+    if (collected)
+        UpdateObjects(charShipmentContainerId);
+}
+
+// ready orders show the container's display for their count, orders being made its working display and the
+// in-progress flag; with no orders the object keeps its own display, which the client shows as "Awaiting Orders"
+Optional<ClassHallShipments::ObjectLook> ClassHallShipments::GetObjectLook(uint32 charShipmentContainerId) const
+{
+    CharShipmentContainerEntry const* container = sCharShipmentContainerStore.LookupEntry(charShipmentContainerId);
+    if (!container)
+        return {};
+
+    uint32 ready = 0;
+    uint32 inProgress = 0;
+    for (auto const& [shipmentId, shipment] : _shipments)
+        if (shipment.Entry->ContainerID == charShipmentContainerId)
+            ++(shipment.IsReady() ? ready : inProgress);
+
+    ObjectLook look;
+    if (ready)
+    {
+        if (container->LargeThreshold && ready >= container->LargeThreshold)
+            look.DisplayId = container->LargeDisplayInfoID;
+        else if (container->MediumThreshold && ready >= container->MediumThreshold)
+            look.DisplayId = container->MediumDisplayInfoID;
+        else
+            look.DisplayId = container->SmallDisplayInfoID;
+    }
+    else if (inProgress)
+    {
+        look.DisplayId = container->WorkingDisplayInfoID;
+        look.InProgress = true;
+    }
+    else
+        return {};
+
+    return look;
+}
+
+// nothing tells the client when an order is done: the objects of its container are sent again then
+void ClassHallShipments::Update()
+{
+    if (!_nextObjectsUpdate || _nextObjectsUpdate > GameTime::GetGameTime())
+        return;
+
+    std::set<uint32> containers;
+    for (auto const& [shipmentId, shipment] : _shipments)
+        containers.insert(shipment.Entry->ContainerID);
+
+    ScheduleObjectsUpdate();
+    for (uint32 charShipmentContainerId : containers)
+        UpdateObjects(charShipmentContainerId);
+}
+
+void ClassHallShipments::ScheduleObjectsUpdate()
+{
+    _nextObjectsUpdate = 0;
+    for (auto const& [shipmentId, shipment] : _shipments)
+    {
+        if (shipment.IsReady())
+            continue;
+
+        time_t readyTime = shipment.CreationTime + time_t(shipment.Duration);
+        if (!_nextObjectsUpdate || readyTime < _nextObjectsUpdate)
+            _nextObjectsUpdate = readyTime;
+    }
+}
+
+// the container's objects the owner can see are sent again; each viewer gets the look of its own orders
+void ClassHallShipments::UpdateObjects(uint32 charShipmentContainerId) const
+{
+    for (ObjectGuid const& guid : _owner->m_clientGUIDs)
+    {
+        if (!guid.IsGameObject())
+            continue;
+
+        GameObject* go = ObjectAccessor::GetGameObject(*_owner, guid);
+        if (!go || go->GetGoType() != GAMEOBJECT_TYPE_GARRISON_SHIPMENT || go->GetGOInfo()->garrisonShipment.ShipmentContainer != charShipmentContainerId)
+            continue;
+
+        go->ForceValuesUpdateAtIndex(GAMEOBJECT_DISPLAYID);
+        go->ForceValuesUpdateAtIndex(GAMEOBJECT_FLAGS);
     }
 }
 

@@ -117,4 +117,5 @@ void ClassHall::Update()
 {
     _talents.Update();
     _missions.Update();
+    _shipments.Update();
 }

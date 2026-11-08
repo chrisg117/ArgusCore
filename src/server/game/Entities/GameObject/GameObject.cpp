@@ -19,6 +19,7 @@
 #include "Battleground.h"
 #include "BattlegroundPackets.h"
 #include "CellImpl.h"
+#include "ClassHall.h"
 #include "Containers.h"
 #include "CreatureAISelector.h"
 #include "DB2Stores.h"
@@ -4024,6 +4025,17 @@ void GameObject::BuildValuesUpdateWithMask(uint8 updateType, ByteBuffer* data, P
     bool forcedFlags = GetGoType() == GAMEOBJECT_TYPE_CHEST && GetGOInfo()->chest.usegrouplootrules && HasLootRecipient();
     bool targetIsGM = target->IsGameMaster();
 
+    // the object of an order container shows each character that character's own orders in it; the client reads a
+    // display other than the template's as "ready" and flag 0x100 as "in progress"
+    static constexpr uint32 GarrisonShipmentInProgressFlag = 0x00000100;
+    Optional<ClassHallShipments::ObjectLook> shipmentLook;
+    if (GetGoType() == GAMEOBJECT_TYPE_GARRISON_SHIPMENT)
+    {
+        forcedFlags = true;
+        if (ClassHall const* classHall = target->GetClassHall())
+            shipmentLook = classHall->GetShipments().GetObjectLook(GetGOInfo()->garrisonShipment.ShipmentContainer);
+    }
+
     std::size_t blockCount = UpdateMask::GetBlockCount(m_valuesCount);
 
     uint32* flags = GameObjectUpdateFieldFlags;
@@ -4127,6 +4139,9 @@ void GameObject::BuildValuesUpdateWithMask(uint8 updateType, ByteBuffer* data, P
                     if (GetGOInfo()->chest.usegrouplootrules && !IsLootAllowedFor(target))
                         goFlags |= GO_FLAG_LOCKED | GO_FLAG_NOT_SELECTABLE;
 
+                if (shipmentLook && shipmentLook->InProgress)
+                    goFlags |= GarrisonShipmentInProgressFlag;
+
                 *data << goFlags;
             }
             else if (index == GAMEOBJECT_BYTES_1)
@@ -4138,6 +4153,8 @@ void GameObject::BuildValuesUpdateWithMask(uint8 updateType, ByteBuffer* data, P
 
                 *data << bytes1;
             }
+            else if (index == GAMEOBJECT_DISPLAYID && shipmentLook && shipmentLook->DisplayId)
+                *data << shipmentLook->DisplayId;
             else if (index == GAMEOBJECT_STATE_WORLD_EFFECT_ID)
             {
                 uint32 stateWorldEffectId = m_uint32Values[index];
