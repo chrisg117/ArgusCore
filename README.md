@@ -15,42 +15,37 @@
 
 ## Development Status
 
-What is finished and playable on the `dev` branch. Kept short on purpose; updated whenever a piece lands.
+What is playable on the `dev` branch. Counts only; details live in the specs.
 
-**Class development**
+**Class halls and artifact weapons**
 
-| Class | Artifact weapon | Class hall |
-|-------|-----------------|------------|
-| Shadow Priest | Playable: opening quests, "Blade in Twilight" scenario, Netherlight Temple entry | Started: hall entry and mission table |
-| Demon Hunter | In progress: Havoc playable; Vengeance not started | Started: Fel Hammer opening, forge and nether crucible; campaign slice 1 playable (champions, troops, missions, upgrades); Scouting Map zone choice (Azsuna tested) |
-| Death Knight | In progress: The Call To War, A Pact of Necessity and The Call of Icecrown playable (Frost) | Started: hall founded; the Icecrown scenario built end to end; the Acherus hall opening (Keeping Your Edge to Our Next Move) and hall campaign slices 1-4 (Return of the Four Horsemen through The King Rises) playable |
-| All other classes | Not started | Not started |
-
-Shared class hall engine (foundation, talents, followers, shipments, missions, follower growth, mission extras, mission rewards): complete.
-
-**Raids**
-
-| Raid | Status |
-|------|--------|
-| Emerald Nightmare | 2 of 7 bosses playable (Nythendra, Il'gynoth); Elerethe Renferal in progress |
-| All other Legion raids | Not started |
+| Class | Class hall | Artifact weapon |
+|-------|------------|-----------------|
+| Death Knight | Acherus open, campaign through The King Rises | Frost (Blades of the Fallen Prince) |
+| Demon Hunter | Fel Hammer open, campaign slice 1 | Havoc (Twinblades of the Deceiver) |
+| Priest | Netherlight Temple entry and mission table | Shadow (Xal'atath) |
+| All other classes | None | None |
 
 **Legion zone quests**
 
-| Zone | Status |
-|------|--------|
-| Broken Shore scenario | Playable start to end (Alliance) |
-| Mardum and the Vault of the Wardens | Playable (Demon Hunter start) |
-| Dalaran | Flight master, inns, banks, mail and portals in; Horde capital portals, trainers, vendors and townsfolk next |
-| Azsuna | In progress: opening chain through The Tidestone: Shattered; Retake Faronaar bonus objective |
-| Val'sharah, Highmountain, Stormheim, Suramar | Not started |
+| Zone | Quests playable |
+|------|-----------------|
+| Stormwind and the Broken Shore (Alliance opening) | 5 |
+| Mardum (Demon Hunter start) | 19 |
+| Vault of the Wardens (Demon Hunter start) | 12 |
+| Azsuna | 29 |
+| Dalaran | 0 (city services only) |
+| Val'sharah, Highmountain, Stormheim, Suramar | 0 |
 
-**Core engine**
+**Raid bosses**
 
-| Area | Status |
-|------|--------|
-| Phasing | Phases re-checked when a quest objective they depend on progresses; `.reload phase_area` applies phase changes without a restart |
-| Gameobjects | Goobers that spawn open (startOpen) are usable from a client click; locked ones run their opening cast bar first |
+| Raid | Bosses playable |
+|------|-----------------|
+| Emerald Nightmare | 2 of 7 |
+| Trial of Valor | 0 of 3 |
+| The Nighthold | 0 of 10 |
+| Tomb of Sargeras | 0 of 9 |
+| Antorus, the Burning Throne | 0 of 11 |
 
 ## About
 
