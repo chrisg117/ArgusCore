@@ -622,7 +622,8 @@ enum DeathKnightCampaignMissions
     MISSION_SPREAD_THE_WORD         = 1210,
     NPC_SENT_ON_TUTORIAL_MISSION    = 105479,
     QUEST_SPREAD_THE_WORD           = 43265,
-    QUEST_TROOPS_IN_THE_FIELD       = 43267  // mission 1211, credited by the core (SucceedGarrisonMission)
+    QUEST_TROOPS_IN_THE_FIELD       = 43267, // mission 1211, credited by the core (SucceedGarrisonMission)
+    QUEST_SALANAR_THE_HORSEMAN      = 43539  // mission 1259, the same
 };
 
 class player_dk_campaign_tutorial_missions : public PlayerScript
@@ -634,7 +635,7 @@ public:
     // look
     void OnQuestStatusChange(Player* player, uint32 questId) override
     {
-        if (questId != QUEST_SPREAD_THE_WORD && questId != QUEST_TROOPS_IN_THE_FIELD)
+        if (questId != QUEST_SPREAD_THE_WORD && questId != QUEST_TROOPS_IN_THE_FIELD && questId != QUEST_SALANAR_THE_HORSEMAN)
             return;
 
         if (player->GetQuestStatus(questId) != QUEST_STATUS_INCOMPLETE)
