@@ -51,6 +51,8 @@ EndScriptData */
 #include "SmartAI.h"
 #include "SpellMgr.h"
 #include "StringConvert.h"
+#include "StringFormat.h"
+#include "Util.h"
 #include "SupportMgr.h"
 #include "WaypointManager.h"
 #include "World.h"
@@ -153,6 +155,7 @@ public:
             { "skill_fishing_base_level",      rbac::RBAC_PERM_COMMAND_RELOAD_SKILL_FISHING_BASE_LEVEL,         true,  &HandleReloadSkillFishingBaseLevelCommand,      "" },
             { "skinning_loot_template",        rbac::RBAC_PERM_COMMAND_RELOAD_SKINNING_LOOT_TEMPLATE,           true,  &HandleReloadLootTemplatesSkinningCommand,      "" },
             { "smart_scripts",                 rbac::RBAC_PERM_COMMAND_RELOAD_SMART_SCRIPTS,                    true,  &HandleReloadSmartScripts,                      "" },
+            { "spawns",                        rbac::RBAC_PERM_COMMAND_RELOAD_ALL,                              true,  &HandleReloadSpawnsCommand,                     "" },
             { "spell_required",                rbac::RBAC_PERM_COMMAND_RELOAD_SPELL_REQUIRED,                   true,  &HandleReloadSpellRequiredCommand,              "" },
             { "spell_area",                    rbac::RBAC_PERM_COMMAND_RELOAD_SPELL_AREA,                       true,  &HandleReloadSpellAreaCommand,                  "" },
             { "spell_group",                   rbac::RBAC_PERM_COMMAND_RELOAD_SPELL_GROUP,                      true,  &HandleReloadSpellGroupsCommand,                "" },
@@ -565,6 +568,61 @@ public:
         LootTemplates_Creature.CheckLootRefs();
         handler->SendGlobalGMSysMessage("DB table `creature_loot_template` reloaded.");
         sConditionMgr->LoadConditions(true);
+        return true;
+    }
+
+    // reload spawns creature|gameobject <firstGuid> [lastGuid]
+    static bool HandleReloadSpawnsCommand(ChatHandler* handler, char const* args)
+    {
+        if (!args)
+            return false;
+
+        std::vector<std::string_view> tokens = Trinity::Tokenize(args, ' ', false);
+        if (tokens.size() < 2 || tokens.size() > 3)
+        {
+            handler->SendSysMessage("Usage: .reload spawns creature|gameobject <firstGuid> [lastGuid]");
+            handler->SetSentErrorMessage(true);
+            return false;
+        }
+
+        SpawnObjectType type;
+        if (StringEqualI(tokens[0], "creature"))
+            type = SPAWN_TYPE_CREATURE;
+        else if (StringEqualI(tokens[0], "gameobject"))
+            type = SPAWN_TYPE_GAMEOBJECT;
+        else
+        {
+            handler->SendSysMessage("Usage: .reload spawns creature|gameobject <firstGuid> [lastGuid]");
+            handler->SetSentErrorMessage(true);
+            return false;
+        }
+
+        Optional<ObjectGuid::LowType> first = Trinity::StringTo<ObjectGuid::LowType>(tokens[1]);
+        Optional<ObjectGuid::LowType> last = tokens.size() == 3 ? Trinity::StringTo<ObjectGuid::LowType>(tokens[2]) : first;
+        if (!first || !last || *first > *last)
+        {
+            handler->SendSysMessage("The guids must be numbers, first <= last.");
+            handler->SetSentErrorMessage(true);
+            return false;
+        }
+
+        // a typo should not respawn half a continent
+        constexpr ObjectGuid::LowType MaxRange = 10000;
+        if (*last - *first >= MaxRange)
+        {
+            handler->SendSysMessage(Trinity::StringFormat("At most {} guids per reload.", MaxRange));
+            handler->SetSentErrorMessage(true);
+            return false;
+        }
+
+        TC_LOG_INFO("misc", "Reloading {} spawns {}-{}...", tokens[0], *first, *last);
+        std::vector<std::string> report;
+        sObjectMgr->ReloadSpawns(type, *first, *last, report);
+        for (std::string const& line : report)
+        {
+            handler->SendSysMessage(line);
+            TC_LOG_INFO("misc", "{}", line);
+        }
         return true;
     }
 

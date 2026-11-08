@@ -20,6 +20,7 @@
 #include "AreaTriggerTemplate.h"
 #include "Chat.h"
 #include "Containers.h"
+#include "Creature.h"
 #include "CreatureAIFactory.h"
 #include "CriteriaHandler.h"
 #include "DB2Stores.h"
@@ -41,6 +42,7 @@
 #include "Log.h"
 #include "LootMgr.h"
 #include "Mail.h"
+#include "Map.h"
 #include "MapManager.h"
 #include "MapUtils.h"
 #include "MotionMaster.h"
@@ -8669,6 +8671,249 @@ void ObjectMgr::DeleteGameObjectData(ObjectGuid::LowType spawnId)
     OnDeleteSpawnData(&itr->second);
 
     _gameObjectDataStore.erase(itr);
+}
+
+namespace
+{
+    // the spawn ids a one-column query returns
+    std::unordered_set<ObjectGuid::LowType> QuerySpawnIds(std::string const& sql)
+    {
+        std::unordered_set<ObjectGuid::LowType> ids;
+        if (QueryResult result = WorldDatabase.Query(sql.c_str()))
+        {
+            do
+                ids.insert(result->Fetch()[0].GetUInt64());
+            while (result->NextRow());
+        }
+        return ids;
+    }
+
+    uint64 QueryCount(std::string const& sql)
+    {
+        if (QueryResult result = WorldDatabase.Query(sql.c_str()))
+            return result->Fetch()[0].GetUInt64();
+        return 0;
+    }
+}
+
+bool ObjectMgr::ReloadSpawns(SpawnObjectType type, ObjectGuid::LowType first, ObjectGuid::LowType last, std::vector<std::string>& report)
+{
+    if (type != SPAWN_TYPE_CREATURE && type != SPAWN_TYPE_GAMEOBJECT)
+        return false;
+
+    bool const isCreature = type == SPAWN_TYPE_CREATURE;
+    std::string_view const table = isCreature ? "creature" : "gameobject";
+    uint32 const typeId = uint32(type);
+
+    auto getData = [&](ObjectGuid::LowType guid) -> SpawnData const*
+    {
+        if (isCreature)
+            return GetCreatureData(guid);
+        return GetGameObjectData(guid);
+    };
+
+    // every guid in the range, in memory or in the DB
+    std::set<ObjectGuid::LowType> candidates;
+    if (isCreature)
+    {
+        for (auto const& [guid, data] : _creatureDataStore)
+            if (guid >= first && guid <= last)
+                candidates.insert(guid);
+    }
+    else
+    {
+        for (auto const& [guid, data] : _gameObjectDataStore)
+            if (guid >= first && guid <= last)
+                candidates.insert(guid);
+    }
+    for (ObjectGuid::LowType guid : QuerySpawnIds(Trinity::StringFormat("SELECT guid FROM {} WHERE guid BETWEEN {} AND {}", table, first, last)))
+        candidates.insert(guid);
+
+    if (candidates.empty())
+    {
+        report.push_back(Trinity::StringFormat("No {} spawns in {}-{}, in memory or in the DB.", table, first, last));
+        return true;
+    }
+
+    // v1 leaves spawns other systems own alone: they would bypass their owner
+    std::map<ObjectGuid::LowType, std::string_view> refused;
+    auto refuse = [&](std::unordered_set<ObjectGuid::LowType> const& ids, std::string_view reason)
+    {
+        for (ObjectGuid::LowType guid : ids)
+            if (candidates.count(guid))
+                refused.emplace(guid, reason);
+    };
+    refuse(QuerySpawnIds(Trinity::StringFormat("SELECT spawnId FROM pool_members WHERE type = {} AND spawnId BETWEEN {} AND {}", typeId, first, last)), "pool member");
+    refuse(QuerySpawnIds(Trinity::StringFormat("SELECT guid FROM game_event_{} WHERE guid BETWEEN {} AND {}", table, first, last)), "game event spawn");
+    refuse(QuerySpawnIds(Trinity::StringFormat("SELECT spawnId FROM spawn_group WHERE spawnType = {} AND spawnId BETWEEN {} AND {}", typeId, first, last)), "spawn group member");
+    refuse(QuerySpawnIds(Trinity::StringFormat("SELECT SpawnId FROM spawn_tracking WHERE SpawnType = {} AND SpawnId BETWEEN {} AND {}", typeId, first, last)), "spawn tracking member");
+    if (!isCreature)
+        refuse(QuerySpawnIds(Trinity::StringFormat("SELECT guid FROM gameobject_addon WHERE (Flags & {}) != 0 AND guid BETWEEN {} AND {}", uint32(GAMEOBJECT_ADDON_FLAG_MAP_WIDE), first, last)), "map-wide gameobject");
+
+    // the loaded state can predate a DB change, so check it too
+    for (ObjectGuid::LowType guid : candidates)
+    {
+        SpawnData const* data = getData(guid);
+        if (!data)
+            continue;
+
+        if (data->poolId)
+            refused.emplace(guid, "pool member");
+        else if (data->spawnTrackingData)
+            refused.emplace(guid, "spawn tracking member");
+        else if (IsTransportMap(data->mapId))
+            refused.emplace(guid, "transport spawn");
+        else if (data->spawnGroupData != GetDefaultSpawnGroup())
+            refused.emplace(guid, "spawn group member");
+        else if (!isCreature)
+            if (GameObjectAddon const* addon = GetGameObjectAddon(guid); addon && (addon->Flags & GAMEOBJECT_ADDON_FLAG_MAP_WIDE))
+                refused.emplace(guid, "map-wide gameobject");
+    }
+
+    // unload what is in memory: despawn everywhere, drop respawn times, data and addon
+    uint32 unloaded = 0;
+    for (ObjectGuid::LowType guid : candidates)
+    {
+        if (refused.count(guid) || !getData(guid))
+            continue;
+
+        if (isCreature)
+        {
+            Creature::UnloadSpawn(guid);
+            _creatureAddonStore.erase(guid);
+        }
+        else
+        {
+            GameObject::UnloadSpawn(guid);
+            _gameObjectAddonStore.erase(guid);
+        }
+        ++unloaded;
+    }
+
+    // load the rows through the startup validation
+    std::vector<ObjectGuid::LowType> loaded;
+    std::vector<ObjectGuid::LowType> skipped;
+    if (QueryResult result = WorldDatabase.Query(Trinity::StringFormat("{} WHERE {}.guid BETWEEN {} AND {}",
+        isCreature ? CreatureSpawnQuery : GameObjectSpawnQuery, table, first, last).c_str()))
+    {
+        SpawnMaskMap spawnMasks = BuildSpawnMasks();
+        PhaseShift phaseShift;
+        do
+        {
+            Field* fields = result->Fetch();
+            ObjectGuid::LowType guid = fields[0].GetUInt64();
+            if (refused.count(guid))
+                continue;
+
+            if (IsTransportMap(fields[2].GetUInt16()))
+            {
+                refused.emplace(guid, "transport spawn");
+                continue;
+            }
+
+            if (isCreature ? LoadCreatureRow(fields, spawnMasks, phaseShift) : LoadGameObjectRow(fields, spawnMasks, phaseShift))
+                loaded.push_back(guid);
+            else
+            {
+                // a skipped row can leave a half-filled entry that never reached the grid
+                if (isCreature)
+                    _creatureDataStore.erase(guid);
+                else
+                    _gameObjectDataStore.erase(guid);
+                skipped.push_back(guid);
+            }
+        }
+        while (result->NextRow());
+    }
+
+    uint32 addons = 0;
+    if (QueryResult result = WorldDatabase.Query(Trinity::StringFormat("{} WHERE guid BETWEEN {} AND {}",
+        isCreature ? CreatureAddonQuery : GameObjectAddonQuery, first, last).c_str()))
+    {
+        do
+        {
+            Field* fields = result->Fetch();
+            if (refused.count(fields[0].GetUInt64()))
+                continue;
+
+            if (isCreature ? LoadCreatureAddonRow(fields) : LoadGameObjectAddonRow(fields))
+                ++addons;
+        }
+        while (result->NextRow());
+    }
+
+    // put the new spawns into every live map whose grid is loaded; other grids pick them up when they load
+    uint32 spawned = 0;
+    uint32 personal = 0;
+    for (ObjectGuid::LowType guid : loaded)
+    {
+        SpawnData const* data = getData(guid);
+        if (!data)
+            continue;
+
+        // personal phase spawns are per player and appear on the next phase update
+        if (PhasingHandler::IsPersonalPhase(data->phaseId))
+        {
+            ++personal;
+            continue;
+        }
+
+        sMapMgr->DoForAllMapsWithMapId(data->mapId, [&](Map* map)
+        {
+            if (!map->IsGridLoaded(data->spawnPoint))
+                return;
+
+            if (std::find(data->spawnDifficulties.begin(), data->spawnDifficulties.end(), map->GetDifficultyID()) == data->spawnDifficulties.end())
+                return;
+
+            // the unloaded instance leaves the map on its next update
+            if (isCreature ? Creature::CreateCreatureFromDB(guid, map, true, true) != nullptr : GameObject::CreateGameObjectFromDB(guid, map, true) != nullptr)
+                ++spawned;
+        });
+    }
+
+    report.push_back(Trinity::StringFormat("{} {}-{}: {} unloaded, {} loaded ({} addons), {} spawned in loaded grids, {} not in the DB any more.",
+        table, first, last, unloaded, loaded.size(), addons, spawned,
+        std::count_if(candidates.begin(), candidates.end(), [&](ObjectGuid::LowType guid) { return !refused.count(guid) && !getData(guid) && std::find(skipped.begin(), skipped.end(), guid) == skipped.end(); })));
+    if (personal)
+        report.push_back(Trinity::StringFormat("{} personal phase spawns load into the grid only; they show on the next phase update.", personal));
+    for (ObjectGuid::LowType guid : skipped)
+        report.push_back(Trinity::StringFormat("{} {}: row rejected by the startup checks (see DBErrors.log), now not loaded.", table, guid));
+    for (auto const& [guid, reason] : refused)
+        report.push_back(Trinity::StringFormat("{} {}: refused, {}; restart to apply.", table, guid, reason));
+
+    // stores keyed by spawn id that this does not re-read
+    auto listStore = [&](std::string const& sql, std::string_view what, std::string_view apply)
+    {
+        if (uint64 rows = QueryCount(sql))
+            report.push_back(Trinity::StringFormat("{}: {} rows touch this range, not re-read ({}).", what, rows, apply));
+    };
+    int64 const smartFirst = -int64(last);
+    int64 const smartLast = -int64(first);
+    listStore(Trinity::StringFormat("SELECT COUNT(*) FROM smart_scripts WHERE source_type = {} AND entryorguid BETWEEN {} AND {}", isCreature ? 0 : 1, smartFirst, smartLast),
+        "smart_scripts by guid", ".reload smart_scripts");
+    if (isCreature)
+    {
+        listStore(Trinity::StringFormat("SELECT COUNT(*) FROM creature_formations WHERE leaderGUID BETWEEN {0} AND {1} OR memberGUID BETWEEN {0} AND {1}", first, last),
+            "creature_formations", "restart");
+        listStore(Trinity::StringFormat("SELECT COUNT(*) FROM creature_movement_override WHERE SpawnId BETWEEN {} AND {}", first, last),
+            "creature_movement_override", ".reload creature_movement_override");
+        listStore(Trinity::StringFormat("SELECT COUNT(*) FROM vehicle_accessory WHERE guid BETWEEN {} AND {}", first, last),
+            "vehicle_accessory", ".reload vehicle_accessory");
+        listStore(Trinity::StringFormat("SELECT COUNT(*) FROM linked_respawn WHERE (guid BETWEEN {0} AND {1} AND linkType IN ({2}, {3})) OR (linkedGuid BETWEEN {0} AND {1} AND linkType IN ({2}, {4}))",
+            first, last, uint32(LINKED_RESPAWN_CREATURE_TO_CREATURE), uint32(LINKED_RESPAWN_CREATURE_TO_GO), uint32(LINKED_RESPAWN_GO_TO_CREATURE)),
+            "linked_respawn", "restart");
+    }
+    else
+    {
+        listStore(Trinity::StringFormat("SELECT COUNT(*) FROM gameobject_overrides WHERE spawnId BETWEEN {} AND {}", first, last),
+            "gameobject_overrides", "restart");
+        listStore(Trinity::StringFormat("SELECT COUNT(*) FROM linked_respawn WHERE (guid BETWEEN {0} AND {1} AND linkType IN ({2}, {3})) OR (linkedGuid BETWEEN {0} AND {1} AND linkType IN ({4}, {2}))",
+            first, last, uint32(LINKED_RESPAWN_GO_TO_GO), uint32(LINKED_RESPAWN_GO_TO_CREATURE), uint32(LINKED_RESPAWN_CREATURE_TO_GO)),
+            "linked_respawn", "restart");
+    }
+
+    return true;
 }
 
 void ObjectMgr::LoadQuestRelationsHelper(QuestRelations& map, QuestRelationsReverse* reverseMap, std::string const& table)
