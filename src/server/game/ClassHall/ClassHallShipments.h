@@ -23,6 +23,7 @@
 #include "DatabaseEnvFwd.h"
 #include "Garrison.h"
 #include "ObjectGuid.h"
+#include "Optional.h"
 #include "SharedDefines.h"
 #include <map>
 #include <vector>
@@ -44,6 +45,14 @@ namespace WorldPackets
 class TC_GAME_API ClassHallShipments
 {
 public:
+    // how the object of a container looks to the owner: the client takes a display other than the object's own
+    // for "ready" and the in-progress flag for "in progress"
+    struct ObjectLook
+    {
+        uint32 DisplayId = 0;   // 0: the object's own
+        bool InProgress = false;
+    };
+
     ClassHallShipments(Player* owner, ClassHall* classHall);
 
     void LoadFromDB(PreparedQueryResult shipments);
@@ -60,6 +69,9 @@ public:
     void CompleteShipments(uint32 charShipmentContainerId);
 
     void SendLandingPageShipmentInfo() const;
+
+    Optional<ObjectLook> GetObjectLook(uint32 charShipmentContainerId) const;
+    void Update();
 
 private:
     struct Shipment
@@ -79,11 +91,14 @@ private:
     uint32 GetCapacity(CharShipmentEntry const* shipment) const;
     uint32 GetAvailableShipments(CharShipmentEntry const* shipment) const;
     std::vector<Shipment const*> GetPendingShipments(uint32 charShipmentContainerId) const;
+    void UpdateObjects(uint32 charShipmentContainerId) const;
+    void ScheduleObjectsUpdate();
 
     Player* _owner;
     ClassHall* _classHall;
     std::map<uint64 /*shipmentId*/, Shipment> _shipments;
     uint64 _nextShipmentId;
+    time_t _nextObjectsUpdate;  // when the next order turns ready; 0: none is being made
 
     // the order window the owner has open, and the order it offers
     ObjectGuid _openNpc;
