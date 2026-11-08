@@ -54,6 +54,7 @@ void AddSC_orderhall_priest();
 void AddSC_orderhall_demon_hunter();
 void AddSC_orderhall_death_knight();
 void AddSC_orderhall_warlock();
+void AddSC_instance_dreadscar_rift_scenario();
 void AddSC_instance_felsoul_hold();
 
 // The name of this function should match:
@@ -97,5 +98,6 @@ void AddBrokenIslesScripts()
     AddSC_orderhall_demon_hunter();
     AddSC_orderhall_death_knight();
     AddSC_orderhall_warlock();
+    AddSC_instance_dreadscar_rift_scenario();
     AddSC_instance_felsoul_hold();
 }
