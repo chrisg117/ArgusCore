@@ -4755,7 +4755,9 @@ void Spell::EffectKillCreditPersonal()
     if (!unitTarget || unitTarget->GetTypeId() != TYPEID_PLAYER)
         return;
 
-    unitTarget->ToPlayer()->KilledMonsterCredit(effectInfo->MiscValue);
+    // Same source as EffectKillCredit: a spell credit is not a proxy credit (QUEST_FLAGS_EX_NO_CREDIT_FOR_PROXY)
+    ObjectGuid source = m_caster->IsCreature() ? m_caster->GetGUID() : unitTarget->GetGUID();
+    unitTarget->ToPlayer()->KilledMonsterCredit(effectInfo->MiscValue, source);
 }
 
 void Spell::EffectKillCredit()
