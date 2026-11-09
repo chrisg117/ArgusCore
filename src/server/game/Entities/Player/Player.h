@@ -2294,7 +2294,8 @@ class TC_GAME_API Player final : public Unit, public GridObject<Player>
 
         bool IsAtGroupRewardDistance(WorldObject const* pRewardSource) const;
         bool IsAtRecruitAFriendDistance(WorldObject const* pOther) const;
-        void RewardPlayerAndGroupAtEvent(uint32 creature_id, WorldObject* pRewardSource);
+        // sourceGuid: the credit's source when pRewardSource is not a creature (a spell's KILL_CREDIT); empty for the rest
+        void RewardPlayerAndGroupAtEvent(uint32 creature_id, WorldObject* pRewardSource, ObjectGuid sourceGuid = ObjectGuid::Empty);
         bool isHonorOrXPTarget(Unit const* victim) const;
 
         bool GetsRecruitAFriendBonus(bool forXP);
