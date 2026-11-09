@@ -25,6 +25,8 @@
 #include "Map.h"
 #include "GameObject.h"
 #include "GameObjectAI.h"
+#include "GameTables.h"
+#include "Item.h"
 #include "MotionMaster.h"
 #include "ObjectMgr.h"
 #include "ObjectAccessor.h"
@@ -33,6 +35,7 @@
 #include "QuestDef.h"
 #include "ScriptedCreature.h"
 #include "ScriptedGossip.h"
+#include "SpellAuras.h"
 #include "SpellScript.h"
 #include "TaskScheduler.h"
 #include "TemporarySummon.h"
@@ -1226,8 +1229,95 @@ class spell_warlock_portal_overload : public SpellScript
 };
 } // namespace RitualRuination
 
+// ---------------------------------------------------------------------------------------------------------------------
+// The hall opening: The Heart of the Dreadscar's way in from the Circle (40731), the Felblood Altar (40821 Power
+// Overwhelming) and Ritssyn's soul flame (40823 Rebuilding the Council) in the Dreadscar Rift (map 1107)
+namespace DreadscarRiftOpening
+{
+enum Data
+{
+    QUEST_THE_HEART_OF_THE_DREADSCAR    = 40731,
+    QUEST_POWER_OVERWHELMING            = 40821,
+    QUEST_REBUILDING_THE_COUNCIL        = 40823,
+
+    NPC_CREDIT_RITSSYN_RESURRECTED      = 101969,
+
+    MAP_DREADSCAR_RIFT_SCENARIO         = 1522
+};
+
+// The Finale's front entrance (WorldSafeLocs 5333), where 998 starts
+Position const HeartOfTheDreadscarEntrance = { 3088.24f, 832.72f, 244.97f, 1.37f };
+
+// Ritual Gateway (fork template 1220015, seen with 40731 in the log): the Circle's fel gateway, the way into 998
+// (video 44:10). The S2 ritual's own gateway (1220004) is a 90 s summon and stays a plain object
+struct go_dreadscar_heart_gateway : public GameObjectAI
+{
+    go_dreadscar_heart_gateway(GameObject* go) : GameObjectAI(go) { }
+
+    bool OnGossipHello(Player* player) override
+    {
+        if (player->GetClass() == CLASS_WARLOCK && player->GetQuestStatus(QUEST_THE_HEART_OF_THE_DREADSCAR) == QUEST_STATUS_INCOMPLETE)
+            player->TeleportTo(MAP_DREADSCAR_RIFT_SCENARIO, HeartOfTheDreadscarEntrance.GetPositionX(), HeartOfTheDreadscarEntrance.GetPositionY(),
+                HeartOfTheDreadscarEntrance.GetPositionZ(), HeartOfTheDreadscarEntrance.GetOrientation());
+        return true;
+    }
+};
+
+// Felblood Altar (fork template 1107001, an artifact forge): Power Overwhelming asks for the first trait, so while the
+// quest is open and nothing is bought the altar tops the Scepter up to the first trait's cost (the DK Soul Forge pattern)
+struct go_felblood_altar : public GameObjectAI
+{
+    go_felblood_altar(GameObject* go) : GameObjectAI(go) { }
+
+    bool OnGossipHello(Player* player) override
+    {
+        if (player->GetQuestStatus(QUEST_POWER_OVERWHELMING) != QUEST_STATUS_INCOMPLETE)
+            return false;
+
+        Aura const* artifactAura = player->GetAura(ARTIFACTS_ALL_WEAPONS_GENERAL_WEAPON_EQUIPPED_PASSIVE);
+        Item* artifact = artifactAura ? player->GetItemByGuid(artifactAura->GetCastItemGUID()) : nullptr;
+        if (!artifact || artifact->GetTotalPurchasedArtifactPowers())
+            return false;
+
+        if (GtArtifactLevelXPEntry const* firstTrait = sArtifactLevelXPGameTable.GetRow(1))
+        {
+            uint64 cost = uint64(firstTrait->XP);
+            uint64 artifactPower = artifact->GetUInt64Value(ITEM_FIELD_ARTIFACT_XP);
+            if (artifactPower < cost)
+                artifact->GiveArtifactXp(cost - artifactPower, nullptr, 0);
+        }
+
+        // The forge's window opens as it would
+        return false;
+    }
+};
+
+// Soul flame on its pedestal (fork template 1107002) in the bone cave (video 48:48): touching it raises Ritssyn, who is
+// seen by entry once Rebuilding the Council is complete
+struct go_ritssyn_soul_flame : public GameObjectAI
+{
+    go_ritssyn_soul_flame(GameObject* go) : GameObjectAI(go) { }
+
+    bool OnGossipHello(Player* player) override
+    {
+        if (player->GetQuestStatus(QUEST_REBUILDING_THE_COUNCIL) == QUEST_STATUS_INCOMPLETE)
+        {
+            player->KilledMonsterCredit(NPC_CREDIT_RITSSYN_RESURRECTED, me->GetGUID());
+            player->UpdateObjectVisibility();
+        }
+        return true;
+    }
+};
+} // namespace DreadscarRiftOpening
+
 void AddSC_orderhall_warlock()
 {
+    {
+        using namespace DreadscarRiftOpening;
+        RegisterGameObjectAI(go_dreadscar_heart_gateway);
+        RegisterGameObjectAI(go_felblood_altar);
+        RegisterGameObjectAI(go_ritssyn_soul_flame);
+    }
     {
         using namespace RitualRuination;
         RegisterCreatureAI(npc_fel_bat_ritual_ruination);

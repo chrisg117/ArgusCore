@@ -28,6 +28,8 @@
 #include "Creature.h"
 #include "DB2Stores.h"
 #include "GameEventSender.h"
+#include "GameObject.h"
+#include "GameObjectAI.h"
 #include "InstanceScenario.h"
 #include "InstanceScript.h"
 #include "Map.h"
@@ -500,12 +502,95 @@ struct at_dreadscar_scenario_way_out : AreaTriggerAI
         }, 3s);
     }
 };
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The Heart of the Dreadscar (40731), scenario 998 on this map (video 44:10-47:40). Nothing in the data sends its events:
+// Jagganoth's death sends 48186 and gives the heart (2058 is the data's AcquireItem); the altar in the Seat of the
+// Overlord takes the heart (48182), then commands the armies (48187), and the Order Hall Transition (201205) takes the
+// warlock to the hall and credits Dreadscar Rift claimed
+enum HeartOfTheDreadscar
+{
+    STEP_BECOMING_THE_OVERLORD          = 2059,
+
+    EVENT_JAGGANOTH_DEFEATED            = 48186,
+    EVENT_HEART_PLACED                  = 48182,
+    EVENT_ARMIES_COMMANDED              = 48187,
+
+    ITEM_HEART_OF_THE_OVERLORD          = 132880,
+    SPELL_ORDER_HALL_TRANSITION         = 201205  // TELEPORT_UNITS (spell_target_position: the hall by Calydus) + credit 101524
+};
+
+// 101892 - Jagganoth, Overlord of the Dreadscar, 998's boss (98831 is 962's, hidden from a warlock on 40731). The
+// template's spell list is empty and his one named spell (199150 Smash) is a jump to a marker, so he fights in melee
+// for now; his abilities are for the combat-log pass
+struct boss_jagganoth_heart_of_the_dreadscar : public ScriptedAI
+{
+    using ScriptedAI::ScriptedAI;
+
+    void JustAppeared() override
+    {
+        me->SetFaction(FACTION_MONSTER);
+    }
+
+    void JustDied(Unit* killer) override
+    {
+        SendEvent(me, EVENT_JAGGANOTH_DEFEATED);
+        // The bot cannot loot, and the heart is the scenario's item: it is given on the kill (the S3 Jergosh pattern)
+        if (Player* player = killer ? killer->GetCharmerOrOwnerPlayerOrPlayerItself() : nullptr)
+            if (!player->HasItemCount(ITEM_HEART_OF_THE_OVERLORD, 1, true))
+                player->AddItem(ITEM_HEART_OF_THE_OVERLORD, 1);
+    }
+
+    void UpdateAI(uint32 /*diff*/) override
+    {
+        UpdateVictim();
+    }
+};
+
+// The altar in the Seat of the Overlord (fork template): the first use places the heart, the second commands the armies
+struct go_seat_of_the_overlord_altar : public GameObjectAI
+{
+    go_seat_of_the_overlord_altar(GameObject* go) : GameObjectAI(go) { }
+
+    bool OnGossipHello(Player* player) override
+    {
+        if (!IsOnStep(me->GetMap(), STEP_BECOMING_THE_OVERLORD))
+            return true;
+
+        if (!_heartPlaced)
+        {
+            if (!player->HasItemCount(ITEM_HEART_OF_THE_OVERLORD, 1))
+                return true;
+            player->DestroyItemCount(ITEM_HEART_OF_THE_OVERLORD, 1, true);
+            _heartPlaced = true;
+            SendEvent(me, EVENT_HEART_PLACED);
+            return true;
+        }
+
+        if (_armiesCommanded)
+            return true;
+        _armiesCommanded = true;
+        SendEvent(me, EVENT_ARMIES_COMMANDED);
+        player->m_Events.AddEventAtOffset([player]
+        {
+            if (player->GetMapId() == MAP_DREADSCAR_RIFT_SCENARIO && !player->IsBeingTeleported())
+                player->CastSpell(player, SPELL_ORDER_HALL_TRANSITION, CastSpellExtraArgsInit{ .TriggerFlags = TRIGGERED_FULL_MASK });
+        }, 3s);
+        return true;
+    }
+
+private:
+    bool _heartPlaced = false;
+    bool _armiesCommanded = false;
+};
 } // namespace DreadscarRiftScenario
 
 void AddSC_instance_dreadscar_rift_scenario()
 {
     using namespace DreadscarRiftScenario;
     new instance_dreadscar_rift_scenario();
+    RegisterCreatureAI(boss_jagganoth_heart_of_the_dreadscar);
+    RegisterGameObjectAI(go_seat_of_the_overlord_altar);
     RegisterCreatureAI(npc_dreadscar_scenario_hostile);
     RegisterCreatureAI(npc_ritssyn_flamescowl_prisoner);
     RegisterCreatureAI(npc_beshtal);
