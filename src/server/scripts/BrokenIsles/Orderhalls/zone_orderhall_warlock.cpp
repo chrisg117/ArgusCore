@@ -987,8 +987,257 @@ struct at_krasus_landing_calydus_post_scenario : AreaTriggerAI
 };
 } // namespace TolBaradWarlockScenario
 
+// ---------------------------------------------------------------------------------------------------------------------
+// Ritual Ruination (43254): Gul'dan's ritual at the Tomb of Sargeras (map 1220, the Broken Shore). Flow first, after
+// Wowhead's acquisition video 37:05-44:24; the lines are the client's broadcast texts.
+namespace RitualRuination
+{
+enum Data
+{
+    QUEST_RITUAL_RUINATION              = 43254,
+    QUEST_OBJECTIVE_ARTIFACT_LOOTED     = 285268,
+    QUEST_OBJECTIVE_RITUAL_RUINED       = 285269,
+
+    NPC_CREDIT_FEL_BAT_RIDE             = 110523,
+    NPC_CREDIT_LISTENED_TO_GULDAN       = 110581,
+    NPC_CREDIT_KILLED_ALLARIS           = 114337,
+    NPC_GULDAN                          = 110533,
+    NPC_ALLARIS_RITUAL                  = 110556,
+    NPC_CALYDUS_ESCAPE                  = 109838,
+    GO_RITUAL_PORTAL                    = 251763,
+
+    ITEM_SCEPTER_OF_SARGERAS            = 128941,
+
+    SPELL_PORTAL_OVERLOAD               = 219920, // periodic: 219923 credits Ruin the ritual and removes the guise
+    SPELL_DEMONIC_PORTAL_TO_DALARAN     = 219705, // credits the escape; its periodic 221318 teleports (spell_target_position)
+
+    SAY_GULDAN_REINFORCEMENTS           = 0, // 116381
+    SAY_GULDAN_CONVENIENT               = 1, // 116382
+    SAY_GULDAN_AMPLIFY                  = 2, // 117566
+    SAY_GULDAN_ANCHOR                   = 3, // 117567
+    SAY_GULDAN_ONLY_ONE                 = 4, // 117576
+    SAY_GULDAN_THE_VICTOR               = 5, // 117590
+    SAY_GULDAN_THE_TIME_HAS_COME        = 6, // 117591
+    SAY_ALLARIS_WHICH_OF_US             = 0, // 117568
+    SAY_CALYDUS_TIME_TO_GO              = 0  // 117620
+};
+
+Position const RitualArrival = { -690.0f, 2640.0f, 78.39f, 5.30f };
+
+// 110480 - Fel Bat at Krasus' Landing: the ride to the ritual (a teleport for now; the flight is a fidelity item)
+struct npc_fel_bat_ritual_ruination : public ScriptedAI
+{
+    using ScriptedAI::ScriptedAI;
+
+    void JustAppeared() override
+    {
+        me->SetGossipMenuId(me->GetEntry());
+    }
+
+    bool OnGossipHello(Player* player) override
+    {
+        if (player->GetQuestStatus(QUEST_RITUAL_RUINATION) == QUEST_STATUS_INCOMPLETE)
+        {
+            player->KilledMonsterCredit(NPC_CREDIT_FEL_BAT_RIDE, me->GetGUID()); // 43254 has NO_CREDIT_FOR_PROXY: a credit needs a source guid
+            player->TeleportTo(me->GetMapId(), RitualArrival.GetPositionX(), RitualArrival.GetPositionY(), RitualArrival.GetPositionZ(), RitualArrival.GetOrientation());
+        }
+        return true;
+    }
+};
+
+// 110533 - Gul'dan at the ritual: he takes the warlock for Jergosh's stand-in, sets the two aspirants against each other,
+// and once Allaris falls starts the ritual and goes through the portal
+struct npc_guldan_ritual_ruination : public ScriptedAI
+{
+    using ScriptedAI::ScriptedAI;
+
+    void MoveInLineOfSight(Unit* who) override
+    {
+        Player* player = who->ToPlayer();
+        if (_started || !player || !me->IsWithinDistInMap(player, 35.0f)
+            || player->GetQuestStatus(QUEST_RITUAL_RUINATION) != QUEST_STATUS_INCOMPLETE)
+            return;
+
+        _started = true;
+        ObjectGuid const playerGuid = player->GetGUID();
+        Talk(SAY_GULDAN_REINFORCEMENTS, player);
+        _scheduler.Schedule(7s, [this, playerGuid](TaskContext /*context*/) { Talk(SAY_GULDAN_CONVENIENT, Get(playerGuid)); })
+            .Schedule(14s, [this, playerGuid](TaskContext /*context*/) { Talk(SAY_GULDAN_AMPLIFY, Get(playerGuid)); })
+            .Schedule(21s, [this, playerGuid](TaskContext /*context*/) { Talk(SAY_GULDAN_ANCHOR, Get(playerGuid)); })
+            .Schedule(27s, [this, playerGuid](TaskContext /*context*/)
+            {
+                if (Creature* allaris = me->FindNearestCreature(NPC_ALLARIS_RITUAL, 60.0f))
+                    allaris->AI()->Talk(SAY_ALLARIS_WHICH_OF_US, Get(playerGuid));
+            })
+            .Schedule(32s, [this, playerGuid](TaskContext /*context*/)
+            {
+                Player* player = Get(playerGuid);
+                Talk(SAY_GULDAN_ONLY_ONE, player);
+                if (!player)
+                    return;
+                player->KilledMonsterCredit(NPC_CREDIT_LISTENED_TO_GULDAN, me->GetGUID());
+                if (Creature* allaris = me->FindNearestCreature(NPC_ALLARIS_RITUAL, 60.0f))
+                {
+                    allaris->SetFaction(FACTION_MONSTER);
+                    allaris->AI()->AttackStart(player);
+                }
+            });
+    }
+
+    // Allaris is dead (npc_allaris_ritual_ruination)
+    void SetGUID(ObjectGuid const& playerGuid, int32 /*id*/) override
+    {
+        _scheduler.Schedule(4s, [this, playerGuid](TaskContext /*context*/) { Talk(SAY_GULDAN_THE_VICTOR, Get(playerGuid)); })
+            .Schedule(12s, [this, playerGuid](TaskContext /*context*/) { Talk(SAY_GULDAN_THE_TIME_HAS_COME, Get(playerGuid)); })
+            .Schedule(18s, [this](TaskContext /*context*/) { me->DespawnOrUnsummon(0s, 5min); });
+    }
+
+    void UpdateAI(uint32 diff) override
+    {
+        _scheduler.Update(diff);
+    }
+
+private:
+    Player* Get(ObjectGuid guid) const { return ObjectAccessor::GetPlayer(*me, guid); }
+    TaskScheduler _scheduler;
+    bool _started = false;
+};
+
+// 110556 - Allaris Narassin, the other aspirant: fought once Gul'dan says only one is needed
+struct npc_allaris_ritual_ruination : public ScriptedAI
+{
+    using ScriptedAI::ScriptedAI;
+
+    void JustDied(Unit* killer) override
+    {
+        Player* player = killer ? killer->GetCharmerOrOwnerPlayerOrPlayerItself() : nullptr;
+        if (!player)
+            return;
+        player->KilledMonsterCredit(NPC_CREDIT_KILLED_ALLARIS, me->GetGUID());
+        if (Creature* guldan = me->FindNearestCreature(NPC_GULDAN, 80.0f))
+            guldan->AI()->SetGUID(player->GetGUID(), 0);
+    }
+
+    void UpdateAI(uint32 /*diff*/) override
+    {
+        UpdateVictim();
+    }
+};
+
+// 219839 - Scepter of Sargeras (the click on the Scepter on the altar): FORCE_EQUIP_ITEM is not handled by this core,
+// so the Scepter is given and equipped here. The credit (effect 3) is data; the scene 1365 waits for a preview
+class spell_warlock_take_the_scepter : public SpellScript
+{
+    void HandleEquip(SpellEffIndex /*effIndex*/) const
+    {
+        Player* player = GetHitPlayer();
+        if (!player || player->HasItemCount(ITEM_SCEPTER_OF_SARGERAS, 1, true))
+            return;
+
+        uint16 dest = 0;
+        if (player->CanEquipNewItem(NULL_SLOT, dest, ITEM_SCEPTER_OF_SARGERAS, false) == EQUIP_ERR_OK)
+            player->EquipNewItem(dest, ITEM_SCEPTER_OF_SARGERAS, ItemContext::NONE, true);
+        else
+            player->AddItem(ITEM_SCEPTER_OF_SARGERAS, 1);
+    }
+
+    // Effects 0 and 1 are the scene 1365 and its root: held back until the scene is previewed (advisor ruling 2026-11-08)
+    void HoldBackScene(SpellEffIndex effIndex)
+    {
+        PreventHitDefaultEffect(effIndex);
+    }
+
+    void DropSceneAura()
+    {
+        PreventHitAura();
+    }
+
+    void Register() override
+    {
+        OnEffectHitTarget += SpellEffectFn(spell_warlock_take_the_scepter::HoldBackScene, EFFECT_0, SPELL_EFFECT_APPLY_AURA);
+        OnEffectHitTarget += SpellEffectFn(spell_warlock_take_the_scepter::HoldBackScene, EFFECT_1, SPELL_EFFECT_APPLY_AURA);
+        OnEffectHitTarget += SpellEffectFn(spell_warlock_take_the_scepter::HandleEquip, EFFECT_2, SPELL_EFFECT_FORCE_EQUIP_ITEM);
+        AfterHit += SpellHitFn(spell_warlock_take_the_scepter::DropSceneAura);
+    }
+};
+
+static bool CanRuinTheRitual(Player* player)
+{
+    return player->GetQuestStatus(QUEST_RITUAL_RUINATION) == QUEST_STATUS_INCOMPLETE
+        && player->GetQuestObjectiveData(QUEST_RITUAL_RUINATION, QUEST_OBJECTIVE_ARTIFACT_LOOTED) > 0
+        && player->GetQuestObjectiveData(QUEST_RITUAL_RUINATION, QUEST_OBJECTIVE_RITUAL_RUINED) == 0
+        && !player->HasAura(SPELL_PORTAL_OVERLOAD);
+}
+
+// 251763 - Legion Portal, the ritual's portal: with the Scepter in hand, a click overloads it (the fallback to the
+// Dimensional Rift below)
+struct go_ritual_ruination_portal : public GameObjectAI
+{
+    go_ritual_ruination_portal(GameObject* go) : GameObjectAI(go) { }
+
+    bool OnGossipHello(Player* player) override
+    {
+        if (CanRuinTheRitual(player))
+            player->CastSpell(player, SPELL_PORTAL_OVERLOAD, CastSpellExtraArgsInit{ .TriggerFlags = TRIGGERED_FULL_MASK });
+        return true;
+    }
+};
+
+// 196586 - Dimensional Rift (the Scepter's ability): cast near the ritual's portal, it overloads it
+class spell_warlock_dimensional_rift_ritual : public SpellScript
+{
+    void HandleAfterCast() const
+    {
+        Player* player = GetCaster()->ToPlayer();
+        if (player && CanRuinTheRitual(player) && player->FindNearestGameObject(GO_RITUAL_PORTAL, 40.0f))
+            player->CastSpell(player, SPELL_PORTAL_OVERLOAD, CastSpellExtraArgsInit{ .TriggerFlags = TRIGGERED_FULL_MASK });
+    }
+
+    void Register() override
+    {
+        AfterCast += SpellCastFn(spell_warlock_dimensional_rift_ritual::HandleAfterCast);
+    }
+};
+
+// 219923 - Portal Overload (the tick): the ritual is ruined; Calydus opens the way out ("Time to go, friend! Here!")
+class spell_warlock_portal_overload : public SpellScript
+{
+    void HandleAfterHit() const
+    {
+        Player* player = GetCaster()->ToPlayer();
+        if (!player || player->GetQuestStatus(QUEST_RITUAL_RUINATION) != QUEST_STATUS_INCOMPLETE)
+            return;
+
+        Position pos = player->GetPosition();
+        player->MovePosition(pos, 3.0f, 0.0f);
+        if (Creature* calydus = player->SummonCreature(NPC_CALYDUS_ESCAPE, pos, TEMPSUMMON_TIMED_DESPAWN, 30s))
+            calydus->AI()->Talk(SAY_CALYDUS_TIME_TO_GO, player);
+        player->m_Events.AddEventAtOffset([player]
+        {
+            if (player->GetQuestStatus(QUEST_RITUAL_RUINATION) == QUEST_STATUS_INCOMPLETE)
+                player->CastSpell(player, SPELL_DEMONIC_PORTAL_TO_DALARAN, CastSpellExtraArgsInit{ .TriggerFlags = TRIGGERED_FULL_MASK });
+        }, 4s);
+    }
+
+    void Register() override
+    {
+        AfterHit += SpellHitFn(spell_warlock_portal_overload::HandleAfterHit);
+    }
+};
+} // namespace RitualRuination
+
 void AddSC_orderhall_warlock()
 {
+    {
+        using namespace RitualRuination;
+        RegisterCreatureAI(npc_fel_bat_ritual_ruination);
+        RegisterCreatureAI(npc_guldan_ritual_ruination);
+        RegisterCreatureAI(npc_allaris_ritual_ruination);
+        RegisterSpellScript(spell_warlock_take_the_scepter);
+        RegisterGameObjectAI(go_ritual_ruination_portal);
+        RegisterSpellScript(spell_warlock_dimensional_rift_ritual);
+        RegisterSpellScript(spell_warlock_portal_overload);
+    }
     {
         using namespace TolBaradWarlockScenario;
         new instance_tol_barad_warlock_scenario();
