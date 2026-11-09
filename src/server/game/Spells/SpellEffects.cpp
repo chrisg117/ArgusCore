@@ -4766,8 +4766,13 @@ void Spell::EffectKillCredit()
     if (!unitTarget || unitTarget->GetTypeId() != TYPEID_PLAYER)
         return;
 
+    // A spell credit is not a proxy credit: give it a source (the creature caster, else the target) so that quests with
+    // QUEST_FLAGS_EX_NO_CREDIT_FOR_PROXY, which drop sourceless MONSTER credit (the KillCredit proxies), still count it
     if (int32 creatureEntry = effectInfo->MiscValue)
-        unitTarget->ToPlayer()->RewardPlayerAndGroupAtEvent(creatureEntry, unitTarget);
+    {
+        ObjectGuid source = m_caster->IsCreature() ? m_caster->GetGUID() : unitTarget->GetGUID();
+        unitTarget->ToPlayer()->RewardPlayerAndGroupAtEvent(creatureEntry, unitTarget, source);
+    }
 }
 
 void Spell::EffectQuestFail()
