@@ -169,38 +169,67 @@ enum TheNewBloodData
     QUEST_THE_TOME_OF_BLIGHTED_IMPLEMENTS = 40684,
     QUEST_OBJECTIVE_ARTIFACT_CHOSEN     = 281063,
 
-    NPC_ZINNIN_CIRCLE                   = 101454,
+    // The Circle copies share CreatureDifficultyIDs 101973-101979 with Ritssyn 101456 and the Jailer 101460; Zinnin
+    // (101454) is not seen in the Circle in the video
     NPC_SHINFEL_CIRCLE                  = 101455,
     NPC_JUBEKA_CIRCLE                   = 101457,
     NPC_ZELIFRAX_WOBBLEPOX              = 98797,
-    NPC_JAGGANOTH_CIRCLE                = 98831,
+    NPC_JAGGANOTH_CIRCLE                = 101468,
+    NPC_DREADSCAR_JAILER                = 101460,
+    NPC_WORLD_TRIGGER                   = 22515,   // what the council's Fel Ritual channels on, in the gateway
 
-    GO_RITUAL_GATEWAY                   = 1220004, // fork template; its look is the S2 lineup's pick
+    GO_RITUAL_PORTAL                    = 243679,  // the data's "Ritual Portal" (display 30007): ready = dark, active = the vortex
 
     SPELL_START_SCENARIO                = 199359, // teleport to Jagganoth's prison (map 1522); credits Ritual Performed
+    SPELL_FEL_RITUAL                    = 199426, // the council's channel on the gateway (conditions: World Trigger)
+    SPELL_GRAB_ZELIFRAX                 = 200016, // Jagganoth seizes the gnome (conditions: Zelifrax)
     SPELL_TOME_PLAYER_CHOICE            = 199411, // launches player choice 245
     SPELL_DESTRUCTION                   = 199409,
 
     PLAYERCHOICE_RESPONSE_DESTRUCTION   = 2451,
 
+    // Ritssyn 101456
     SAY_RITSSYN_THE_SIXTH_IS_HERE       = 0, // 103743
-    SAY_ZELIFRAX_STUDIED                = 0, // 103744 (Ritssyn's question to Zelifrax; Zelifrax opens the ritual)
-    SAY_ZELIFRAX_CHANNEL                = 1, // 103747
-    SAY_ZELIFRAX_RITUAL_BEGINS          = 2, // 103750
-    SAY_JAGGANOTH_HURRY                 = 2, // 101038
-    SAY_JAGGANOTH_FOOLISH_MORTALS       = 0, // 103762
+    SAY_RITSSYN_ZELIFRAX_LEADS          = 1, // 103744
+    SAY_RITSSYN_GREAT_POWER             = 2, // 103753
+    SAY_RITSSYN_ZELIFRAX                = 3, // 103755
+    // Zelifrax 98797
+    SAY_ZELIFRAX_KNOWS_THE_JOB          = 0, // 103745
+    SAY_ZELIFRAX_INCANTATION_1          = 1, // 103746
+    SAY_ZELIFRAX_CHANNEL                = 2, // 103747
+    SAY_ZELIFRAX_RITUAL_BEGINS          = 3, // 103750
+    SAY_ZELIFRAX_INCANTATION_2          = 4, // 103764
+    SAY_ZELIFRAX_INCANTATION_3          = 5, // 103752
+    SAY_ZELIFRAX_INCANTATION_4          = 6, // 103754
+    SAY_ZELIFRAX_MIXES_WORDS            = 7, // 103756
+    SAY_ZELIFRAX_COMMANDS               = 8, // 103759
+    SAY_ZELIFRAX_SCREAM                 = 9, // 103761
+    // Shinfel 101455
+    SAY_SHINFEL_WORRY_ABOUT_NEWCOMER    = 0, // 103748
+    SAY_SHINFEL_BEGIN                   = 1, // 103749
+    // Jubeka 101457
+    SAY_JUBEKA_DEEPER                   = 0, // 103751
+    SAY_JUBEKA_THE_PORTAL               = 1, // 103757
+    // Jagganoth 101468
+    SAY_JAGGANOTH_WHO_SUMMONS           = 0, // 103758
+    SAY_JAGGANOTH_SCORNS                = 1, // 103760
+    SAY_JAGGANOTH_FOOLISH_MORTALS       = 2, // 103762
+    SAY_JAGGANOTH_SERVE_ME              = 3, // 103763
 
     GOSSIP_ACTION_BEGIN_RITUAL          = 1,
     GOSSIP_ACTION_REVIEW_WEAPONS        = 2
 };
 
-// The Circle of Wills: where the council stands for the ritual, and the gateway Jagganoth comes through
-Position const RitualZinnin   = { -850.00f, 4440.00f, 697.75f, 1.75f };
-Position const RitualJubeka   = { -852.00f, 4462.00f, 696.26f, 4.90f };
-Position const RitualShinfel  = { -838.00f, 4454.00f, 696.71f, 3.30f };
-Position const RitualZelifrax = { -866.00f, 4446.00f, 696.88f, 0.40f };
-Position const RitualGateway  = { -862.00f, 4470.00f, 696.75f, 5.30f };
-Position const RitualJagganoth = { -859.50f, 4466.00f, 696.75f, 5.30f };
+// The Circle of Wills, as the video shows it from the player's place in the middle of the grate facing the gateway:
+// Ritssyn (his spawn, -842, 4447) at one edge with Zelifrax just ahead of him; Shinfel a third of the way to the other
+// edge and Jubeka at it; the gateway across the grate. Nobody walks in: they stand there from the accept
+Position const RitualGrateCentre = { -856.05f, 4453.25f, 696.67f, 0.0f };
+Position const RitualZelifrax  = { -846.00f, 4451.00f, 696.90f, 2.60f };
+Position const RitualShinfel   = { -861.70f, 4451.20f, 696.75f, 1.30f };
+Position const RitualJubeka    = { -868.30f, 4448.90f, 696.75f, 1.10f };
+Position const RitualGateway   = { -862.00f, 4470.00f, 696.75f, 5.00f };
+Position const RitualJagganoth = { -860.80f, 4466.70f, 696.75f, 5.00f };
+Position const RitualZelifraxAhead = { -858.40f, 4459.80f, 696.75f, 1.90f };
 
 // 101456 - Ritssyn Flamescowl, in the Circle of Wills. The New Blood (offered at The Sixth's turn-in) begins the ritual:
 // the council gathers, Zelifrax leads it, the gateway opens, and Jagganoth comes through and takes the warlock to his
@@ -253,42 +282,137 @@ private:
         }
 
         _ritualRunning = true;
-        ObjectGuid const playerGuid = player->GetGUID();
+        ObjectGuid const p = player->GetGUID();
         _summons.clear();
-        Summon(NPC_ZINNIN_CIRCLE, RitualZinnin);
-        Summon(NPC_JUBEKA_CIRCLE, RitualJubeka);
-        Summon(NPC_SHINFEL_CIRCLE, RitualShinfel);
         ObjectGuid const zelifrax = Summon(NPC_ZELIFRAX_WOBBLEPOX, RitualZelifrax);
+        ObjectGuid const shinfel = Summon(NPC_SHINFEL_CIRCLE, RitualShinfel);
+        ObjectGuid const jubeka = Summon(NPC_JUBEKA_CIRCLE, RitualJubeka);
 
-        _scheduler.Schedule(3s, [this, playerGuid](TaskContext /*context*/) { Talk(SAY_RITSSYN_THE_SIXTH_IS_HERE, Get(playerGuid)); })
-            .Schedule(8s, [this, zelifrax, playerGuid](TaskContext /*context*/) { TalkFrom(zelifrax, SAY_ZELIFRAX_STUDIED, playerGuid); })
-            .Schedule(14s, [this, zelifrax, playerGuid](TaskContext /*context*/)
+        // Times are from the accept, as in Wowhead's video (accept 0:47, fade 3:15, loading 3:18)
+        _scheduler.Schedule(3s, [this, p](TaskContext) { Talk(SAY_RITSSYN_THE_SIXTH_IS_HERE, Get(p)); })
+            .Schedule(8s, [this, p](TaskContext) { Talk(SAY_RITSSYN_ZELIFRAX_LEADS, Get(p)); })
+            .Schedule(13s, [this, zelifrax, p](TaskContext) { TalkFrom(zelifrax, SAY_ZELIFRAX_KNOWS_THE_JOB, p); })
+            .Schedule(19s, [this, zelifrax, p](TaskContext) { TalkFrom(zelifrax, SAY_ZELIFRAX_INCANTATION_1, p); })
+            .Schedule(25s, [this, zelifrax, p](TaskContext)
             {
-                TalkFrom(zelifrax, SAY_ZELIFRAX_CHANNEL, playerGuid);
-                if (GameObject* gateway = me->SummonGameObject(GO_RITUAL_GATEWAY, RitualGateway, QuaternionData::fromEulerAnglesZYX(RitualGateway.GetOrientation(), 0.0f, 0.0f), 90s))
-                    _gateway = gateway->GetGUID();
-            })
-            .Schedule(20s, [this, zelifrax, playerGuid](TaskContext /*context*/) { TalkFrom(zelifrax, SAY_ZELIFRAX_RITUAL_BEGINS, playerGuid); })
-            .Schedule(26s, [this, playerGuid](TaskContext /*context*/)
-            {
-                if (Creature* jagganoth = me->SummonCreature(NPC_JAGGANOTH_CIRCLE, RitualJagganoth, TEMPSUMMON_TIMED_DESPAWN, 40s))
+                TalkFrom(zelifrax, SAY_ZELIFRAX_CHANNEL, p);
+                // the gateway appears dark (ready); it ignites at 48 s
+                if (GameObject* gateway = me->SummonGameObject(GO_RITUAL_PORTAL, RitualGateway, QuaternionData::fromEulerAnglesZYX(RitualGateway.GetOrientation(), 0.0f, 0.0f), 170s))
                 {
-                    _summons.push_back(jagganoth->GetGUID());
-                    jagganoth->AI()->Talk(SAY_JAGGANOTH_HURRY, Get(playerGuid));
+                    gateway->SetGoState(GO_STATE_READY);
+                    _gateway = gateway->GetGUID();
                 }
             })
-            .Schedule(32s, [this, playerGuid](TaskContext /*context*/)
+            .Schedule(34s, [this, shinfel, p](TaskContext) { TalkFrom(shinfel, SAY_SHINFEL_WORRY_ABOUT_NEWCOMER, p); })
+            .Schedule(42s, [this, shinfel, p](TaskContext) { TalkFrom(shinfel, SAY_SHINFEL_BEGIN, p); })
+            .Schedule(47s, [this, zelifrax, shinfel, jubeka](TaskContext)
             {
-                if (Creature* jagganoth = me->FindNearestCreature(NPC_JAGGANOTH_CIRCLE, 60.0f))
-                    jagganoth->AI()->Talk(SAY_JAGGANOTH_FOOLISH_MORTALS, Get(playerGuid));
+                // all channel on the gateway (the player's own glow in the video has no spell in the data)
+                Creature* trigger = me->SummonCreature(NPC_WORLD_TRIGGER, RitualGateway.GetPositionX(), RitualGateway.GetPositionY(),
+                    RitualGateway.GetPositionZ() + 6.0f, 0.0f, TEMPSUMMON_TIMED_DESPAWN, 110s);
+                if (!trigger)
+                    return;
+                _summons.push_back(trigger->GetGUID());
+                for (ObjectGuid const& guid : { me->GetGUID(), zelifrax, shinfel, jubeka })
+                    if (Creature* member = ObjectAccessor::GetCreature(*me, guid))
+                        member->CastSpell(trigger, SPELL_FEL_RITUAL, CastSpellExtraArgsInit{ .TriggerFlags = TRIGGERED_FULL_MASK });
             })
-            .Schedule(39s, [this, playerGuid](TaskContext /*context*/)
+            .Schedule(48s, [this](TaskContext)
             {
-                if (Player* player = Get(playerGuid))
+                if (GameObject* gateway = ObjectAccessor::GetGameObject(*me, _gateway))
+                    gateway->SetGoState(GO_STATE_ACTIVE);
+            })
+            .Schedule(49s, [this, zelifrax, p](TaskContext) { TalkFrom(zelifrax, SAY_ZELIFRAX_RITUAL_BEGINS, p); })
+            .Schedule(55s, [this, zelifrax, p](TaskContext) { TalkFrom(zelifrax, SAY_ZELIFRAX_INCANTATION_2, p); })
+            .Schedule(57s, [this, jubeka, p](TaskContext) { TalkFrom(jubeka, SAY_JUBEKA_DEEPER, p); })
+            .Schedule(68s, [this, zelifrax, p](TaskContext) { TalkFrom(zelifrax, SAY_ZELIFRAX_INCANTATION_3, p); })
+            .Schedule(76s, [this, p](TaskContext) { Talk(SAY_RITSSYN_GREAT_POWER, Get(p)); })
+            .Schedule(83s, [this, zelifrax, p](TaskContext) { TalkFrom(zelifrax, SAY_ZELIFRAX_INCANTATION_4, p); })
+            .Schedule(85s, [this, p](TaskContext) { Talk(SAY_RITSSYN_ZELIFRAX, Get(p)); })
+            .Schedule(89s, [this, zelifrax, p](TaskContext) { TalkFrom(zelifrax, SAY_ZELIFRAX_MIXES_WORDS, p); })
+            .Schedule(100s, [this, jubeka, p](TaskContext) { TalkFrom(jubeka, SAY_JUBEKA_THE_PORTAL, p); })
+            .Schedule(107s, [this, p](TaskContext)
+            {
+                // heard from inside the gateway before he is seen (the chat names him "Unknown")
+                if (Creature* jagganoth = me->SummonCreature(NPC_JAGGANOTH_CIRCLE, RitualGateway, TEMPSUMMON_TIMED_DESPAWN, 60s))
+                {
+                    _jagganoth = jagganoth->GetGUID();
+                    _summons.push_back(_jagganoth);
+                    jagganoth->SetImmuneToAll(true);
+                    jagganoth->AI()->Talk(SAY_JAGGANOTH_WHO_SUMMONS, Get(p));
+                }
+            })
+            .Schedule(108s, [this](TaskContext)
+            {
+                // steps out to stand in the gateway's mouth, and no further
+                if (Creature* jagganoth = ObjectAccessor::GetCreature(*me, _jagganoth))
+                    jagganoth->GetMotionMaster()->MovePoint(0, RitualJagganoth);
+            })
+            .Schedule(114s, [this, zelifrax, p](TaskContext) { TalkFrom(zelifrax, SAY_ZELIFRAX_COMMANDS, p); })
+            .Schedule(117s, [this, zelifrax](TaskContext)
+            {
+                if (Creature* gnome = ObjectAccessor::GetCreature(*me, zelifrax))
+                {
+                    gnome->InterruptNonMeleeSpells(false);
+                    gnome->GetMotionMaster()->MovePoint(0, RitualZelifraxAhead);
+                }
+            })
+            .Schedule(123s, [this, p](TaskContext)
+            {
+                if (Creature* jagganoth = ObjectAccessor::GetCreature(*me, _jagganoth))
+                    jagganoth->AI()->Talk(SAY_JAGGANOTH_SCORNS, Get(p));
+            })
+            .Schedule(124s, [this, zelifrax](TaskContext)
+            {
+                Creature* jagganoth = ObjectAccessor::GetCreature(*me, _jagganoth);
+                Creature* gnome = ObjectAccessor::GetCreature(*me, zelifrax);
+                if (!jagganoth || !gnome)
+                    return;
+                jagganoth->SetFacingToObject(gnome);
+                jagganoth->HandleEmoteCommand(EMOTE_ONESHOT_ATTACK1H);
+                jagganoth->CastSpell(gnome, SPELL_GRAB_ZELIFRAX, CastSpellExtraArgsInit{ .TriggerFlags = TRIGGERED_FULL_MASK });
+            })
+            .Schedule(127s, [this, zelifrax, p](TaskContext)
+            {
+                TalkFrom(zelifrax, SAY_ZELIFRAX_SCREAM, p);
+                if (Creature* gnome = ObjectAccessor::GetCreature(*me, zelifrax))
+                    gnome->DespawnOrUnsummon(1s);
+            })
+            .Schedule(133s, [this, p](TaskContext)
+            {
+                if (Creature* jagganoth = ObjectAccessor::GetCreature(*me, _jagganoth))
+                    jagganoth->AI()->Talk(SAY_JAGGANOTH_FOOLISH_MORTALS, Get(p));
+            })
+            .Schedule(142s, [this, p](TaskContext)
+            {
+                if (Creature* jagganoth = ObjectAccessor::GetCreature(*me, _jagganoth))
+                    jagganoth->AI()->Talk(SAY_JAGGANOTH_SERVE_ME, Get(p));
+            })
+            .Schedule(143s, [this, shinfel, jubeka, p](TaskContext)
+            {
+                // four Jailers leap from the gateway onto the council and the warlock
+                for (ObjectGuid const& guid : { me->GetGUID(), shinfel, jubeka, p })
+                {
+                    Unit* target = ObjectAccessor::GetUnit(*me, guid);
+                    if (!target)
+                        continue;
+                    if (Creature* jailer = me->SummonCreature(NPC_DREADSCAR_JAILER, RitualGateway, TEMPSUMMON_TIMED_DESPAWN, 15s))
+                    {
+                        jailer->SetImmuneToAll(true);
+                        Position landing = target->GetNearPosition(2.0f, target->GetRelativeAngle(RitualGateway));
+                        jailer->GetMotionMaster()->MoveJump(landing, 25.0f, 12.0f);
+                        _summons.push_back(jailer->GetGUID());
+                    }
+                }
+            })
+            .Schedule(148s, [this, p](TaskContext)
+            {
+                // the teleport's screen effect is the fade to black
+                if (Player* player = Get(p))
                     if (player->GetQuestStatus(QUEST_THE_NEW_BLOOD) == QUEST_STATUS_INCOMPLETE)
                         player->CastSpell(player, SPELL_START_SCENARIO, CastSpellExtraArgsInit{ .TriggerFlags = TRIGGERED_FULL_MASK });
             })
-            .Schedule(45s, [this](TaskContext /*context*/)
+            .Schedule(155s, [this](TaskContext)
             {
                 for (ObjectGuid const& guid : _summons)
                     if (Creature* summon = ObjectAccessor::GetCreature(*me, guid))
@@ -296,13 +420,15 @@ private:
                 _summons.clear();
                 if (GameObject* gateway = ObjectAccessor::GetGameObject(*me, _gateway))
                     gateway->DespawnOrUnsummon();
+                _gateway.Clear();
+                _jagganoth.Clear();
                 _ritualRunning = false;
             });
     }
 
     ObjectGuid Summon(uint32 entry, Position const& pos)
     {
-        if (Creature* summon = me->SummonCreature(entry, pos, TEMPSUMMON_TIMED_DESPAWN, 60s))
+        if (Creature* summon = me->SummonCreature(entry, pos, TEMPSUMMON_TIMED_DESPAWN, 170s))
         {
             _summons.push_back(summon->GetGUID());
             return summon->GetGUID();
@@ -321,6 +447,7 @@ private:
     TaskScheduler _scheduler;
     std::vector<ObjectGuid> _summons;
     ObjectGuid _gateway;
+    ObjectGuid _jagganoth;
     bool _ritualRunning = false;
 };
 
@@ -329,6 +456,36 @@ private:
 struct npc_calydus_circle_of_wills : public ScriptedAI
 {
     using ScriptedAI::ScriptedAI;
+
+    enum
+    {
+        SAY_CALYDUS_THEY_DID_IT         = 0, // 103567 (spoken as the Circle loads)
+        SAY_CALYDUS_FIND_THE_WEAPON     = 1  // 103568
+    };
+
+    // The warlock lands beside him from the prison: The New Blood rewarded by the scenario, the Tome not yet taken
+    void MoveInLineOfSight(Unit* who) override
+    {
+        Player* player = who->ToPlayer();
+        if (!player || player->IsGameMaster() || _greeted.count(player->GetGUID()) || !me->IsWithinDist(player, 30.0f))
+            return;
+        if (player->GetQuestStatus(QUEST_THE_NEW_BLOOD) != QUEST_STATUS_REWARDED
+            || player->GetQuestStatus(QUEST_THE_TOME_OF_BLIGHTED_IMPLEMENTS) != QUEST_STATUS_NONE)
+            return;
+        _greeted.insert(player->GetGUID());
+        Talk(SAY_CALYDUS_THEY_DID_IT, player);
+        ObjectGuid const guid = player->GetGUID();
+        _scheduler.Schedule(8s, [this, guid](TaskContext)
+        {
+            if (Player* player = ObjectAccessor::GetPlayer(*me, guid))
+                Talk(SAY_CALYDUS_FIND_THE_WEAPON, player);
+        });
+    }
+
+    void UpdateAI(uint32 diff) override
+    {
+        _scheduler.Update(diff);
+    }
 
     void OnQuestAccept(Player* player, Quest const* quest) override
     {
@@ -353,6 +510,10 @@ struct npc_calydus_circle_of_wills : public ScriptedAI
             player->CastSpell(player, SPELL_TOME_PLAYER_CHOICE, CastSpellExtraArgsInit{ .TriggerFlags = TRIGGERED_FULL_MASK });
         return true;
     }
+
+private:
+    TaskScheduler _scheduler;
+    GuidUnorderedSet _greeted;
 };
 
 // 245 - The Tome of Blighted Implements: Destruction only (Affliction and Demonology have no artifact quest yet)
