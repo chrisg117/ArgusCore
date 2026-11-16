@@ -91,6 +91,7 @@
 #include "World.h"
 #include "WorldPacket.h"
 #include "WorldSession.h"
+#include <limits>
 #include <queue>
 #include <sstream>
 #include <cmath>
@@ -789,6 +790,96 @@ bool Unit::HasBreakableByDamageCrowdControlAura(Unit* excludeCasterChannel) cons
             || HasBreakableByDamageAuraType(SPELL_AURA_TRANSFORM, excludeAura));
 }
 
+namespace
+{
+// Legacy-content scaling: the level-gap bonus retail ran from 6.0.2 through 7.3.5 against
+// creatures of past expansions (CreatureDifficulty expansion <= LegacyScaling.MaxExpansion,
+// on a map of such an expansion) that stand below the player's level. gap = creature - player.
+float LegacyDealtFactor(int32 gap)
+{
+    switch (gap)
+    {
+        case -1: return 1.0625f;
+        case -2: return 1.125f;
+        case -3: return 1.1875f;
+        case -4: return 1.25f;
+        case -5: return 4.0f;
+        case -6: return 4.5f;
+        case -7: return 5.0f;
+        case -8: return 5.5f;
+        case -9: return 6.0f;
+        default:
+            return gap >= 0 ? 1.0f : sWorld->getFloatConfig(CONFIG_LEGACY_SCALING_DEALT_MAX);
+    }
+}
+
+float LegacyTakenFactor(int32 gap)
+{
+    if (gap >= 0)
+        return 1.0f;
+    return std::max(1.0f + 0.1f * float(gap), sWorld->getFloatConfig(CONFIG_LEGACY_SCALING_TAKEN_MIN));
+}
+
+// The player behind a unit for this rule: the player itself, or the owner of its pet or
+// guardian. A charmed unit (mind control, possession) counts for neither side.
+Player const* LegacyScalingPlayer(Unit const* unit)
+{
+    if (unit->IsCharmed())
+        return nullptr;
+    return unit->GetCharmerOrOwnerPlayerOrPlayerItself();
+}
+
+bool LegacyScalingApplies(Player const* player, Creature const* creature, int32& gap)
+{
+    if (!sWorld->getBoolConfig(CONFIG_LEGACY_SCALING_ENABLE))
+        return false;
+    if (creature->IsPet() || creature->IsTotem() || creature->IsCharmed() || creature->IsControlledByPlayer())
+        return false;
+
+    MapEntry const* mapEntry = creature->GetMap()->GetEntry();
+    if (sWorld->getIntConfig(CONFIG_LEGACY_SCALING_INSTANCES_ONLY) && !mapEntry->IsDungeon())
+        return false;
+
+    int32 maxExpansion = int32(sWorld->getIntConfig(CONFIG_LEGACY_SCALING_MAX_EXPANSION));
+    if (creature->GetCreatureDifficulty()->GetHealthScalingExpansion() > maxExpansion)
+        return false;
+    if (int32(mapEntry->Expansion()) > maxExpansion)
+        return false;
+
+    // A boss reads its own level: GetLevelForTarget returns player level + WorldBossLevelDiff for it.
+    int32 creatureLevel = (creature->HasScalableLevels() && !creature->isWorldBoss())
+        ? int32(creature->GetLevelForTarget(player))
+        : int32(creature->GetLevel());
+    gap = creatureLevel - int32(player->GetEffectiveLevel());
+    return gap <= -1;
+}
+
+void ApplyLegacyScaling(Unit const* attacker, Unit const* victim, uint32& damage)
+{
+    if (!damage || attacker == victim)
+        return;
+
+    int32 gap = 0;
+    if (Creature const* creature = victim->ToCreature())
+    {
+        if (Player const* player = LegacyScalingPlayer(attacker))
+        {
+            if (LegacyScalingApplies(player, creature, gap))
+                damage = uint32(std::min<double>(double(damage) * LegacyDealtFactor(gap), double(std::numeric_limits<uint32>::max())));
+            return;
+        }
+    }
+
+    if (!sWorld->getBoolConfig(CONFIG_LEGACY_SCALING_TAKEN_ENABLE))
+        return;
+
+    if (Creature const* creature = attacker->ToCreature())
+        if (Player const* player = LegacyScalingPlayer(victim))
+            if (LegacyScalingApplies(player, creature, gap))
+                damage = std::max<uint32>(uint32(double(damage) * LegacyTakenFactor(gap)), 1u);
+}
+}
+
 /*static*/ void Unit::DealDamageMods(Unit const* attacker, Unit const* victim, uint32& damage, uint32* absorb)
 {
     if (!victim || !victim->IsAlive() || victim->HasUnitState(UNIT_STATE_IN_FLIGHT) || (victim->GetTypeId() == TYPEID_UNIT && victim->ToCreature()->IsEvadingAttacks()))
@@ -800,7 +891,10 @@ bool Unit::HasBreakableByDamageCrowdControlAura(Unit* excludeCasterChannel) cons
     }
 
     if (attacker)
+    {
         damage *= attacker->GetDamageMultiplierForTarget(victim);
+        ApplyLegacyScaling(attacker, victim, damage);
+    }
 }
 
 /*static*/ AuraEffectVector Unit::CopyAuraEffectList(Unit::AuraEffectList const& list)

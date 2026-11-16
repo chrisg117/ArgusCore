@@ -703,6 +703,8 @@ void World::LoadConfigSettings(bool reload)
         // visibility into real violations without ever touching gameplay unless an operator
         // deliberately opts into Correct/Kick. See ARGUSCORE_FIXES.md.
         { .Name = "Movement.AntiCheat.Enable"sv, .DefaultValue = true, .Index = CONFIG_MOVEMENT_ANTICHEAT_ENABLE },
+        { .Name = "LegacyScaling.Enable"sv, .DefaultValue = true, .Index = CONFIG_LEGACY_SCALING_ENABLE },
+        { .Name = "LegacyScaling.Taken.Enable"sv, .DefaultValue = true, .Index = CONFIG_LEGACY_SCALING_TAKEN_ENABLE },
     } };
 
     static constexpr ConfigOptionLoadDefinitionArray<uint32, INT_CONFIG_VALUE_COUNT> ints =
@@ -930,6 +932,8 @@ void World::LoadConfigSettings(bool reload)
         { .Name = "Movement.AntiCheat.KickBanWindowMinutes"sv, .DefaultValue = 10, .Index = CONFIG_MOVEMENT_ANTICHEAT_KICK_BAN_WINDOW_MINUTES, .Min = 1 },
         // Ban duration in seconds once KickBanThreshold is reached. 0 = permanent.
         { .Name = "Movement.AntiCheat.KickBanDuration"sv, .DefaultValue = 86400, .Index = CONFIG_MOVEMENT_ANTICHEAT_KICK_BAN_DURATION },
+        { .Name = "LegacyScaling.MaxExpansion"sv, .DefaultValue = 3, .Index = CONFIG_LEGACY_SCALING_MAX_EXPANSION, .Min = 0, .Max = 6 },
+        { .Name = "LegacyScaling.InstancesOnly"sv, .DefaultValue = 0, .Index = CONFIG_LEGACY_SCALING_INSTANCES_ONLY, .Min = 0, .Max = 1 },
     } };
 
     static constexpr ConfigOptionLoadDefinitionArray<uint64, INT64_CONFIG_VALUE_COUNT> int64s =
@@ -966,6 +970,8 @@ void World::LoadConfigSettings(bool reload)
         // Multiplier applied to a unit's max speed before flagging a movement violation - absorbs
         // latency/lag jitter. See ARGUSCORE_FIXES.md.
         { .Name = "Movement.AntiCheat.ToleranceMultiplier"sv, .DefaultValue = 1.3f, .Index = CONFIG_MOVEMENT_ANTICHEAT_TOLERANCE, .Min = 1.0f },
+        { .Name = "LegacyScaling.Dealt.Max"sv, .DefaultValue = 16.5f, .Index = CONFIG_LEGACY_SCALING_DEALT_MAX, .Min = 1.0f },
+        { .Name = "LegacyScaling.Taken.Min"sv, .DefaultValue = 0.1f, .Index = CONFIG_LEGACY_SCALING_TAKEN_MIN, .Min = 0.01f, .Max = 1.0f },
     } };
 
     static constexpr ConfigOptionLoadDefinitionArray<float, MAX_RATES> rates =

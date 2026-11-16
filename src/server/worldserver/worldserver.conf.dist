@@ -1833,6 +1833,61 @@ CreatureFamilyFleeDelay = 7000
 WorldBossLevelDiff = 3
 
 #
+#    LegacyScaling.Enable
+#        Description: Legacy-content scaling: the level-gap bonus retail ran from 6.0.2 through
+#                     7.3.5. A player (and anything the player owns) deals more damage to, and
+#                     takes less damage from, a creature of a past expansion that stands below
+#                     the player's level. The expansion is CreatureDifficulty's expansion field
+#                     and the map's; the multiplier depends only on the level gap.
+#        Default:     1 - (Enabled)
+#                     0 - (Disabled)
+
+LegacyScaling.Enable = 1
+
+#
+#    LegacyScaling.Taken.Enable
+#        Description: Also reduce the damage such creatures deal to the player
+#                     (factor 1 - 0.1 per level below the player, floored at LegacyScaling.Taken.Min).
+#        Default:     1 - (Enabled)
+#                     0 - (Disabled, only the damage dealt is scaled)
+
+LegacyScaling.Taken.Enable = 1
+
+#
+#    LegacyScaling.MaxExpansion
+#        Description: Highest expansion the rule applies to. Both the creature's expansion and
+#                     the map's must be at or below it. 0 Classic, 1 Burning Crusade, 2 Wrath,
+#                     3 Cataclysm, 4 Mists, 5 Warlords, 6 Legion.
+#        Default:     3 - (Cataclysm and earlier, the retail 7.3.5 gate)
+
+LegacyScaling.MaxExpansion = 3
+
+#
+#    LegacyScaling.InstancesOnly
+#        Description: Apply the rule only inside dungeons and raids.
+#        Default:     0 - (Everywhere, as on retail)
+#                     1 - (Dungeons and raids only)
+
+LegacyScaling.InstancesOnly = 0
+
+#
+#    LegacyScaling.Dealt.Max
+#        Description: Damage multiplier at ten or more levels above the creature. The table
+#                     below that is fixed: 9 levels 6.0, 8 5.5, 7 5.0, 6 4.5, 5 4.0, 4 1.25,
+#                     3 1.1875, 2 1.125, 1 1.0625.
+#        Default:     16.5 (minimum 1)
+
+LegacyScaling.Dealt.Max = 16.5
+
+#
+#    LegacyScaling.Taken.Min
+#        Description: Floor of the damage-taken factor (reached at nine or more levels above
+#                     the creature).
+#        Default:     0.1 (range 0.01 to 1)
+
+LegacyScaling.Taken.Min = 0.1
+
+#
 #    Corpse.Decay.Normal
 #    Corpse.Decay.Elite
 #    Corpse.Decay.RareElite
