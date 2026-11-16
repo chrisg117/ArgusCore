@@ -21,7 +21,9 @@
 // warlock on The Heart of the Dreadscar.
 // No spawn data exists for this map: every place is from its doodads (the prison's cages, the fel pits, the finale
 // gateway) on the navigation mesh, staged after Wowhead's Destruction acquisition video (3:25-13:10) as the watcher's
-// timeline gives it row by row (warlock re-do, 2026-11-10).
+// timeline gives it row by row (warlock re-do, 2026-11-10). The layout (the cell, the council's pillars, the archive, Calydus's
+// stations) and the cage and release mechanics follow a live realm recording of The New Blood with a map-coordinate
+// readout, calibrated against this map (2026-11-15).
 
 #include "ScriptMgr.h"
 #include "AreaTrigger.h"
@@ -93,6 +95,8 @@ enum Data
     SUMMON_PROPERTIES_COUNCIL           = 3738,    // the data's follower summon (195044/195065/195067): ally, follows
 
     SPELL_ENSLAVE_BESHTAL               = 199336,
+    SPELL_ENSLAVE_DEMON_BUTTON          = 199338, // override-spells aura (OverrideSpellData 643): 199336 on the extra action button
+    SPELL_RELEASING                     = 192217, // the captives' click (npc_spellclick_spells)
     SPELL_EXIT_TELEPORT                 = 196340, // to the Circle of Wills (spell_target_position); credits 101150
     SPELL_WOUNDED                       = 200536, // Jubeka, left behind on the escape
     SPELL_VISUAL_FEL_BOMBARDMENT        = 48723,  // 193507's impact; played, not cast (193507 knocks back 100 yd)
@@ -172,7 +176,6 @@ enum Data
     CONVERSATION_JAGGANOTH_NOT_OVER     = 15220003,
 
     DATA_SEND_EVENT                     = 1,
-    DATA_GUARD_DIED                     = 2,
     DATA_CAPTIVE_FREED                  = 3,
     DATA_MET_CALYDUS                    = 4,
     DATA_NELACH_DEAD                    = 5,
@@ -181,18 +184,24 @@ enum Data
     ACTION_KNEEL                        = 1,
     ACTION_RELEASE                      = 2,
     ACTION_WAIT_PAST_THE_BARRIER        = 3,
+    ACTION_LEAVE_THE_CAGE               = 4,
 
     POINT_CALYDUS_RUNS_OFF              = 1,
     POINT_CALYDUS_ARCHIVE               = 2
 };
 
-// Map 1522: the round dais in the pit beside the landing cage, the ramp out of it, the three spike pillars on the upper
-// level (the captives' spawns), the fel barrier, the archive and the exit gateway (7Lg_Legion_Gatewaysmall01)
-Position const CalydusRampTop     = { 2996.00f, 1158.00f, 215.60f, 4.10f };
+// Map 1522: the Jailer Cage on the pit's rim (the landing), the round dais beside it, the ramp out of the pit, the three
+// spike pillars to the north, west and south of the dais (the captives' spawns), the fel barrier, the walled rune circle
+// on the upper level (the archive, the Tome on its centre) and the exit gateway (7Lg_Legion_Gatewaysmall01). Positions
+// are the recording's player stops (the NPC within a few yards) on the ground heights measured in the client
+Position const DaisRim            = { 2964.78f, 1128.12f, 206.68f, 0.00f }; // the map's safe location, past the fel strip
+Position const RitssynOnTheRim    = { 2966.50f, 1126.00f, 206.70f, 0.60f };
+Position const CalydusRampTop     = { 2987.50f, 1155.50f, 211.52f, 3.90f };
 Position const CalydusRunsOff     = { 3018.13f, 1163.20f, 221.35f, 0.00f };
-Position const CalydusBarrier     = { 3060.15f, 1085.20f, 232.54f, 3.50f };
-Position const CalydusArchive     = { 3055.60f,  929.87f, 251.43f, 0.20f };
-Position const JagganothArchive   = { 3083.07f,  917.33f, 250.76f, 3.30f };
+Position const CalydusBarrier     = { 3075.00f, 1069.00f, 239.71f, 2.70f };
+Position const CalydusToTheArchive = { 3090.00f, 1000.00f, 254.89f, 1.57f }; // short of the archive, before Nelach
+Position const CalydusArchive     = { 3098.50f,  969.00f, 257.74f, 3.85f };
+Position const JagganothArchive   = { 3093.20f,  956.00f, 257.74f, 1.34f };
 Position const CalydusGatewayMouth = { 3086.50f,  840.00f, 245.00f, 1.57f };
 
 static bool IsOnStep(Map const* map, uint32 stepId)
@@ -260,7 +269,24 @@ public:
             }
 
             _player = player->GetGUID();
-            // Far From Home: Ritssyn speaks from the next cell, out of view at first (3:29-4:03)
+
+            // The cell: the client does not collide with the cage's bars, so the warlock is held in it until Beshtal is
+            // enslaved. A relog in the cage loses the button aura (removed on leaving the world): it comes back here
+            if (!_outOfTheCage && (IsOnStep(instance, STEP_FAR_FROM_HOME) || IsOnStep(instance, STEP_THE_DREAD_WARDEN)))
+            {
+                ObjectGuid const p = player->GetGUID();
+                player->m_Events.AddEventAtOffset([this, p]
+                {
+                    Player* warlock = ObjectAccessor::GetPlayer(instance, p);
+                    if (!warlock || _outOfTheCage || warlock->IsBeingTeleported())
+                        return;
+                    warlock->SetControlled(true, UNIT_STATE_ROOT);
+                    if (IsOnStep(instance, STEP_THE_DREAD_WARDEN))
+                        warlock->CastSpell(warlock, SPELL_ENSLAVE_DEMON_BUTTON, CastSpellExtraArgsInit{ .TriggerFlags = TRIGGERED_FULL_MASK });
+                }, 1s);
+            }
+
+            // Far From Home: Ritssyn wakes the warlock from beside them in the cage (3:29-4:03)
             if (IsOnStep(instance, STEP_FAR_FROM_HOME) && !_monologue)
             {
                 _monologue = true;
@@ -283,6 +309,8 @@ public:
             {
                 case DATA_SEND_EVENT:
                     SendScenarioEvent(data);
+                    if (data == EVENT_BESHTAL_ENSLAVED)
+                        LeaveTheCage();
                     break;
                 case DATA_MET_CALYDUS:
                     MetCalydus();
@@ -306,9 +334,7 @@ public:
 
         void SetGuidData(uint32 type, ObjectGuid guid) override
         {
-            if (type == DATA_GUARD_DIED)
-                GuardDied(guid);
-            else if (type == DATA_CAPTIVE_FREED)
+            if (type == DATA_CAPTIVE_FREED)
                 CaptiveFreed(guid);
         }
 
@@ -391,6 +417,11 @@ public:
         {
             switch (step)
             {
+                case STEP_THE_DREAD_WARDEN:
+                    // the extra action button comes with the stage banner (3:26): Enslave Beshtal from inside the cage
+                    if (Player* player = GetWarlock())
+                        player->CastSpell(player, SPELL_ENSLAVE_DEMON_BUTTON, CastSpellExtraArgsInit{ .TriggerFlags = TRIGGERED_FULL_MASK });
+                    break;
                 case STEP_THE_SHATTERED_COUNCIL:
                     // Calydus waits at the top of the ramp out of the pit; Ritssyn's lines come from his kneel (ACTION_KNEEL)
                     SummonCalydus(CalydusRampTop);
@@ -407,12 +438,13 @@ public:
                         calydus->AI()->DoAction(ACTION_WAIT_PAST_THE_BARRIER);
                     break;
                 case STEP_THE_PIT_LORDS_SECRETS:
-                    // Calydus leads to the archive (10:05); Nelach waits at its entrance
+                    // Calydus leads to the archive (10:05) and stops short of it; Nelach waits at its entrance, and his
+                    // death puts Calydus in the rune circle (NelachDead)
                     _scheduler.Schedule(3s, [this](TaskContext) { Say(NPC_JUBEKA_CAPTIVE, SAY_JUBEKA_BAD_FEELING); });
                     if (Creature* calydus = instance->GetCreature(_calydus))
                     {
                         calydus->SetWalk(false);
-                        calydus->GetMotionMaster()->MovePoint(POINT_CALYDUS_ARCHIVE, CalydusArchive);
+                        calydus->GetMotionMaster()->MovePoint(POINT_CALYDUS_ARCHIVE, CalydusToTheArchive);
                     }
                     break;
                 case STEP_TO_FIGHT_ANOTHER_DAY:
@@ -423,26 +455,26 @@ public:
             }
         }
 
-        // A captive is freed once no guard near her pillar is left alive (the video shows no click: she drops when the
-        // player stands under her)
-        void GuardDied(ObjectGuid guardGuid)
+        // Beshtal is enslaved: the button goes, and about 8 s later the warlock and Ritssyn are out of the cage on the
+        // dais's rim (the cast lands about 3:32, still caged at 3:39, out at 3:41). The cage stays standing and closed;
+        // the short jump carries them over the damaging fel strip between its floor and the rim
+        void LeaveTheCage()
         {
-            Creature* guard = instance->GetCreature(guardGuid);
-            if (!guard)
+            if (_outOfTheCage)
                 return;
-            for (uint32 entry : { NPC_JUBEKA_CAPTIVE, NPC_ZINNIN_CAPTIVE, NPC_SHINFEL_CAPTIVE })
+            _outOfTheCage = true;
+            if (Player* player = GetWarlock())
+                player->RemoveAurasDueToSpell(SPELL_ENSLAVE_DEMON_BUTTON);
+            _scheduler.Schedule(8s, [this](TaskContext)
             {
-                Creature* captive = guard->FindNearestCreature(entry, 25.0f);
-                if (!captive || _followers.count(entry))
-                    continue;
-                std::list<Creature*> guards;
-                captive->GetCreatureListWithEntryInGrid(guards, NPC_DREADSCAR_SUNDERER, 25.0f);
-                captive->GetCreatureListWithEntryInGrid(guards, NPC_DREADSCAR_TORTURER, 25.0f);
-                captive->GetCreatureListWithEntryInGrid(guards, guard->GetEntry(), 25.0f);
-                bool const anyLeft = std::any_of(guards.begin(), guards.end(), [](Creature* g) { return g->IsAlive(); });
-                if (!anyLeft)
-                    captive->AI()->DoAction(ACTION_RELEASE);
-            }
+                if (Player* player = GetWarlock())
+                {
+                    player->SetControlled(false, UNIT_STATE_ROOT);
+                    player->GetMotionMaster()->MoveJump(DaisRim, 12.0f, 6.0f);
+                }
+                if (Creature* ritssyn = Find(NPC_RITSSYN_PRISONER))
+                    ritssyn->AI()->DoAction(ACTION_LEAVE_THE_CAGE);
+            });
         }
 
         // The hanging captive has dropped: she joins the warlock as the data's follower summon (an ally that follows and
@@ -615,6 +647,7 @@ public:
         std::unordered_map<uint32, ObjectGuid> _followers;
         uint32 _step = 0;
         bool _monologue = false;
+        bool _outOfTheCage = false;
         bool _metCalydus = false;
         bool _xeltothDead = false;
     };
@@ -636,8 +669,9 @@ struct npc_dreadscar_scenario_hostile : public ScriptedAI
     }
 };
 
-// 98771 - Ritssyn Flamescowl, Jagganoth's prisoner: helps against Beshtal from the dais's rim, then kneels there,
-// wounded, and stays (he does not follow; 5:00-5:15)
+// 98771 - Ritssyn Flamescowl, Jagganoth's prisoner: caged with the warlock, out with them onto the dais's rim once
+// Beshtal is enslaved (beside the player at 3:46), helps against Beshtal from there, then kneels, wounded, and stays
+// (he does not follow; 5:00-5:15)
 struct npc_ritssyn_flamescowl_prisoner : public ScriptedAI
 {
     using ScriptedAI::ScriptedAI;
@@ -650,6 +684,14 @@ struct npc_ritssyn_flamescowl_prisoner : public ScriptedAI
 
     void DoAction(int32 action) override
     {
+        if (action == ACTION_LEAVE_THE_CAGE)
+        {
+            Position rim = RitssynOnTheRim;
+            me->UpdateAllowedPositionZ(rim.m_positionX, rim.m_positionY, rim.m_positionZ);
+            me->GetMotionMaster()->MoveJump(rim, 12.0f, 6.0f);
+            me->SetHomePosition(rim);
+            return;
+        }
         if (action != ACTION_KNEEL)
             return;
         me->CombatStop(true);
@@ -674,9 +716,9 @@ private:
     TaskScheduler _scheduler;
 };
 
-// 98836 - Beshtal, Jagganoth's Jailer. 199336 Enslave Beshtal (a click on him) binds him: he obeys, the warlock leaves
-// the cage (step 1945, event 47179) and goes down to the dais with him; there the enslavement breaks and he is fought
-// with Ritssyn's help (event 47333 on his death, 4:13-4:55)
+// 98836 - Beshtal, Jagganoth's Jailer, on the dais. 199336 Enslave Beshtal, cast from inside the cage through the extra
+// action button (199338), binds him: he obeys and the warlock is let out of the cage onto the dais's rim (step 1945,
+// event 47179); there the enslavement breaks and he is fought with Ritssyn's help (event 47333 on his death, 4:13-4:55)
 struct npc_beshtal : public ScriptedAI
 {
     using ScriptedAI::ScriptedAI;
@@ -757,6 +799,23 @@ class spell_warlock_enslave_beshtal : public SpellScript
     }
 };
 
+// 192217 - Releasing: the click on a hanging captive (her spawn's npc_spellclick_spells), 1.5 s; she drops whatever
+// state her guards are in (the live recording, 5:22: "Releasing" on Jubeka mid-fight)
+class spell_dreadscar_releasing : public SpellScript
+{
+    void HandleDummy(SpellEffIndex /*effIndex*/) const
+    {
+        if (Creature* captive = GetHitCreature())
+            if (captive->IsAIEnabled())
+                captive->AI()->DoAction(ACTION_RELEASE);
+    }
+
+    void Register() override
+    {
+        OnEffectHitTarget += SpellEffectFn(spell_dreadscar_releasing::HandleDummy, EFFECT_0, SPELL_EFFECT_DUMMY);
+    }
+};
+
 // 101050 - Calydus, in Jagganoth's prison. Never seen walking between his stations: the instance places him at each.
 // At the ramp top he begs, offers his help and runs off (5:26-5:52); past the barrier he calls the group over (9:27)
 struct npc_calydus_prison : public ScriptedAI
@@ -808,8 +867,9 @@ private:
     bool _waitingPastTheBarrier = false;
 };
 
-// 99147 Jubeka, 99145 Zinnin, 99146 Shinfel: the shattered council, hanging chained on three spike pillars along the
-// path (6:18, 7:29, 8:32). Each drops when her guards are dead and joins the warlock (the instance's CaptiveFreed)
+// 99147 Jubeka, 99145 Zinnin, 99146 Shinfel: the shattered council, hanging chained on three spike pillars around the
+// dais (the live recording's 5:22, 6:06, 6:26). Each drops at the warlock's click (192217 Releasing), whatever state her
+// guards are in, and joins the warlock (the instance's CaptiveFreed)
 struct npc_dreadscar_scenario_captive : public ScriptedAI
 {
     using ScriptedAI::ScriptedAI;
@@ -835,6 +895,7 @@ struct npc_dreadscar_scenario_captive : public ScriptedAI
         if (action != ACTION_RELEASE || _freed || !IsOnStep(me->GetMap(), STEP_THE_SHATTERED_COUNCIL))
             return;
         _freed = true;
+        me->RemoveNpcFlag(UNIT_NPC_FLAG_SPELLCLICK);
         uint32 eventId = EVENT_JUBEKA_FREED;
         if (me->GetEntry() == NPC_ZINNIN_CAPTIVE)
             eventId = EVENT_ZINNIN_FREED;
@@ -855,7 +916,8 @@ private:
     bool _freed = false;
 };
 
-// 99397 Dreadscar Sunderer, 98813 Bloodscent Felhound, 98878 Dreadscar Torturer: the captives' guards
+// 99397 Dreadscar Sunderer, 98813 Bloodscent Felhound, 98878 Dreadscar Torturer: hostiles by the captives' pillars,
+// with their lines; their deaths free nobody
 struct npc_dreadscar_captive_guard : public ScriptedAI
 {
     using ScriptedAI::ScriptedAI;
@@ -891,12 +953,6 @@ struct npc_dreadscar_captive_guard : public ScriptedAI
             }
         }
         ScriptedAI::MoveInLineOfSight(who);
-    }
-
-    void JustDied(Unit* /*killer*/) override
-    {
-        if (InstanceScript* instance = me->GetInstanceScript())
-            instance->SetGuidData(DATA_GUARD_DIED, me->GetGUID());
     }
 
     void UpdateAI(uint32 diff) override
@@ -1081,6 +1137,7 @@ void AddSC_instance_dreadscar_rift_scenario()
     RegisterCreatureAI(npc_ritssyn_flamescowl_prisoner);
     RegisterCreatureAI(npc_beshtal);
     RegisterSpellScript(spell_warlock_enslave_beshtal);
+    RegisterSpellScript(spell_dreadscar_releasing);
     RegisterCreatureAI(npc_calydus_prison);
     RegisterCreatureAI(npc_dreadscar_scenario_captive);
     RegisterCreatureAI(npc_dreadscar_captive_guard);
