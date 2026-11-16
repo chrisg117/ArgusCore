@@ -47,6 +47,12 @@ What is playable on the `dev` branch. Counts only; details live in the specs.
 | Tomb of Sargeras | 0 of 9 |
 | Antorus, the Burning Throne | 0 of 11 |
 
+**Engine systems**
+
+| System | Status |
+|--------|--------|
+| Legacy scaling (level 110 against Classic to Cataclysm creatures) | Landed, retail 6.0.2 to 7.3.5 level-gap table |
+
 ## About
 
 ArgusCore is a C++ server emulator for World of Warcraft patch 7.3.5 (Legion).
