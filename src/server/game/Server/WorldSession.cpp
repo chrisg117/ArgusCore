@@ -187,8 +187,18 @@ WorldSession::~WorldSession()
     LoginDatabase.PExecute("UPDATE account SET online = 0 WHERE id = {};", GetAccountId());     // One-time query
 }
 
+void WorldSession::SetHeadless(HeadlessPacketSink sink)
+{
+    ASSERT(!m_Socket[CONNECTION_TYPE_REALM] && !m_Socket[CONNECTION_TYPE_INSTANCE], "a headless session has no socket");
+    _headless = true;
+    _headlessSink = std::move(sink);
+}
+
 bool WorldSession::PlayerDisconnected() const
 {
+    if (_headless)
+        return false;
+
     return !(m_Socket[CONNECTION_TYPE_REALM] && m_Socket[CONNECTION_TYPE_REALM]->IsOpen() &&
              m_Socket[CONNECTION_TYPE_INSTANCE] && m_Socket[CONNECTION_TYPE_INSTANCE]->IsOpen());
 }
@@ -241,7 +251,7 @@ void WorldSession::SendPacket(WorldPacket const* packet, bool forced /*= false*/
         conIdx = packet->GetConnection();
     }
 
-    if (!m_Socket[conIdx])
+    if (!_headless && !m_Socket[conIdx])
     {
         // The modern client model expects a second, "instance" socket (opened in response to
         // SMSG_CONNECT_TO, wired up via AddInstanceConnection) for a large class of opcodes,
@@ -313,6 +323,13 @@ void WorldSession::SendPacket(WorldPacket const* packet, bool forced /*= false*/
     sScriptMgr->OnPacketSend(this, *packet);
 
     TC_LOG_TRACE("network.opcode", "S->C: {} {}", GetPlayerInfo(), GetOpcodeNameForLogging(static_cast<OpcodeServer>(packet->GetOpcode())));
+    if (_headless)
+    {
+        if (_headlessSink)
+            _headlessSink(this, *packet);
+        return;
+    }
+
     m_Socket[conIdx]->SendPacket(*packet);
 }
 
@@ -364,7 +381,8 @@ bool WorldSession::Update(uint32 diff, PacketFilter& updater)
     ///- Before we process anything:
     /// If necessary, kick the player because the client didn't send anything for too long
     /// (or they've been idling in character select)
-    if (IsConnectionIdle() && !HasPermission(rbac::RBAC_PERM_IGNORE_IDLE_CONNECTION))
+    /// (a headless session has no socket to time out)
+    if (!_headless && IsConnectionIdle() && !HasPermission(rbac::RBAC_PERM_IGNORE_IDLE_CONNECTION))
         m_Socket[CONNECTION_TYPE_REALM]->CloseSocket();
 
     ///- Retrieve packets from the receive queue and call the appropriate handlers
@@ -378,7 +396,7 @@ bool WorldSession::Update(uint32 diff, PacketFilter& updater)
 
     constexpr uint32 MAX_PROCESSED_PACKETS_IN_SAME_WORLDSESSION_UPDATE = 100;
 
-    while (m_Socket[CONNECTION_TYPE_REALM] && _recvQueue.next(packet, updater))
+    while ((m_Socket[CONNECTION_TYPE_REALM] || _headless) && _recvQueue.next(packet, updater))
     {
         OpcodeClient opcode = static_cast<OpcodeClient>(packet->GetOpcode());
         ClientOpcodeHandler const* opHandle = opcodeTable[opcode];
@@ -540,6 +558,17 @@ bool WorldSession::Update(uint32 diff, PacketFilter& updater)
         ///- If necessary, log the player out
         if (ShouldLogOut(currentTime) && m_playerLoading.IsEmpty())
             LogoutPlayer(true);
+
+        ///- A headless session stays until it is kicked, then logs out like a kicked player
+        if (_headless)
+        {
+            if (!forceExit)
+                return true;
+
+            if (_player)
+                LogoutPlayer(true);
+            return false;                                       //Will remove this session from the world session map
+        }
 
         ///- Cleanup socket pointer if need
         if ((m_Socket[CONNECTION_TYPE_REALM] && !m_Socket[CONNECTION_TYPE_REALM]->IsOpen()) ||
@@ -739,6 +768,9 @@ void WorldSession::KickPlayer(std::string const& reason)
             forceExit = true;
         }
     }
+
+    if (_headless)
+        forceExit = true;
 }
 
 bool WorldSession::ValidateHyperlinksAndMaybeKick(std::string const& str)
@@ -836,6 +868,13 @@ void WorldSession::Handle_EarlyProccess(WorldPackets::Null& null)
 
 void WorldSession::SendConnectToInstance(WorldPackets::Auth::ConnectToSerial serial)
 {
+    // no client to open an instance socket: continue as World::ProcessLinkInstanceSocket does once it links
+    if (_headless)
+    {
+        HandleContinuePlayerLogin();
+        return;
+    }
+
     boost::system::error_code ignored_error;
     boost::asio::ip::address instanceAddress;
     if (std::shared_ptr<Realm const> currentRealm = sRealmList->GetCurrentRealm())
