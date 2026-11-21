@@ -37,6 +37,7 @@
 #include <boost/circular_buffer_fwd.hpp>
 #include <array>
 #include <atomic>
+#include <functional>
 #include <map>
 #include <memory>
 #include <unordered_map>
@@ -981,6 +982,15 @@ class TC_GAME_API WorldSession
         bool PlayerLogoutWithSave() const { return m_playerLogout && m_playerSave; }
         bool PlayerRecentlyLoggedOut() const { return m_playerRecentlyLogout; }
         bool PlayerDisconnected() const;
+
+        // Headless mode: a session with no client socket, driven from inside the server (test players).
+        // SetHeadless is called once, before sWorld->AddSession, on a session constructed with sock == nullptr.
+        // Outgoing packets go through every SendPacket check and OnPacketSend, then to the sink instead of a socket.
+        // The sink may be called from map update threads in parallel, so it must be thread safe.
+        // The session stays connected until KickPlayer, then logs out and is removed by World.
+        using HeadlessPacketSink = std::function<void(WorldSession*, WorldPacket const&)>;
+        void SetHeadless(HeadlessPacketSink sink);
+        bool IsHeadless() const { return _headless; }
 
         bool IsAddonRegistered(std::string_view prefix) const;
 
@@ -2005,6 +2015,8 @@ class TC_GAME_API WorldSession
         rbac::RBACData* _RBACData;
         uint32 expireTime;
         bool forceExit;
+        bool _headless = false;
+        HeadlessPacketSink _headlessSink;
         ObjectGuid m_currentBankerGUID;
 
         std::unique_ptr<boost::circular_buffer<std::pair<int64, uint32>>> _timeSyncClockDeltaQueue; // first member: clockDelta. Second member: latency of the packet exchange that was used to compute that clockDelta.

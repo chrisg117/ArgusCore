@@ -539,6 +539,11 @@ void CollectionMgr::LoadAccountItemAppearances(PreparedQueryResult knownAppearan
 
 void CollectionMgr::SaveAccountItemAppearances(LoginDatabaseTransaction trans)
 {
+    // battlenet_item_appearances and battlenet_item_favorite_appearances reference battlenet_accounts(id): an account with
+    // no battle.net link (id 0) has no row there, and one failed insert would lose the whole login transaction of the save.
+    if (!_owner->GetBattlenetAccountId())
+        return;
+
     uint16 blockIndex = 0;
     boost::to_block_range(*_appearances, DynamicBitsetBlockOutputIterator([this, &blockIndex, trans = trans.get()](uint32 blockValue)
     {
