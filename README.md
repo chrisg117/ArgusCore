@@ -52,6 +52,7 @@ What is playable on the `dev` branch. Counts only; details live in the specs.
 | System | Status |
 |--------|--------|
 | Legacy scaling (level 110 against Classic to Cataclysm creatures) | Landed, retail 6.0.2 to 7.3.5 level-gap table |
+| Headless sessions (server-side test player) | Landed, login/logout and packet capture |
 
 ## About
 
