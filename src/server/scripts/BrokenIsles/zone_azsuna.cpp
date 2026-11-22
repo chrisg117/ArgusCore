@@ -80,7 +80,9 @@ enum AzsunaCreatures
 enum AzsunaSpells
 {
     SPELL_SOUL_GEM_TRANSFORM    = 178752,
-    SPELL_SCYTHE_BEAM           = 178939
+    SPELL_SCYTHE_BEAM           = 178939,
+    SPELL_TOSS_CRYSTAL_MISSILE  = 179913,
+    SPELL_TOSS_CRYSTALS_BAR     = 179916
 };
 
 static constexpr float SoulGemRadius = 15.0f;
@@ -398,16 +400,22 @@ struct npc_illidari_stand_kayn : public AzsunaQuestPollAI
     }
 };
 
-// 89975 - Senegos (The Death of the Eldest): no spell or object credits the pool, so the cores count once brought to him
+// 89975 - Senegos (The Death of the Eldest): with the six cores in bags at his pool, the player gets the override bar of
+// Toss Crystals (179916, OverrideSpellData 573 -> 179915), and loses it on stepping away or once the pool counts
 struct npc_death_of_the_eldest_senegos : public AzsunaQuestPollAI
 {
     npc_death_of_the_eldest_senegos(Creature* creature) : AzsunaQuestPollAI(creature) { }
 
     void CheckPlayer(Player* player) override
     {
-        if (player->GetQuestStatus(QUEST_DEATH_OF_THE_ELDEST) == QUEST_STATUS_INCOMPLETE && me->IsWithinDist(player, SenegosPoolRadius)
-            && player->IsQuestObjectiveComplete(QUEST_DEATH_OF_THE_ELDEST, OBJECTIVE_LEYWORM_CORES))
-            player->KilledMonsterCredit(NPC_SENEGOS_POOL_CREDIT);
+        bool wanted = player->GetQuestStatus(QUEST_DEATH_OF_THE_ELDEST) == QUEST_STATUS_INCOMPLETE
+            && me->IsWithinDist(player, SenegosPoolRadius)
+            && player->IsQuestObjectiveComplete(QUEST_DEATH_OF_THE_ELDEST, OBJECTIVE_LEYWORM_CORES)
+            && player->GetReqKillOrCastCurrentCount(QUEST_DEATH_OF_THE_ELDEST, NPC_SENEGOS_POOL_CREDIT) == 0;
+        if (wanted && !player->HasAura(SPELL_TOSS_CRYSTALS_BAR))
+            player->CastSpell(player, SPELL_TOSS_CRYSTALS_BAR, true);
+        else if (!wanted && player->HasAura(SPELL_TOSS_CRYSTALS_BAR))
+            player->RemoveAurasDueToSpell(SPELL_TOSS_CRYSTALS_BAR);
     }
 };
 
@@ -713,6 +721,34 @@ static constexpr float WandMinRange = 5.0f;     // "And no point-blank shots! Th
 static constexpr float WandMaxRange = 40.0f;
 static constexpr float WandCone = float(M_PI) / 3.0f;   // Wand Practice's 60 degree cone
 
+// 179915 - Toss Crystals (The Death of the Eldest): the override bar's button. Effect 0 removes the bar (179916); the
+// crystals fly at Senegos (179913, its target set by conditions) and the pool counts. Effect 1's periodic spell
+// (179917) is not in the client's data, so the aura it would tick is not applied.
+class spell_death_of_the_eldest_toss_crystals : public SpellScript
+{
+    void PreventEffect(SpellEffIndex effIndex)
+    {
+        PreventHitDefaultEffect(effIndex);
+    }
+
+    void HandleToss()
+    {
+        Player* player = GetCaster()->ToPlayer();
+        if (!player || player->GetQuestStatus(QUEST_DEATH_OF_THE_ELDEST) != QUEST_STATUS_INCOMPLETE
+            || !player->IsQuestObjectiveComplete(QUEST_DEATH_OF_THE_ELDEST, OBJECTIVE_LEYWORM_CORES))
+            return;
+
+        player->CastSpell(player, SPELL_TOSS_CRYSTAL_MISSILE, true);
+        player->KilledMonsterCredit(NPC_SENEGOS_POOL_CREDIT);
+    }
+
+    void Register() override
+    {
+        OnEffectHitTarget += SpellEffectFn(spell_death_of_the_eldest_toss_crystals::PreventEffect, EFFECT_1, SPELL_EFFECT_APPLY_AURA);
+        AfterCast += SpellCastFn(spell_death_of_the_eldest_toss_crystals::HandleToss);
+    }
+};
+
 // 212782 - Wand Practice: the button the override bar of Wanding 101 gives (OverrideSpellData 711). Its area trigger
 // (7042) has no properties and its triggered spell (218570) is not in the client's data, so the wand shot is played
 // here: the nearest Wand Target in front of the caster, from 5 to 40 yards, is hit and counts.
@@ -928,6 +964,7 @@ void AddSC_zone_azsuna()
     RegisterCreatureAI(npc_their_dying_breaths_whelpling);
     RegisterCreatureAI(npc_farondis_escort);
     RegisterCreatureAI(npc_farondis_tidestone_giver);
+    RegisterSpellScript(spell_death_of_the_eldest_toss_crystals);
     RegisterSpellScript(spell_narthalas_wand_practice);
     RegisterAreaTriggerAI(at_narthalas_rune_outline);
     new scene_narthalas_rune_drawing();
