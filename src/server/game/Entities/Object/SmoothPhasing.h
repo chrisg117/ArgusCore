@@ -32,6 +32,7 @@ struct SmoothPhasingInfo
 
     // Serverside fields
     bool Disabled = false;
+    bool KeepReplacedHidden = false; // the replaced object stays hidden for this seer after the replacement is gone
 };
 
 class TC_GAME_API SmoothPhasing

@@ -684,6 +684,16 @@ struct SpellInfoLoadHelper
 
 using SpellTotemModelMap = std::map<std::pair<uint32 /*SpellId*/, uint8 /*RaceId*/>, uint32 /*DisplayId*/>;
 
+// spell_summon_replace: the summon takes the place of the nearest ReplacedEntry for the casting player only
+struct SpellSummonReplace
+{
+    uint32 ReplacedEntry = 0;
+    float SearchRange = 0.0f;
+    bool KeepReplacedHidden = false;
+};
+
+using SpellSummonReplaceMap = std::unordered_map<uint32 /*SpellId*/, SpellSummonReplace>;
+
 class TC_GAME_API SpellMgr
 {
     // Constructors
@@ -788,6 +798,7 @@ class TC_GAME_API SpellMgr
         void LoadPetFamilySpellsStore();
 
         uint32 GetModelForTotem(uint32 spellId, uint8 race) const;
+        SpellSummonReplace const* GetSpellSummonReplace(uint32 spellId) const;
 
     // Modifiers
     public:
@@ -821,6 +832,7 @@ class TC_GAME_API SpellMgr
         void LoadSpellInfoImmunities();
         void LoadSpellInfoTargetCaps();
         void LoadSpellTotemModel();
+        void LoadSpellSummonReplace();
 
     private:
         SpellDifficultySearcherMap mSpellDifficultySearcherMap;
@@ -848,6 +860,7 @@ class TC_GAME_API SpellMgr
         PetLevelupSpellMap         mPetLevelupSpellMap;
         PetDefaultSpellsMap        mPetDefaultSpellsMap;           // only spells not listed in related mPetLevelupSpellMap entry
         SpellTotemModelMap         mSpellTotemModel;
+        SpellSummonReplaceMap      mSpellSummonReplace;
 };
 
 #define sSpellMgr SpellMgr::instance()
