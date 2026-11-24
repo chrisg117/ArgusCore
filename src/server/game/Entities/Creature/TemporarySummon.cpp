@@ -294,6 +294,24 @@ void TempSummon::UpdateObjectVisibilityOnCreate()
     Cell::VisitWorldObjects(this, notifier, GetVisibilityRange());
 }
 
+// Shows a replaced object to one seer again: what UpdateObjectVisibilityOnDestroy does for a replacement that keeps nothing
+// hidden, delayed (KeepReplacedHidden)
+static void RestoreReplacedObjectForSeer(WorldObject* original, ObjectGuid seer)
+{
+    SmoothPhasing* originalSmoothPhasing = original->GetSmoothPhasing();
+    if (!originalSmoothPhasing || !originalSmoothPhasing->GetInfoForSeer(seer))
+        return;
+
+    originalSmoothPhasing->DisableReplacementForSeer(seer);
+
+    boost::container::small_vector<WorldObject*, 1> objectsToUpdate;
+    objectsToUpdate.push_back(original);
+    Trinity::VisibleChangesNotifier notifier({ objectsToUpdate.data(), objectsToUpdate.data() + objectsToUpdate.size() });
+    Cell::VisitWorldObjects(original, notifier, original->GetVisibilityRange());
+
+    originalSmoothPhasing->ClearViewerDependentInfo(seer);
+}
+
 void TempSummon::UpdateObjectVisibilityOnDestroy()
 {
     boost::container::small_vector<WorldObject*, 2> objectsToUpdate;
@@ -306,9 +324,22 @@ void TempSummon::UpdateObjectVisibilityOnDestroy()
         if (infoForSeer && infoForSeer->ReplaceObject && smoothPhasing->IsReplacing(*infoForSeer->ReplaceObject))
             original = ObjectAccessor::GetWorldObject(*this, *infoForSeer->ReplaceObject);
 
-        // the original stays hidden for this seer (a freed prisoner's cage stays empty for the one who freed it)
+        // the original stays hidden for this seer for its own respawn time, as if it had despawned and respawned (a freed
+        // prisoner's cage stays empty for the one who freed it, and is filled again for a retaken quest)
         if (original && infoForSeer->KeepReplacedHidden)
+        {
+            uint32 respawnDelay = 0;
+            if (Creature const* creature = original->ToCreature())
+                respawnDelay = creature->GetRespawnDelay();
+            else if (GameObject const* go = original->ToGameObject())
+                respawnDelay = go->GetRespawnDelay();
+
+            // the event is the original's: it goes with it if the original leaves the world first
+            ObjectGuid seer = GetDemonCreatorGUID();
+            original->m_Events.AddEventAtOffset([original, seer]() { RestoreReplacedObjectForSeer(original, seer); },
+                Seconds(respawnDelay));
             original = nullptr;
+        }
 
         if (original)
         {
