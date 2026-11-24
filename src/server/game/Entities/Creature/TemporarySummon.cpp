@@ -22,6 +22,7 @@
 #include "DB2Stores.h"
 #include "GameObject.h"
 #include "GameObjectAI.h"
+#include "GameTime.h"
 #include "GridNotifiers.h"
 #include "Log.h"
 #include "Map.h"
@@ -299,7 +300,12 @@ void TempSummon::UpdateObjectVisibilityOnCreate()
 static void RestoreReplacedObjectForSeer(WorldObject* original, ObjectGuid seer)
 {
     SmoothPhasing* originalSmoothPhasing = original->GetSmoothPhasing();
-    if (!originalSmoothPhasing || !originalSmoothPhasing->GetInfoForSeer(seer))
+    if (!originalSmoothPhasing)
+        return;
+
+    // only the kept-hidden state this event was for: a new replacement for the seer since then has no HiddenUntil
+    SmoothPhasingInfo const* info = originalSmoothPhasing->GetInfoForSeer(seer);
+    if (!info || !info->HiddenUntil)
         return;
 
     originalSmoothPhasing->DisableReplacementForSeer(seer);
@@ -334,8 +340,11 @@ void TempSummon::UpdateObjectVisibilityOnDestroy()
             else if (GameObject const* go = original->ToGameObject())
                 respawnDelay = go->GetRespawnDelay();
 
-            // the event is the original's: it goes with it if the original leaves the world first
+            // HiddenUntil brings it back by the clock (IsBeingReplacedForSeer); the event, the original's own (it goes with
+            // it if the original leaves the world first), sends the change to the seer when its grid is updating
             ObjectGuid seer = GetDemonCreatorGUID();
+            if (SmoothPhasing* originalSmoothPhasing = original->GetSmoothPhasing())
+                originalSmoothPhasing->SetHiddenUntilForSeer(seer, GameTime::GetGameTime() + respawnDelay);
             original->m_Events.AddEventAtOffset([original, seer]() { RestoreReplacedObjectForSeer(original, seer); },
                 Seconds(respawnDelay));
             original = nullptr;

@@ -32,7 +32,8 @@ struct SmoothPhasingInfo
 
     // Serverside fields
     bool Disabled = false;
-    bool KeepReplacedHidden = false; // the replaced object stays hidden for this seer after the replacement is gone
+    bool KeepReplacedHidden = false; // the replaced object stays hidden for this seer after the replacement is gone, for its respawn time
+    Optional<time_t> HiddenUntil;    // set when that replacement is gone: the game time the original comes back for this seer
 };
 
 class TC_GAME_API SmoothPhasing
@@ -48,6 +49,7 @@ public:
     bool IsBeingReplacedForSeer(ObjectGuid seer) const;
     SmoothPhasingInfo const* GetInfoForSeer(ObjectGuid seer) const;
     void DisableReplacementForSeer(ObjectGuid seer);
+    void SetHiddenUntilForSeer(ObjectGuid seer, time_t hiddenUntil);
 
 private:
     using SmoothPhasingInfoViewerDependent = std::unordered_map<ObjectGuid /* Seer */, SmoothPhasingInfo>;

@@ -16,6 +16,7 @@
  */
 
 #include "SmoothPhasing.h"
+#include "GameTime.h"
 #include "MapUtils.h"
 
 void SmoothPhasing::SetViewerDependentInfo(ObjectGuid seer, SmoothPhasingInfo const& info)
@@ -46,7 +47,12 @@ bool SmoothPhasing::IsBeingReplacedForSeer(ObjectGuid seer) const
 {
     if (std::holds_alternative<SmoothPhasingInfoViewerDependent>(_storage))
         if (SmoothPhasingInfo const* smoothPhasingInfo = Trinity::Containers::MapGetValuePtr(std::get<SmoothPhasingInfoViewerDependent>(_storage), seer))
+        {
+            // a kept-hidden original is back by the clock, whether or not its grid updated meanwhile
+            if (smoothPhasingInfo->HiddenUntil && GameTime::GetGameTime() >= *smoothPhasingInfo->HiddenUntil)
+                return false;
             return !smoothPhasingInfo->Disabled;
+        }
 
     return false;
 }
@@ -57,6 +63,13 @@ SmoothPhasingInfo const* SmoothPhasing::GetInfoForSeer(ObjectGuid seer) const
         return Trinity::Containers::MapGetValuePtr(std::get<SmoothPhasingInfoViewerDependent>(_storage), seer);
 
     return &std::get<SmoothPhasingInfoSingle>(_storage);
+}
+
+void SmoothPhasing::SetHiddenUntilForSeer(ObjectGuid seer, time_t hiddenUntil)
+{
+    if (std::holds_alternative<SmoothPhasingInfoViewerDependent>(_storage))
+        if (SmoothPhasingInfo* smoothPhasingInfo = Trinity::Containers::MapGetValuePtr(std::get<SmoothPhasingInfoViewerDependent>(_storage), seer))
+            smoothPhasingInfo->HiddenUntil = hiddenUntil;
 }
 
 void SmoothPhasing::DisableReplacementForSeer(ObjectGuid seer)
