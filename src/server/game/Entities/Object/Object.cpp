@@ -2501,6 +2501,44 @@ void WorldObject::AddObjectToRemoveList()
 
 TempSummon* Map::SummonCreature(uint32 entry, Position const& pos, SummonPropertiesEntry const* properties /*= nullptr*/, Milliseconds duration /*= 0ms*/, WorldObject* summoner /*= nullptr*/, uint32 spellId /*= 0*/, uint32 vehId /*= 0*/, ObjectGuid privateObjectOwner /*= ObjectGuid::Empty*/, SmoothPhasingInfo const* smoothPhasingInfo /* = nullptr*/)
 {
+    // spell_summon_replace: a summon spell cast by a player whose summon takes the place of the nearest creature of a
+    // given entry for that player only (the freed prisoner replaces the caged one)
+    Optional<SmoothPhasingInfo> replaceSmoothPhasingInfo;
+    if (!smoothPhasingInfo && spellId && summoner)
+    {
+        if (SpellSummonReplace const* replace = sSpellMgr->GetSpellSummonReplace(spellId))
+        {
+            Player* player = summoner->ToPlayer();
+            if (!player && summoner->ToUnit())
+                player = summoner->ToUnit()->GetCharmerOrOwnerPlayerOrPlayerItself();
+
+            if (player)
+            {
+                std::list<Creature*> candidates;
+                summoner->GetCreatureListWithEntryInGrid(candidates, replace->ReplacedEntry, replace->SearchRange);
+
+                Creature* original = nullptr;
+                for (Creature* candidate : candidates)
+                {
+                    if (!candidate->IsAlive() || candidate->IsPrivateObject())
+                        continue;
+                    if (candidate->GetSmoothPhasing() && candidate->GetSmoothPhasing()->IsBeingReplacedForSeer(player->GetGUID()))
+                        continue;
+                    if (!original || candidate->GetExactDist(pos) < original->GetExactDist(pos))
+                        original = candidate;
+                }
+
+                if (original)
+                {
+                    replaceSmoothPhasingInfo.emplace(SmoothPhasingInfo{original->GetGUID(), true, true});
+                    replaceSmoothPhasingInfo->KeepReplacedHidden = replace->KeepReplacedHidden;
+                    smoothPhasingInfo = &*replaceSmoothPhasingInfo;
+                    privateObjectOwner = player->GetGUID();
+                }
+            }
+        }
+    }
+
     uint32 mask = UNIT_MASK_SUMMON;
     if (properties)
     {
@@ -2757,6 +2795,23 @@ TempSummon* WorldObject::SummonPersonalClone(Position const& pos, TempSummonType
     }
 
     return nullptr;
+}
+
+TempSummon* WorldObject::SummonPersonalReplacement(uint32 entry, Position const& pos, Player* privateObjectOwner, TempSummonType despawnType /*= TEMPSUMMON_MANUAL_DESPAWN*/, Milliseconds despawnTime /*= 0s*/, uint32 spellId /*= 0*/, bool keepReplacedHidden /*= false*/)
+{
+    ASSERT(privateObjectOwner);
+
+    Map* map = FindMap();
+    if (!map)
+        return nullptr;
+
+    SmoothPhasingInfo smoothPhasingInfo{GetGUID(), true, true};
+    smoothPhasingInfo.KeepReplacedHidden = keepReplacedHidden;
+    TempSummon* summon = map->SummonCreature(entry, pos, nullptr, despawnTime, privateObjectOwner, spellId, 0, privateObjectOwner->GetGUID(), &smoothPhasingInfo);
+    if (summon)
+        summon->SetTempSummonType(despawnType);
+
+    return summon;
 }
 
 GameObject* WorldObject::SummonGameObject(uint32 entry, Position const& pos, QuaternionData const& rot, Seconds respawnTime, GOSummonType summonType)

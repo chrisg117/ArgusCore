@@ -306,6 +306,10 @@ void TempSummon::UpdateObjectVisibilityOnDestroy()
         if (infoForSeer && infoForSeer->ReplaceObject && smoothPhasing->IsReplacing(*infoForSeer->ReplaceObject))
             original = ObjectAccessor::GetWorldObject(*this, *infoForSeer->ReplaceObject);
 
+        // the original stays hidden for this seer (a freed prisoner's cage stays empty for the one who freed it)
+        if (original && infoForSeer->KeepReplacedHidden)
+            original = nullptr;
+
         if (original)
         {
             objectsToUpdate.push_back(original);

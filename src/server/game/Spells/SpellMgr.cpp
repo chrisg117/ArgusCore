@@ -5214,6 +5214,62 @@ void SpellMgr::LoadSpellTotemModel()
 
 }
 
+void SpellMgr::LoadSpellSummonReplace()
+{
+    uint32 oldMSTime = getMSTime();
+
+    mSpellSummonReplace.clear();
+
+    //                                                 0         1               2            3
+    QueryResult result = WorldDatabase.Query("SELECT SpellID, ReplacedEntry, SearchRange, KeepReplacedHidden FROM spell_summon_replace");
+    if (!result)
+    {
+        TC_LOG_INFO("server.loading", ">> Loaded 0 spell summon replacements. DB table `spell_summon_replace` is empty.");
+        return;
+    }
+
+    uint32 count = 0;
+    do
+    {
+        Field* fields = result->Fetch();
+
+        uint32 spellId = fields[0].GetUInt32();
+        SpellInfo const* spellInfo = GetSpellInfo(spellId, DIFFICULTY_NONE);
+        if (!spellInfo || !spellInfo->HasEffect(SPELL_EFFECT_SUMMON))
+        {
+            TC_LOG_ERROR("sql.sql", "Spell {} in `spell_summon_replace` does not exist or has no SPELL_EFFECT_SUMMON, skipped.", spellId);
+            continue;
+        }
+
+        SpellSummonReplace replace;
+        replace.ReplacedEntry = fields[1].GetUInt32();
+        replace.SearchRange = fields[2].GetFloat();
+        replace.KeepReplacedHidden = fields[3].GetBool();
+
+        if (!sObjectMgr->GetCreatureTemplate(replace.ReplacedEntry))
+        {
+            TC_LOG_ERROR("sql.sql", "Spell {} in `spell_summon_replace` has non-existing ReplacedEntry {}, skipped.", spellId, replace.ReplacedEntry);
+            continue;
+        }
+
+        if (replace.SearchRange <= 0.0f)
+        {
+            TC_LOG_ERROR("sql.sql", "Spell {} in `spell_summon_replace` has SearchRange {} (must be > 0), skipped.", spellId, replace.SearchRange);
+            continue;
+        }
+
+        mSpellSummonReplace[spellId] = replace;
+        ++count;
+    } while (result->NextRow());
+
+    TC_LOG_INFO("server.loading", ">> Loaded {} spell summon replacements in {} ms", count, GetMSTimeDiffToNow(oldMSTime));
+}
+
+SpellSummonReplace const* SpellMgr::GetSpellSummonReplace(uint32 spellId) const
+{
+    return Trinity::Containers::MapGetValuePtr(mSpellSummonReplace, spellId);
+}
+
 uint32 SpellMgr::GetModelForTotem(uint32 spellId, uint8 race) const
 {
     auto itr = mSpellTotemModel.find(std::make_pair(spellId, race));
