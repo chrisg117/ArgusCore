@@ -1434,9 +1434,6 @@ bool World::SetInitialWorldSettings()
     TC_LOG_INFO("server.loading", "Loading Spell Totem models...");
     sSpellMgr->LoadSpellTotemModel();
 
-    TC_LOG_INFO("server.loading", "Loading Spell summon replacements...");
-    sSpellMgr->LoadSpellSummonReplace();
-
     TC_LOG_INFO("server.loading", "Loading languages...");  // must be after LoadSpellInfoStore and LoadSkillLineAbilityMap
     sLanguageMgr->LoadLanguages();
 
@@ -1711,6 +1708,9 @@ bool World::SetInitialWorldSettings()
 
     TC_LOG_INFO("server.loading", "Loading Spell target coordinates...");
     sSpellMgr->LoadSpellTargetPositions();
+
+    TC_LOG_INFO("server.loading", "Loading Spell summon replacements..."); // after creature templates: it checks ReplacedEntry
+    sSpellMgr->LoadSpellSummonReplace();
 
     TC_LOG_INFO("server.loading", "Loading linked spells...");
     sSpellMgr->LoadSpellLinked();
