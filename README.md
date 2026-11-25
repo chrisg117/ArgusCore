@@ -33,7 +33,7 @@ What is playable on the `dev` branch. Counts only; details live in the specs.
 |------|-----------------|
 | Stormwind and the Broken Shore (Alliance opening) | 5 |
 | Demon Hunter starting zone (Mardum and the Vault of the Wardens) | 31 |
-| Azsuna | 29 |
+| Azsuna | 32 |
 | Dalaran | 0 (city services only) |
 | Val'sharah, Highmountain, Stormheim, Suramar | 0 |
 
