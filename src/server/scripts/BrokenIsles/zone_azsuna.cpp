@@ -20,6 +20,7 @@
 #include "CellImpl.h"
 #include "GameObject.h"
 #include "GameObjectAI.h"
+#include "Log.h"
 #include "ObjectMgr.h"
 #include "PathGenerator.h"
 #include "QuestDef.h"
@@ -39,6 +40,7 @@
 
 #include <array>
 #include <cmath>
+#include <unordered_map>
 
 enum AzsunaQuests
 {
@@ -949,6 +951,480 @@ public:
     }
 };
 
+enum FaronaarCompanion
+{
+    QUEST_FEL_MACHINATIONS              = 37656,
+
+    // Kor'vas walks with the player through Fel Machinations and Saving Stellagosa and fights beside her (the user's
+    // ruling from the quest videos). The DB2's spell for this, 178860 "Faronaar: Summon Kor'vas Bloodthorn", summons 90474,
+    // a generic female demon hunter that is also the quest ender at the camp; we summon an unspawned Kor'vas template
+    // instead, so the follower carries her name and display (66159). 90624 is the one that scales 98..110 like Azsuna.
+    NPC_FARONAAR_KORVAS                 = 90624,
+    SPELL_FARONAAR_SUMMON_KORVAS        = 178860,   // kept as the summon's created-by spell only
+
+    ZONE_AZSUNA                         = 7334,
+
+    OBJECTIVE_LYKILLS_KEY               = 277456,
+    OBJECTIVE_FIRST_CHAIN_UNLOCKED      = 283274,
+    NPC_FIRST_CHAIN_UNLOCKED_CREDIT     = 105635,
+
+    SPELL_LYKILL_FEL_IMPRISONMENT       = 183020,   // 2 s cast: roots and burns the target for 6 s; interruptible
+    SPELL_LYKILL_FEL_CLEAVE             = 184248,   // instant 12 yd frontal cone
+
+    // BroadcastText (Kor'vas's lines are the female text)
+    TEXT_KORVAS_FIND_THE_KEY            = 92337,    // "Quickly, $p, we have to find the key to those demonic locks..."
+    TEXT_KORVAS_GET_THE_KEY             = 92339,    // "Get the key. Let's get over there and free that drake."
+    TEXT_KORVAS_SOON_FREE               = 93025,    // "You will soon be free, drake."
+    TEXT_KORVAS_COME_BACK               = 92980,    // "Stellagosa, no... come back. Damn!"
+    TEXT_LYKILL_AGGRO                   = 97407,    // "There is plenty of room in my cage for your souls."
+    TEXT_LYKILL_DEATH                   = 93273     // "I WILL return!"
+};
+
+static constexpr Milliseconds KorvasCheckInterval = 1s;
+static constexpr float KorvasFollowDist = 2.5f;
+static constexpr float KorvasFollowAngle = float(M_PI) * 0.75f;   // behind the player's left shoulder
+static constexpr float KorvasLeashDist = 40.0f;                    // in combat: a fight further than this from her player is dropped
+static constexpr float KorvasSprintDist = 12.0f;                   // out of combat and further than this: she runs faster to catch up
+static constexpr float KorvasSprintRate = 2.5f;                    // run speed rate while catching up (Fel Rush, glides)
+static constexpr uint32 KorvasStuckChecks = 2;                     // checks (1 s each) behind without getting closer
+static constexpr float KorvasTeleportDist = 90.0f;                 // further than this (a flight path, a long glide): she appears beside her player
+static constexpr float KorvasGiverHandoffDist = 30.0f;              // a giver this close is where the follower appears
+static constexpr ObjectGuid::LowType FaronaarKorvasGiverSpawns[] = { 651475, 12201032 };   // Vanquish Point, Faronaar
+
+static constexpr Milliseconds LykillImprisonmentFirst = 8s;
+static constexpr Milliseconds LykillImprisonmentEvery = 18s;
+static constexpr Milliseconds LykillCleaveFirst = 5s;
+static constexpr Milliseconds LykillCleaveEvery = 11s;
+
+// In Azsuna from Fel Machinations until Dark Revelations is taken, the turn-in of the first quest included. On retail both quests are turned in to the Kor'vas
+// following you, and Dark Revelations is taken from her (WoW-Pro 7.3.5 Azsuna), so she stays through both turn-ins and
+// leaves once the next quest is in the log. The camp's 90474 (12201003) stays the fallback ender and starter.
+static bool IsFaronaarKorvasWanted(Player const* player)
+{
+    if (player->GetZoneId() != ZONE_AZSUNA)
+        return false;
+
+    QuestStatus felMachinations = player->GetQuestStatus(QUEST_FEL_MACHINATIONS);
+    if (felMachinations == QUEST_STATUS_INCOMPLETE || felMachinations == QUEST_STATUS_COMPLETE)
+        return true;
+
+    // between the two quests she offers Saving Stellagosa herself
+    QuestStatus savingStellagosa = player->GetQuestStatus(QUEST_SAVING_STELLAGOSA);
+    if (felMachinations == QUEST_STATUS_REWARDED && savingStellagosa == QUEST_STATUS_NONE)
+        return true;
+
+    if (savingStellagosa == QUEST_STATUS_INCOMPLETE || savingStellagosa == QUEST_STATUS_COMPLETE)
+        return true;
+
+    return savingStellagosa == QUEST_STATUS_REWARDED && player->GetQuestStatus(QUEST_DARK_REVELATIONS) == QUEST_STATUS_NONE;
+}
+
+// Every Faronaar line is logged, so a run's Server.log shows which ones fired (the chat itself is client-side only)
+static void FaronaarSay(Creature* speaker, uint32 textId, WorldObject const* target = nullptr)
+{
+    TC_LOG_INFO("scripts", "Faronaar: {} ({}) says broadcast text {} to {}", speaker->GetName(), speaker->GetEntry(), textId,
+        target ? target->GetName() : std::string("nobody"));
+    speaker->Say(textId, target);
+}
+
+// 90624 - Kor'vas Bloodthorn (Fel Machinations, Saving Stellagosa): personal companion. She follows her player, attacks
+// what her player fights, cannot die, and leaves when neither quest needs her (the AI checks every second, so a relog,
+// a teleport out of Azsuna or an abandoned quest all end her).
+// each player's follower Kor'vas, by player: a grid search (250 yd) misses her right after her player jumps far (a
+// flight, a teleport), before her catch-up, and a second one would be summoned
+static std::unordered_map<ObjectGuid, ObjectGuid> FaronaarKorvasByPlayer;
+
+struct npc_faronaar_korvas : public ScriptedAI
+{
+    npc_faronaar_korvas(Creature* creature) : ScriptedAI(creature) { }
+
+    void IsSummonedBy(WorldObject* summoner) override
+    {
+        Player* player = summoner->ToPlayer();
+        if (!player)
+            return;
+
+        _player = player->GetGUID();
+        FaronaarKorvasByPlayer[_player] = me->GetGUID();
+        _keyLineSaid = player->IsQuestObjectiveComplete(QUEST_SAVING_STELLAGOSA, OBJECTIVE_LYKILLS_KEY);
+        // said once, when the chains open; a Kor'vas summoned after that (login, return to Azsuna) stays quiet
+        _comeBackSaid = player->GetQuestStatus(QUEST_SAVING_STELLAGOSA) == QUEST_STATUS_COMPLETE
+            || player->GetQuestStatus(QUEST_SAVING_STELLAGOSA) == QUEST_STATUS_REWARDED;
+        // she is her player's alone (a private object): out of every phase, so she stays visible to that player in the
+        // Faronaar areas where phase 4356, which the summon copied from the player at Vanquish Point, is off
+        PhasingHandler::ResetPhaseShift(me);
+        me->UpdateObjectVisibility();
+        // active: her grid keeps updating when her player is far ahead (a flight, a long glide), so the catch-up runs
+        me->setActive(true);
+        me->SetFaction(player->GetFaction());
+        me->SetReactState(REACT_DEFENSIVE);
+        Follow(player);
+    }
+
+    void DamageTaken(Unit* /*attacker*/, uint32& damage, DamageEffectType /*damageType*/, SpellInfo const* /*spellInfo*/) override
+    {
+        if (damage >= me->GetHealth())
+            damage = me->GetHealth() - 1;
+    }
+
+    void EnterEvadeMode(EvadeReason /*why*/) override
+    {
+        // never back to the summon spot: back to her player
+        me->CombatStop(true);
+        if (Player* player = ObjectAccessor::GetPlayer(*me, _player))
+            Follow(player);
+    }
+
+    void UpdateAI(uint32 diff) override
+    {
+        if (_player.IsEmpty())
+            return;
+
+        if (_checkLeft > Milliseconds(diff))
+            _checkLeft -= Milliseconds(diff);
+        else
+        {
+            _checkLeft = KorvasCheckInterval;
+            if (!CheckPlayer())
+                return;
+        }
+
+        UpdateVictim();
+    }
+
+    bool IsLeaving() const { return _player.IsEmpty(); }
+
+private:
+    // false once she is leaving
+    bool CheckPlayer()
+    {
+        Player* player = ObjectAccessor::GetPlayer(*me, _player);
+        if (!player || !player->IsInWorld() || player->GetMapId() != me->GetMapId() || !IsFaronaarKorvasWanted(player))
+        {
+            _player.Clear();
+            me->DespawnOrUnsummon(3s);
+            return false;
+        }
+
+        if (!_keyLineSaid && player->IsQuestObjectiveComplete(QUEST_SAVING_STELLAGOSA, OBJECTIVE_LYKILLS_KEY))
+        {
+            _keyLineSaid = true;
+            FaronaarSay(me, TEXT_KORVAS_GET_THE_KEY, player);
+        }
+
+        // the chains are open and Stellagosa flies off; Kor'vas stays for the turn-in
+        if (!_comeBackSaid && player->GetQuestStatus(QUEST_SAVING_STELLAGOSA) == QUEST_STATUS_COMPLETE)
+        {
+            _comeBackSaid = true;
+            FaronaarSay(me, TEXT_KORVAS_COME_BACK, player);
+        }
+
+        // a fight that has pulled her (or her target) away from her player is dropped; the catch-up below then brings
+        // her back
+        if (me->IsInCombat())
+        {
+            Unit* victim = me->GetVictim();
+            if (!me->IsWithinDist(player, KorvasLeashDist) || (victim && !victim->IsWithinDist(player, KorvasLeashDist)))
+            {
+                me->GetThreatManager().ClearFixate();
+                EnterEvadeMode(EvadeReason::Other);
+            }
+        }
+
+        // out of combat she keeps up by running: a sprint after a Fel Rush or a glide, a teleport only when the player is
+        // far out of reach
+        if (!me->IsInCombat())
+        {
+            // behind and not getting closer (no path up a ledge, the follow gave up at the end of a partial path) for
+            // KorvasStuckChecks checks: the same catch-up as a player out of reach
+            float dist = me->GetDistance(player);
+            if (dist > KorvasSprintDist && dist > _lastDist - 1.0f)
+                ++_stuckChecks;
+            else
+                _stuckChecks = 0;
+            _lastDist = dist;
+
+            if (!me->IsWithinDist(player, KorvasTeleportDist) || _stuckChecks >= KorvasStuckChecks)
+            {
+                _stuckChecks = 0;
+                SetSprinting(false);
+                me->NearTeleportTo(player->GetNearPosition(3.0f, float(M_PI)));
+                Follow(player);
+                return true;
+            }
+
+            // a fight that ended on the other side (her target evaded and reset) leaves her chase behind: back to her player
+            if (me->GetMotionMaster()->GetCurrentMovementGeneratorType() != FOLLOW_MOTION_TYPE)
+                Follow(player);
+
+            SetSprinting(!me->IsWithinDist(player, KorvasSprintDist));
+        }
+        else
+            SetSprinting(false);
+
+        // what her player fights, she fights. She is fixated on it, so the threat she holds on something else (the
+        // first mob that hit her) can't pull her back to that one through UpdateVictim.
+        Unit* target = player->GetVictim();
+        if (!target || !me->IsValidAttackTarget(target))
+            target = player->getAttackerForHelper();
+        if (target && me->IsValidAttackTarget(target) && target->IsWithinDist(player, KorvasLeashDist))
+        {
+            if (target != me->GetVictim())
+                AttackStart(target);
+            if (me->GetThreatManager().GetFixateTarget() != target)
+                me->GetThreatManager().FixateTarget(target);
+        }
+        else if (me->GetThreatManager().GetFixateTarget())
+            me->GetThreatManager().ClearFixate();
+
+        return true;
+    }
+
+    void Follow(Player* player)
+    {
+        me->GetMotionMaster()->Clear();
+        me->GetMotionMaster()->MoveFollow(player, KorvasFollowDist, KorvasFollowAngle);
+    }
+
+    void SetSprinting(bool sprinting)
+    {
+        if (sprinting == _sprinting)
+            return;
+
+        _sprinting = sprinting;
+        me->SetSpeedRate(MOVE_RUN, sprinting ? KorvasSprintRate : me->GetCreatureTemplate()->speed_run);
+    }
+
+    ObjectGuid _player;
+    Milliseconds _checkLeft = KorvasCheckInterval;
+    bool _keyLineSaid = false;
+    bool _comeBackSaid = false;
+    bool _sprinting = false;
+    float _lastDist = 0.0f;
+    uint32 _stuckChecks = 0;
+};
+
+static Creature* FindFaronaarKorvas(Player* player)
+{
+    auto itr = FaronaarKorvasByPlayer.find(player->GetGUID());
+    if (itr == FaronaarKorvasByPlayer.end())
+        return nullptr;
+
+    Creature* korvas = ObjectAccessor::GetCreature(*player, itr->second);
+    // one that is already leaving (its quest just ended) is not her: a quest accepted in that second gets a new one
+    npc_faronaar_korvas const* ai = korvas ? dynamic_cast<npc_faronaar_korvas const*>(korvas->AI()) : nullptr;
+    if (!korvas || !korvas->IsAlive() || !ai || ai->IsLeaving())
+    {
+        FaronaarKorvasByPlayer.erase(itr);
+        return nullptr;
+    }
+
+    return korvas;
+}
+
+static Creature* EnsureFaronaarKorvas(Player* player)
+{
+    if (!IsFaronaarKorvasWanted(player))
+        return nullptr;
+
+    if (Creature* korvas = FindFaronaarKorvas(player))
+        return korvas;
+
+    // Standing at one of the static Kor'vas (90255) spawns, the follower takes her place for this player (smooth phasing),
+    // so the giver turns and walks along. The static ones are also phased out for this player while the follower is
+    // wanted (phase 4356 conditions); the spawn-id store ignores phases, since at quest accept the phase may already
+    // have changed.
+    for (ObjectGuid::LowType spawnId : FaronaarKorvasGiverSpawns)
+    {
+        auto bounds = player->GetMap()->GetCreatureBySpawnIdStore().equal_range(spawnId);
+        for (auto itr = bounds.first; itr != bounds.second; ++itr)
+            if (itr->second->IsAlive() && itr->second->IsWithinDist(player, KorvasGiverHandoffDist))
+                return itr->second->SummonPersonalReplacement(NPC_FARONAAR_KORVAS, itr->second->GetPosition(), player,
+                    TEMPSUMMON_MANUAL_DESPAWN, 0s, SPELL_FARONAAR_SUMMON_KORVAS);
+    }
+
+    return player->SummonCreature(NPC_FARONAAR_KORVAS, player->GetNearPosition(3.0f, float(M_PI)), TEMPSUMMON_MANUAL_DESPAWN, 0s,
+        0, SPELL_FARONAAR_SUMMON_KORVAS, player->GetGUID());
+}
+
+// Summons Kor'vas when either quest starts or is restored by a login or a return to Azsuna; she removes herself
+class player_faronaar_korvas : public PlayerScript
+{
+public:
+    player_faronaar_korvas() : PlayerScript("player_faronaar_korvas") { }
+
+    void OnUpdateZone(Player* player, uint32 /*newZone*/, uint32 /*newArea*/) override
+    {
+        EnsureFaronaarKorvas(player);
+    }
+
+    void OnQuestStatusChange(Player* player, uint32 questId) override
+    {
+        if (questId != QUEST_FEL_MACHINATIONS && questId != QUEST_SAVING_STELLAGOSA)
+            return;
+
+        Creature* korvas = EnsureFaronaarKorvas(player);
+        if (korvas && questId == QUEST_SAVING_STELLAGOSA && player->GetQuestStatus(QUEST_SAVING_STELLAGOSA) == QUEST_STATUS_INCOMPLETE
+            && !player->IsQuestObjectiveComplete(QUEST_SAVING_STELLAGOSA, OBJECTIVE_LYKILLS_KEY))
+            FaronaarSay(korvas, TEXT_KORVAS_FIND_THE_KEY, player);
+    }
+};
+
+enum FelMachinationsFreed
+{
+    OBJECTIVE_DEMON_HUNTERS_FREED       = 277252,
+    NPC_FEL_MACHINATIONS_HOSTAGE        = 90487,    // the caged one: "Demon Hunters freed" is its kill credit
+
+    // BroadcastText, by rescue number (Warcraft Wiki, Fel Machinations notes); the demon hunters' lines carry both
+    // voices, Kor'vas's are her female text
+    TEXT_KORVAS_WHAT_HAPPENED           = 92248,    // "Illidari, what happened here?"
+    TEXT_KORVAS_ALL_TORTURED            = 92243,    // "They have all been tortured."
+    TEXT_FREED_DIDNT_GIVE_IN            = 92938,    // "I didn't give in."
+    TEXT_FREED_DID_THINGS               = 92937,    // "They did... things... to me."
+    TEXT_FREED_UNIMAGINABLE_POWER       = 92939,    // "The demons promised us unimaginable power."
+    TEXT_FREED_NIGHTGLAIVE_WENT         = 92942     // "Nightglaive went southwest with a warden named Cordana Felsong."
+};
+
+static constexpr Milliseconds FreedFirstLine = 1s;      // after the use's credit has counted
+static constexpr Milliseconds FreedReply = 3s;          // the demon hunter answers Kor'vas
+static constexpr Milliseconds FreedDespawn = 8s;        // from the summon, as the SAI it replaces
+
+// 90532, 90534, 90535, 90536 - Demon Hunter (Fel Machinations): the freed hostage (spell_summon_replace puts it in the
+// caged one's place for its freer). Rescues 1 and 2 are an exchange with the follower Kor'vas, 3 and 4 a line of its
+// own, 5 and 6 are silent; it leaves after 8 s.
+struct npc_fel_machinations_freed_demon_hunter : public ScriptedAI
+{
+    npc_fel_machinations_freed_demon_hunter(Creature* creature) : ScriptedAI(creature) { }
+
+    void IsSummonedBy(WorldObject* summoner) override
+    {
+        Player* player = summoner->ToPlayer();
+        if (!player)
+        {
+            me->DespawnOrUnsummon(FreedDespawn);
+            return;
+        }
+
+        ObjectGuid playerGuid = player->GetGUID();
+        me->SetFacingToObject(player);
+        me->DespawnOrUnsummon(FreedDespawn);
+
+        // the rescue counts when the freed one is out: a credit at the use itself would complete the quest on the sixth
+        // cage before the cage's spell, whose quest check then stops the sixth rescue
+        if (player->GetQuestStatus(QUEST_FEL_MACHINATIONS) == QUEST_STATUS_INCOMPLETE)
+            player->KilledMonsterCredit(NPC_FEL_MACHINATIONS_HOSTAGE);
+
+        _scheduler.Schedule(FreedFirstLine, [this, playerGuid](TaskContext context)
+        {
+            Player* player = ObjectAccessor::GetPlayer(*me, playerGuid);
+            if (!player)
+                return;
+
+            int32 freed = player->GetQuestObjectiveData(QUEST_FEL_MACHINATIONS, OBJECTIVE_DEMON_HUNTERS_FREED);
+            uint32 korvasLine = 0;
+            uint32 ownLine = 0;
+            switch (freed)
+            {
+                case 1: korvasLine = TEXT_KORVAS_WHAT_HAPPENED; ownLine = TEXT_FREED_DIDNT_GIVE_IN; break;
+                case 2: korvasLine = TEXT_KORVAS_ALL_TORTURED;  ownLine = TEXT_FREED_DID_THINGS; break;
+                case 3: ownLine = TEXT_FREED_UNIMAGINABLE_POWER; break;
+                case 4: ownLine = TEXT_FREED_NIGHTGLAIVE_WENT; break;
+                default: return;
+            }
+
+            Creature* korvas = korvasLine ? FindFaronaarKorvas(player) : nullptr;
+            if (!korvas)
+            {
+                FaronaarSay(me, ownLine, player);
+                return;
+            }
+
+            FaronaarSay(korvas, korvasLine, me);
+            context.Schedule(FreedReply, [this, playerGuid, ownLine](TaskContext /*context*/)
+            {
+                if (Player* player = ObjectAccessor::GetPlayer(*me, playerGuid))
+                    FaronaarSay(me, ownLine, player);
+            });
+        });
+    }
+
+    void UpdateAI(uint32 diff) override
+    {
+        _scheduler.Update(diff);
+    }
+
+private:
+    TaskScheduler _scheduler;
+};
+
+// 86535 - Overseer Lykill (Saving Stellagosa): the jailer who carries Lykill's Key
+struct npc_overseer_lykill : public ScriptedAI
+{
+    npc_overseer_lykill(Creature* creature) : ScriptedAI(creature) { }
+
+    void Reset() override
+    {
+        _scheduler.CancelAll();
+    }
+
+    void JustEngagedWith(Unit* who) override
+    {
+        FaronaarSay(me, TEXT_LYKILL_AGGRO, who);
+
+        _scheduler
+            .Schedule(LykillCleaveFirst, [this](TaskContext context)
+            {
+                DoCastVictim(SPELL_LYKILL_FEL_CLEAVE);
+                context.Repeat(LykillCleaveEvery);
+            })
+            .Schedule(LykillImprisonmentFirst, [this](TaskContext context)
+            {
+                // a player, never Kor'vas
+                if (Unit* target = SelectTarget(SelectTargetMethod::Random, 0, 30.0f, true))
+                    DoCast(target, SPELL_LYKILL_FEL_IMPRISONMENT);
+                context.Repeat(LykillImprisonmentEvery);
+            });
+    }
+
+    void JustDied(Unit* /*killer*/) override
+    {
+        FaronaarSay(me, TEXT_LYKILL_DEATH);
+    }
+
+    void UpdateAI(uint32 diff) override
+    {
+        if (!UpdateVictim())
+            return;
+
+        _scheduler.Update(diff);
+    }
+
+private:
+    TaskScheduler _scheduler;
+};
+
+// 239455 - Fel Lock (Saving Stellagosa): the first lock opened counts the hidden "First chain unlocked" (105635), and
+// Kor'vas speaks to the drake
+struct go_saving_stellagosa_fel_lock : public GameObjectAI
+{
+    go_saving_stellagosa_fel_lock(GameObject* go) : GameObjectAI(go) { }
+
+    bool OnGossipHello(Player* player) override
+    {
+        if (player->GetQuestStatus(QUEST_SAVING_STELLAGOSA) != QUEST_STATUS_INCOMPLETE
+            || !player->IsQuestObjectiveComplete(QUEST_SAVING_STELLAGOSA, OBJECTIVE_LYKILLS_KEY)
+            || player->IsQuestObjectiveComplete(QUEST_SAVING_STELLAGOSA, OBJECTIVE_FIRST_CHAIN_UNLOCKED))
+            return false;
+
+        TC_LOG_INFO("scripts", "Faronaar: {} opens the first Fel Lock: credit {}", player->GetName(), uint32(NPC_FIRST_CHAIN_UNLOCKED_CREDIT));
+        player->KilledMonsterCredit(NPC_FIRST_CHAIN_UNLOCKED_CREDIT);
+        if (Creature* korvas = FindFaronaarKorvas(player))
+            FaronaarSay(korvas, TEXT_KORVAS_SOON_FREE, player);
+
+        return false;   // the lock opens as usual
+    }
+};
+
 void AddSC_zone_azsuna()
 {
     RegisterCreatureAI(npc_demon_souls_soul_gem);
@@ -970,4 +1446,9 @@ void AddSC_zone_azsuna()
     new scene_narthalas_rune_drawing();
     RegisterGameObjectAI(go_sythorne_podium);
     new scene_study_hall_into_the_book();
+    RegisterCreatureAI(npc_faronaar_korvas);
+    RegisterCreatureAI(npc_fel_machinations_freed_demon_hunter);
+    new player_faronaar_korvas();
+    RegisterCreatureAI(npc_overseer_lykill);
+    RegisterGameObjectAI(go_saving_stellagosa_fel_lock);
 }
