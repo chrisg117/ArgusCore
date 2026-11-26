@@ -20,13 +20,29 @@
 #include "GameObject.h"
 #include "InstanceScript.h"
 #include "Map.h"
+#include "Player.h"
+#include "QuestDef.h"
 #include "ScriptMgr.h"
 #include "SpellAuras.h"
+#include "TemporarySummon.h"
 #include "eye_of_azshara.h"
 #include <algorithm>
 
-// One boundary per boss, added by each boss's task.
-BossBoundaryData const boundaries = { };
+// One boundary per boss, added by each boss's task. The bosses stand in the open, so each is a circle
+// around the spawn (the check is 3D, so the centre carries the ground height).
+BossBoundaryData const boundaries =
+{
+    // Warlord Parjesh: calibrate the radius (no walls; the path inland runs through his spot).
+    { DATA_WARLORD_PARJESH, new CircleBoundary(Position(-3682.65f, 4417.02f, 32.44f), 60.0f) },
+    // Lady Hatecoil: the Sand Dune box (x -3479..-3402, y 4552..4620) plus 25 yd. Calibrate.
+    { DATA_LADY_HATECOIL, new RectangleBoundary(-3504.0f, -3377.0f, 4527.0f, 4645.0f) },
+    // King Deepbeard: the box his 35 Call the Seas stalkers cover (x -3491..-3409, y 4119..4214) plus 10 yd;
+    // the two Water Doors sit on its south and east edges. Calibrate.
+    { DATA_KING_DEEPBEARD, new RectangleBoundary(-3501.0f, -3399.0f, 4109.0f, 4224.0f) },
+    // Serpentrix: around his spawn, wide enough for the six Sinkholes he re-emerges at (47-80 yd out) and a
+    // group in reach of them. Calibrate.
+    { DATA_SERPENTRIX, new CircleBoundary(Position(-3250.7f, 4429.4f, -2.8f), 110.0f) }
+};
 
 ObjectData const creatureData[] =
 {
@@ -64,6 +80,11 @@ DungeonEncounterData const encounters[] =
 
 namespace
 {
+    uint32 constexpr QUEST_WRATH_OF_AZSHARA = 38286;
+    uint32 constexpr NPC_EYE_OF_AZSHARA_ENTERED_CREDIT = 106847;
+    uint32 constexpr NPC_TIDESTONE_OF_GOLGANNETH = 106780;
+    Position const TidestonePosition = { -3472.50f, 4366.40f, 2.69f, 0.0f };
+
     uint32 constexpr ArcanistCount = 4;
     uint32 constexpr RitualCasterCount = 4;
     uint32 constexpr ArcaneShieldingMaxStacks = 3;  // SpellAuraOptions of 197868
@@ -159,7 +180,30 @@ class instance_eye_of_azshara : public InstanceMapScript
                 if (state == DONE && type < DATA_WRATH_OF_AZSHARA)
                     CheckWrath();
 
+                if (state == DONE && type == DATA_WRATH_OF_AZSHARA)
+                    SummonTidestone();
+
                 return true;
+            }
+
+            // Quest 38286 "Eye of Azshara: Wrath of Azshara": its first objective is the credit 106847 ("Eye of
+            // Azshara entered"); the quest ends at the Tidestone of Golganneth, who appears once the Wrath is dead.
+            void OnPlayerEnter(Player* player) override
+            {
+                if (player->GetQuestStatus(QUEST_WRATH_OF_AZSHARA) == QUEST_STATUS_INCOMPLETE)
+                    player->KilledMonsterCredit(NPC_EYE_OF_AZSHARA_ENTERED_CREDIT);
+
+                // Intro (RP task): Parjesh's "Hmph. Intruders." (101992) when the first player lands. Gates nothing.
+                if (!_introLanded && !player->IsGameMaster() && GetBossState(DATA_WARLORD_PARJESH) != DONE)
+                {
+                    _introLanded = true;
+                    if (Creature* parjesh = GetCreature(DATA_WARLORD_PARJESH))
+                        if (parjesh->IsAIEnabled())
+                            parjesh->AI()->Talk(10);
+                }
+
+                if (GetBossState(DATA_WRATH_OF_AZSHARA) == DONE)
+                    SummonTidestone();
             }
 
             uint32 GetData(uint32 type) const override
@@ -179,9 +223,23 @@ class instance_eye_of_azshara : public InstanceMapScript
             {
                 switch (type)
                 {
+                    case DATA_ARCANISTS:
+                        // Lady Hatecoil asks for her shield again when she respawns after a wipe (the
+                        // creature addon gives back one stack); the count itself only changes on a death.
+                        if (Creature* hatecoil = GetCreature(DATA_LADY_HATECOIL))
+                            UpdateArcaneShielding(hatecoil);
+                        break;
                     case DATA_KEYSTONE_START:
-                        // Template H3: the Mythic+ conversion calls this after its respawn. The
-                        // dungeon's "Keystone start" list is applied by the Mythic+ hooks task.
+                        // Template H3, the spec's "Keystone start" list: the Mythic+ conversion calls this after
+                        // its respawn. Parjesh's landing line is skipped, the two counters start at 0 (Hatecoil
+                        // shielded, the Wrath sealed), and no door needs opening.
+                        _introLanded = true;
+                        _arcanistsDead = 0;
+                        _ritualCastersDead = 0;
+                        if (Creature* hatecoil = GetCreature(DATA_LADY_HATECOIL))
+                            UpdateArcaneShielding(hatecoil);
+                        if (Creature* wrath = GetCreature(DATA_WRATH_OF_AZSHARA))
+                            SetWrathAttackable(wrath, IsWrathUnlocked());
                         break;
                     default:
                         break;
@@ -237,12 +295,30 @@ class instance_eye_of_azshara : public InstanceMapScript
 
                 if (Creature* wrath = GetCreature(DATA_WRATH_OF_AZSHARA))
                     if (wrath->IsAlive() && wrath->HasUnitFlag(UNIT_FLAG_NON_ATTACKABLE))
+                    {
                         SetWrathAttackable(wrath, true);
+                        // "THE STORM AWAKENS." (99950, her text group 0)
+                        if (wrath->IsAIEnabled())
+                            wrath->AI()->Talk(0);
+                    }
 
                 if (GameObject* bubble = GetGameObject(DATA_WRATH_BUBBLE))
                     bubble->DespawnOrUnsummon();
             }
 
+            void SummonTidestone()
+            {
+                if (!_tidestone.IsEmpty() && instance->GetCreature(_tidestone))
+                    return;
+
+                // The quest's turn-in point of interest (-3474, 4369) beside the Wrath's spot, moved 3 yd to stand
+                // 4.5 yd clear of the nearest wall (navplace on the 1456 mesh, 2026-11-26).
+                if (TempSummon* tidestone = instance->SummonCreature(NPC_TIDESTONE_OF_GOLGANNETH, TidestonePosition))
+                    _tidestone = tidestone->GetGUID();
+            }
+
+            ObjectGuid _tidestone;
+            bool _introLanded = false;
             PersistentInstanceScriptValue<uint32> _arcanistsDead;
             PersistentInstanceScriptValue<uint32> _ritualCastersDead;
         };
