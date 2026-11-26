@@ -977,7 +977,8 @@ enum FaronaarCompanion
     TEXT_KORVAS_SOON_FREE               = 93025,    // "You will soon be free, drake."
     TEXT_KORVAS_COME_BACK               = 92980,    // "Stellagosa, no... come back. Damn!"
     TEXT_LYKILL_AGGRO                   = 97407,    // "There is plenty of room in my cage for your souls."
-    TEXT_LYKILL_DEATH                   = 93273     // "I WILL return!"
+    TEXT_LYKILL_DEATH                   = 93273,    // "I WILL return!"
+    TEXT_LYKILL_PITIFUL_DRAKE           = 93006     // "Come to free that pitiful drake, demon hunter?" (Wowhead's quotes)
 };
 
 static constexpr Milliseconds KorvasCheckInterval = 1s;
@@ -1389,6 +1390,16 @@ struct npc_overseer_lykill : public ScriptedAI
     void JustDied(Unit* /*killer*/) override
     {
         FaronaarSay(me, TEXT_LYKILL_DEATH);
+        _drakeLineSaid.clear();     // a respawned Lykill greets them again
+    }
+
+    // a demon hunter coming near, once each, before the fight (never one inside Save Yourself's vision, aura 178284)
+    void MoveInLineOfSight(Unit* who) override
+    {
+        if (!me->IsInCombat() && who->IsPlayer() && who->ToPlayer()->GetClass() == CLASS_DEMON_HUNTER && !who->HasAura(178284)
+            && me->IsWithinDist(who, LykillDrakeLineRange) && _drakeLineSaid.insert(who->GetGUID()).second)
+            FaronaarSay(me, TEXT_LYKILL_PITIFUL_DRAKE, who);
+        ScriptedAI::MoveInLineOfSight(who);
     }
 
     void UpdateAI(uint32 diff) override
@@ -1400,7 +1411,9 @@ struct npc_overseer_lykill : public ScriptedAI
     }
 
 private:
+    static constexpr float LykillDrakeLineRange = 30.0f;
     TaskScheduler _scheduler;
+    GuidSet _drakeLineSaid;
 };
 
 // 239455 - Fel Lock (Saving Stellagosa): the first lock opened counts the hidden "First chain unlocked" (105635), and
@@ -1422,6 +1435,815 @@ struct go_saving_stellagosa_fel_lock : public GameObjectAI
             FaronaarSay(korvas, TEXT_KORVAS_SOON_FREE, player);
 
         return false;   // the lock opens as usual
+    }
+};
+
+enum SaveYourself
+{
+    QUEST_THE_TIDESTONE_SHATTERED       = 37469,
+    QUEST_SAVE_YOURSELF                 = 37530,
+
+    OBJECTIVE_SPEAK_WITH_FARONDIS       = 276735,
+
+    NPC_SLAVE_PEN_FARONDIS              = 89009,    // at the cave mouth: gives the quest, then 37470
+    NPC_ACCOUNT_FARONDIS                = 89089,    // the vehicle the player rides through the account
+    NPC_YOUR_DOPPELGANGER               = 89090,    // the player's body at the cave mouth: takes the turn-in
+    NPC_DOPPELGANGER_DRAGGED_A          = 89315,
+    NPC_DOPPELGANGER_DRAGGED_B          = 89316,
+    NPC_ATHISSA_A                       = 89116,
+    NPC_PARJESH_A                       = 89117,
+    NPC_ATHISSA_B                       = 89118,
+    NPC_PARJESH_B                       = 89119,
+    NPC_PARJESH_C                       = 89120,
+    NPC_VISION_OF_AZSHARA               = 91402,
+
+    NPC_CREDIT_ACADEMY                  = 91395,
+    NPC_CREDIT_PURSUIT                  = 91396,
+    NPC_CREDIT_NAGA                     = 91397,
+    NPC_CREDIT_CAVE_FOUND               = 91399,
+    NPC_CREDIT_AZSHARA                  = 91400,
+    NPC_CREDIT_SAVE_YOURSELF            = 89323,
+
+    SPELL_FADE_TO_BLACK                 = 89092,    // 1.5 s screen effect: the naga carry the player off
+    SPELL_TELEPORT_IN_START             = 178285,   // to the vision's start, kill credit 89325
+    SPELL_FARONDIS_ACCOUNT              = 178284,   // control vehicle, phase 4321, water breathing
+    SPELL_ROPE_A                        = 178758,
+    SPELL_ROPE_B                        = 178760,
+    SPELL_DRAGGING                      = 178757,
+    SPELL_CLONE_ME                      = 45204,    // the doppelgangers look like their player
+    SPELL_METEOR_STORM_DAMAGE           = 179217,
+
+    DISPLAY_AZSHARA_QUEEN               = 61056,    // Queen Azshara 88740: "Is this better?"
+
+    // BroadcastText (hotfixes; voiced). The order is the 2016 transcript's
+    TEXT_GUILT_OVERCAME_ME              = 91809,
+    TEXT_FOLLOW_INTO_ACADEMY            = 91810,
+    TEXT_TWO_NAGA_IN_TOW                = 93448,
+    TEXT_ATHISSA_PRISONER               = 91811,
+    TEXT_PARJESH_YES_MISTRESS           = 91812,
+    TEXT_FOLLOWED_CLOSELY               = 91813,
+    TEXT_ATHISSA_BE_GONE                = 91820,
+    TEXT_PARJESH_DEAL_WITH_GUEST        = 91815,
+    TEXT_ATHISSA_CURSE_YOU              = 91816,
+    TEXT_ATHISSA_EVADED_ME              = 91817,
+    TEXT_FOUND_SLAVE_PEN                = 91819,
+    TEXT_OLD_ACQUAINTANCE               = 91818,
+    TEXT_AZSHARA_LOYAL_SUBJECT          = 93453,
+    TEXT_THAT_VOICE                     = 93454,
+    TEXT_AZSHARA_NOT_RECOGNIZE          = 93455,
+    TEXT_AZSHARA_IS_THIS_BETTER         = 93457,
+    TEXT_YOU_LEAD_THE_NAGA              = 93458,
+    TEXT_AZSHARA_DELUDED                = 93459,
+    TEXT_RELEASE_THE_CURSE              = 93460,
+    TEXT_TOO_PROUD_TO_KNEEL             = 93461,
+    TEXT_AZSHARA_WRATH_IS_COMING        = 93462,
+    TEXT_KNOW_THE_REST                  = 91821
+};
+
+// Positions: navmesh heights, at least 4 yd from any wall (6 for scene points), checked with tools/navtool.py clear
+static constexpr Position TidestoneCore         = { 304.0f, 6261.0f, 0.0f };
+static constexpr Position SlavePenLanding       = { -91.90f, 6017.60f, 0.37f, 2.41f };   // 3.5 yd from Farondis (12205300)
+static constexpr Position AccountStart          = { -62.06f, 6252.16f, 3.48f, 0.37f };  // spell_target_position 178285
+static constexpr Position AcademyScene          = { -10.00f, 6273.00f, 4.35f };         // guide "Approach the Academy"
+static constexpr Position PursuitScene          = { -36.00f, 6186.00f, 3.40f };         // guide "Pursue the naga"
+static constexpr Position FightScene            = { -7.09f, 6178.99f, 2.32f };          // guide point, 6 yd off a wall
+static constexpr Position SlavePenScene         = { -39.00f, 5945.00f, 2.90f };         // guide "Find the Hatecoil Slave Pen"
+static constexpr Position AzsharaScene          = { -14.00f, 5970.00f, 0.67f };         // guide "Defeat Queen Azshara"
+static constexpr Position CaveScene             = { -87.00f, 6017.00f, 0.16f };         // guide "Walk forward into the cave"
+static constexpr Position AthissaAAtGate        = { -14.00f, 6270.00f, 5.13f };
+static constexpr Position ParjeshAAtGate        = { -12.00f, 6267.00f, 4.75f };
+static constexpr Position PrisonerAAtGate       = { -16.00f, 6266.00f, 5.26f };
+static constexpr Position AthissaBAtFight       = { -4.00f, 6181.00f, 1.91f };
+static constexpr Position ParjeshBAtFight       = { -9.00f, 6181.00f, 2.12f };
+static constexpr Position PrisonerBAtFight      = { -9.70f, 6178.93f, 2.39f };
+
+// naga on the way (ours: spots on the drag route, 4+ yd from walls), so the three buttons have targets. Summoned by
+// Farondis when the player boards, not spawned in phase 4321: a personal-phase spawn that aggroes a player-driven vehicle
+// on its own overflows the stack in the core (2026-11-25); these attack only when the script tells them to
+struct AccountNaga { uint32 Entry; Position At; };
+static constexpr std::array<AccountNaga, 5> AccountNagaSpots =
+{{
+    { 88084, { -45.20f, 6258.80f, 7.55f, 3.50f } },     // Hatecoil Raider
+    { 88089, { -48.55f, 6232.50f, 0.08f, 1.20f } },     // Hatecoil Enchantress
+    { 88084, { -44.27f, 6215.73f, 0.08f, 1.60f } },
+    { 88084, { -38.27f, 5993.67f, 0.37f, 0.40f } },
+    { 88089, { -64.00f, 6005.33f, 0.21f, 0.10f } }
+}};
+static constexpr float AccountNagaAggroRadius = 12.0f;
+
+static constexpr float SceneRadius = 15.0f;
+static constexpr float FightSceneRadius = 20.0f;
+static constexpr float CaveSceneRadius = 8.0f;
+static constexpr float AccountSearchRadius = 400.0f;
+static constexpr Milliseconds AccountBoardDelay = 1500ms;     // after the teleport, so the player is there
+static constexpr Milliseconds DragTimeout = 40s;
+
+static void SaveYourselfSay(Creature* speaker, uint32 textId, WorldObject const* target)
+{
+    TC_LOG_INFO("scripts", "SaveYourself: {} ({}) says broadcast text {} to {}", speaker->GetName(), speaker->GetEntry(), textId,
+        target ? target->GetName() : std::string("nobody"));
+    speaker->Say(textId, target);
+}
+
+static void SaveYourselfCredit(Player* player, uint32 credit)
+{
+    TC_LOG_INFO("scripts", "SaveYourself: {} credit {}", player->GetName(), credit);
+    player->KilledMonsterCredit(credit);
+}
+
+// everything of the account that is this player's (their summons), except the body unless asked
+static void DespawnAccountSummons(Player* player, bool body)
+{
+    static constexpr std::array<uint32, 12> Entries =
+    {
+        NPC_ACCOUNT_FARONDIS, NPC_DOPPELGANGER_DRAGGED_A, NPC_DOPPELGANGER_DRAGGED_B, NPC_ATHISSA_A, NPC_PARJESH_A,
+        NPC_ATHISSA_B, NPC_PARJESH_B, NPC_PARJESH_C, NPC_VISION_OF_AZSHARA, NPC_YOUR_DOPPELGANGER, 88084, 88089
+    };
+    for (uint32 entry : Entries)
+    {
+        if (entry == NPC_YOUR_DOPPELGANGER && !body)
+            continue;
+        std::list<Creature*> found;
+        // in any phase: the account's summons stand in phase 4321, the player may already be out of it
+        player->GetCreatureListWithOptionsInGrid(found, AccountSearchRadius,
+            { .CreatureId = entry, .IgnorePhases = true, .PrivateObjectOwnerGuid = player->GetGUID() });
+        for (Creature* creature : found)
+            creature->DespawnOrUnsummon();
+    }
+}
+
+static Creature* FindOwnDoppelganger(Player* player)
+{
+    std::list<Creature*> found;
+    player->GetCreatureListWithOptionsInGrid(found, AccountSearchRadius,
+        { .CreatureId = NPC_YOUR_DOPPELGANGER, .IgnorePhases = true, .PrivateObjectOwnerGuid = player->GetGUID() });
+    return found.empty() ? nullptr : found.front();
+}
+
+// back to the cave mouth, out of the vision; the account starts over from Farondis's gossip (spec decision 3)
+static void AbortAccount(Player* player)
+{
+    TC_LOG_INFO("scripts", "SaveYourself: {} leaves the account, back to the cave", player->GetName());
+    player->RemoveAurasDueToSpell(SPELL_FARONDIS_ACCOUNT);
+    DespawnAccountSummons(player, true);
+    if (Quest const* quest = sObjectMgr->GetQuestTemplate(QUEST_SAVE_YOURSELF))
+    {
+        QuestStatus status = player->GetQuestStatus(QUEST_SAVE_YOURSELF);
+        if (status == QUEST_STATUS_INCOMPLETE || status == QUEST_STATUS_COMPLETE)
+        {
+            for (QuestObjective const& objective : quest->GetObjectives())
+                player->SetQuestObjectiveData(objective, 0);
+            if (status == QUEST_STATUS_COMPLETE)
+                player->IncompleteQuest(QUEST_SAVE_YOURSELF);
+        }
+    }
+    player->NearTeleportTo(SlavePenLanding);
+}
+
+// 89009 - Prince Farondis (Save Yourself): at the Hatecoil Slave Pen. The accept opens his gossip; its option leaves the
+// player's body here and starts the account
+struct npc_farondis_slave_pen : public ScriptedAI
+{
+    npc_farondis_slave_pen(Creature* creature) : ScriptedAI(creature) { }
+
+    bool OnGossipSelect(Player* player, uint32 /*menuId*/, uint32 /*gossipListId*/) override
+    {
+        CloseGossipMenuFor(player);
+        if (player->GetQuestStatus(QUEST_SAVE_YOURSELF) != QUEST_STATUS_INCOMPLETE
+            || player->IsQuestObjectiveComplete(QUEST_SAVE_YOURSELF, OBJECTIVE_SPEAK_WITH_FARONDIS) || player->GetVehicleBase())
+            return true;
+
+        DespawnAccountSummons(player, true);
+        player->SummonCreature(NPC_YOUR_DOPPELGANGER, player->GetPosition(), TEMPSUMMON_MANUAL_DESPAWN, 0s, 0, 0, player->GetGUID());
+        player->CastSpell(player, SPELL_TELEPORT_IN_START, true);
+        player->m_Events.AddEventAtOffset([player]()
+        {
+            if (player->GetQuestStatus(QUEST_SAVE_YOURSELF) != QUEST_STATUS_INCOMPLETE || player->GetVehicleBase())
+                return;
+            if (Creature* farondis = player->SummonCreature(NPC_ACCOUNT_FARONDIS, AccountStart, TEMPSUMMON_MANUAL_DESPAWN, 0s, 0, 0,
+                player->GetGUID()))
+                player->CastSpell(farondis, SPELL_FARONDIS_ACCOUNT, true);
+        }, AccountBoardDelay);
+        return true;
+    }
+};
+
+// 89090, 89315, 89316 - Your Doppelganger: the player's body, unconscious; a copy of its player's looks
+struct npc_save_yourself_doppelganger : public ScriptedAI
+{
+    npc_save_yourself_doppelganger(Creature* creature) : ScriptedAI(creature) { }
+
+    void InitializeAI() override
+    {
+        me->SetReactState(REACT_PASSIVE);
+    }
+
+    void IsSummonedBy(WorldObject* /*summoner*/) override
+    {
+        if (Player* player = ObjectAccessor::GetPlayer(*me, me->GetPrivateObjectOwner()))
+        {
+            player->CastSpell(me, SPELL_CLONE_ME, true);
+            me->SetFacingToObject(player);
+        }
+        me->SetStandState(UNIT_STAND_STATE_SLEEP);
+        if (me->GetEntry() != NPC_YOUR_DOPPELGANGER)
+        {
+            DoCastSelf(SPELL_DRAGGING, true);
+            return;
+        }
+
+        // the body goes when its player is gone or has dropped the quest
+        _scheduler.Schedule(2s, [this](TaskContext context)
+        {
+            Player* player = ObjectAccessor::GetPlayer(*me, me->GetPrivateObjectOwner());
+            if (!player || player->GetQuestStatus(QUEST_SAVE_YOURSELF) == QUEST_STATUS_NONE)
+            {
+                me->DespawnOrUnsummon();
+                return;
+            }
+            context.Repeat();
+        });
+    }
+
+    void UpdateAI(uint32 diff) override
+    {
+        _scheduler.Update(diff);
+    }
+
+private:
+    TaskScheduler _scheduler;
+};
+
+// the vehicle's AI by creature: while its player drives it, Creature::AI() is the charm's, not this script's
+static void SaveYourselfAction(Creature* farondis, int32 action);
+
+enum SaveYourselfActions
+{
+    ACTION_PARJESH_B_GONE   = 1,
+    ACTION_ATHISSA_B_GONE   = 2,
+    ACTION_AZSHARA_DONE     = 3,
+
+    POINT_DRAG_END          = 1
+};
+
+// 89116 to 89120 - Athissa and Warlord Parjesh (Save Yourself). The A pair and Parjesh C carry the prisoner away and
+// leave; Athissa B and Parjesh B fight Farondis: Parjesh B hands the prisoner to Parjesh C at half health, Athissa B
+// curses him and flees at a fifth
+struct npc_save_yourself_naga : public ScriptedAI
+{
+    npc_save_yourself_naga(Creature* creature) : ScriptedAI(creature) { }
+
+    void InitializeAI() override
+    {
+        if (!IsFighter())
+            me->SetReactState(REACT_PASSIVE);
+    }
+
+    bool IsFighter() const { return me->GetEntry() == NPC_ATHISSA_B || me->GetEntry() == NPC_PARJESH_B; }
+
+    // the A pair and Parjesh C: walk off with the prisoner tied behind
+    void Drag(Creature* prisoner, Position const& to)
+    {
+        if (prisoner)
+        {
+            DoCast(prisoner, me->GetEntry() == NPC_PARJESH_C ? SPELL_ROPE_B : SPELL_ROPE_A, true);
+            prisoner->GetMotionMaster()->MoveFollow(me, 1.5f, float(M_PI));
+            _prisoner = prisoner->GetGUID();
+        }
+        me->SetWalk(false);
+        me->GetMotionMaster()->MovePoint(POINT_DRAG_END, to, true);
+        _scheduler.Schedule(DragTimeout, [this](TaskContext) { Leave(); });
+    }
+
+    void MovementInform(uint32 type, uint32 id) override
+    {
+        if (type == POINT_MOTION_TYPE && id == POINT_DRAG_END)
+            Leave();
+    }
+
+    void Leave()
+    {
+        if (Creature* prisoner = ObjectAccessor::GetCreature(*me, _prisoner))
+            prisoner->DespawnOrUnsummon();
+        me->DespawnOrUnsummon();
+    }
+
+    void DamageTaken(Unit* /*attacker*/, uint32& damage, DamageEffectType /*damageType*/, SpellInfo const* /*spellInfo*/) override
+    {
+        if (!IsFighter())
+        {
+            damage = 0;
+            return;
+        }
+        if (_gone)
+        {
+            damage = 0;
+            return;
+        }
+        uint32 const pct = me->GetEntry() == NPC_PARJESH_B ? 50 : 20;
+        if (!me->HealthBelowPctDamaged(pct, damage))
+            return;
+
+        damage = 0;
+        _gone = true;
+        me->SetReactState(REACT_PASSIVE);
+        me->AttackStop();
+        WorldObject* summoner = me->ToTempSummon() ? me->ToTempSummon()->GetSummoner() : nullptr;
+        Creature* farondis = summoner ? summoner->ToCreature() : nullptr;
+        Player* player = ObjectAccessor::GetPlayer(*me, me->GetPrivateObjectOwner());
+        if (me->GetEntry() == NPC_PARJESH_B)
+        {
+            SaveYourselfSay(me, TEXT_PARJESH_DEAL_WITH_GUEST, player);
+            if (farondis)
+                SaveYourselfAction(farondis, ACTION_PARJESH_B_GONE);
+        }
+        else
+        {
+            SaveYourselfSay(me, TEXT_ATHISSA_CURSE_YOU, player);
+            if (farondis)
+                SaveYourselfAction(farondis, ACTION_ATHISSA_B_GONE);
+        }
+        me->DespawnOrUnsummon(2s);
+    }
+
+    void UpdateAI(uint32 diff) override
+    {
+        _scheduler.Update(diff);
+        if (IsFighter())
+            UpdateVictim();
+    }
+
+private:
+    TaskScheduler _scheduler;
+    ObjectGuid _prisoner;
+    bool _gone = false;
+};
+
+// 91402 - Vision of Queen Azshara (Save Yourself): her talk with Farondis at the cave, then she is gone
+struct npc_save_yourself_azshara : public ScriptedAI
+{
+    npc_save_yourself_azshara(Creature* creature) : ScriptedAI(creature) { }
+
+    void InitializeAI() override
+    {
+        me->SetReactState(REACT_PASSIVE);
+    }
+
+    void IsSummonedBy(WorldObject* summoner) override
+    {
+        Creature* farondis = summoner->ToCreature();
+        if (!farondis)
+            return;
+        _farondis = farondis->GetGUID();
+        me->SetFacingToObject(farondis);
+
+        struct Line { Milliseconds At; bool Azshara; uint32 Text; };
+        static constexpr std::array<Line, 9> Lines =
+        {{
+            { 2s,  true,  TEXT_AZSHARA_LOYAL_SUBJECT },
+            { 7s,  false, TEXT_THAT_VOICE },
+            { 10s, true,  TEXT_AZSHARA_NOT_RECOGNIZE },
+            { 14s, true,  TEXT_AZSHARA_IS_THIS_BETTER },
+            { 18s, false, TEXT_YOU_LEAD_THE_NAGA },
+            { 22s, true,  TEXT_AZSHARA_DELUDED },
+            { 31s, false, TEXT_RELEASE_THE_CURSE },
+            { 37s, false, TEXT_TOO_PROUD_TO_KNEEL },
+            { 44s, true,  TEXT_AZSHARA_WRATH_IS_COMING }
+        }};
+        for (Line const& line : Lines)
+        {
+            _scheduler.Schedule(line.At, [this, line](TaskContext)
+            {
+                Creature* farondis = ObjectAccessor::GetCreature(*me, _farondis);
+                Player* player = ObjectAccessor::GetPlayer(*me, me->GetPrivateObjectOwner());
+                if (line.Azshara)
+                    SaveYourselfSay(me, line.Text, player);
+                else if (farondis)
+                    SaveYourselfSay(farondis, line.Text, player);
+                if (line.Text == TEXT_AZSHARA_IS_THIS_BETTER)
+                    me->SetDisplayId(DISPLAY_AZSHARA_QUEEN);
+            });
+        }
+        _scheduler.Schedule(48s, [this](TaskContext)
+        {
+            if (Creature* farondis = ObjectAccessor::GetCreature(*me, _farondis))
+                SaveYourselfAction(farondis, ACTION_AZSHARA_DONE);
+            me->DespawnOrUnsummon();
+        });
+    }
+
+    void UpdateAI(uint32 diff) override
+    {
+        _scheduler.Update(diff);
+    }
+
+private:
+    TaskScheduler _scheduler;
+    ObjectGuid _farondis;
+};
+
+enum SaveYourselfScene
+{
+    SCENE_ACADEMY = 0,
+    SCENE_PURSUIT,
+    SCENE_FIGHT,
+    SCENE_FIGHTING,
+    SCENE_SLAVE_PEN,
+    SCENE_AZSHARA,
+    SCENE_TALKING,
+    SCENE_CAVE,
+    SCENE_DONE
+};
+
+struct npc_save_yourself_farondis;
+static std::unordered_map<ObjectGuid, npc_save_yourself_farondis*> SaveYourselfFarondisAIs;
+
+// 89089 - Prince Farondis (Save Yourself): the vehicle the player rides through his account. It can't die; each scene
+// starts when it comes near its point, in the objectives' order; leaving the seat before the end starts over at the cave.
+// While the player drives him his AI is not updated (the charm's is), so his own clock is an event every 250 ms.
+struct npc_save_yourself_farondis : public ScriptedAI
+{
+    npc_save_yourself_farondis(Creature* creature) : ScriptedAI(creature), _self(creature->GetGUID())
+    {
+        SaveYourselfFarondisAIs[_self] = this;
+    }
+
+    ~npc_save_yourself_farondis()
+    {
+        SaveYourselfFarondisAIs.erase(_self);
+    }
+
+    static constexpr Milliseconds TickInterval = 250ms;
+
+    void Tick()
+    {
+        _scheduler.Update(uint32(TickInterval.count()));
+        Player* player = GetPlayer();
+        if (_boarded && !_ending && (!player || player->GetVehicleBase() != me))
+        {
+            // the seat left before the turn-in (the exit button, a teleport): back to the cave, the account starts over
+            _ending = true;
+            if (player)
+                player->m_Events.AddEventAtOffset([player]() { AbortAccount(player); }, 100ms);
+            me->DespawnOrUnsummon(500ms);
+            return;
+        }
+        // once the account's phase is on the player, Farondis and the body at the cave share it (both were summoned before)
+        if (!_phased && player && player->GetPhaseShift().HasPhase(4321))
+        {
+            _phased = true;
+            ShareAccountPhases(me, player);
+            if (Creature* body = FindOwnDoppelganger(player))
+                ShareAccountPhases(body, player);
+            for (AccountNaga const& naga : AccountNagaSpots)
+                if (Creature* summon = Summon(naga.Entry, naga.At))
+                {
+                    summon->SetReactState(REACT_DEFENSIVE);
+                    _accountNaga.push_back(summon->GetGUID());
+                }
+        }
+        // the naga on the way take Farondis on when he comes near (they never aggro by themselves: see AccountNagaSpots)
+        for (ObjectGuid const& guid : _accountNaga)
+            if (Creature* naga = ObjectAccessor::GetCreature(*me, guid))
+                if (naga->IsAlive() && !naga->IsInCombat() && naga->IsWithinDist(me, AccountNagaAggroRadius))
+                    naga->AI()->AttackStart(me);
+        // a ghost who cannot die: DamageTaken below only runs while nobody drives him, so his clock heals him too
+        if (me->IsAlive() && me->GetHealthPct() < 50.0f)
+            me->SetFullHealth();
+        if (!_ending)
+            CheckScene();
+        me->m_Events.AddEventAtOffset([this]() { Tick(); }, TickInterval);
+    }
+
+    void InitializeAI() override
+    {
+        me->SetReactState(REACT_PASSIVE);
+    }
+
+    Player* GetPlayer() const { return ObjectAccessor::GetPlayer(*me, me->GetPrivateObjectOwner()); }
+
+    void PassengerBoarded(Unit* passenger, int8 /*seatId*/, bool apply) override
+    {
+        Player* player = passenger->ToPlayer();
+        if (!player || player->GetGUID() != me->GetPrivateObjectOwner())
+            return;
+
+        if (apply)
+        {
+            if (_boarded)
+                return;
+            _boarded = true;
+            me->SetFaction(player->GetFaction());
+            SaveYourselfSay(me, TEXT_GUILT_OVERCAME_ME, player);
+            _scheduler.Schedule(5s, [this](TaskContext)
+            {
+                SaveYourselfSay(me, TEXT_FOLLOW_INTO_ACADEMY, GetPlayer());
+            });
+            me->m_Events.AddEventAtOffset([this]() { Tick(); }, TickInterval);
+            return;
+        }
+
+        // the seat left before the turn-in: back to the cave, the account starts over
+        if (!_ending)
+        {
+            _ending = true;
+            player->m_Events.AddEventAtOffset([player]() { AbortAccount(player); }, 100ms);
+        }
+        me->DespawnOrUnsummon(500ms);
+    }
+
+    void DamageTaken(Unit* /*attacker*/, uint32& damage, DamageEffectType /*damageType*/, SpellInfo const* /*spellInfo*/) override
+    {
+        if (damage >= me->GetHealth())
+            damage = me->GetHealth() - 1;
+    }
+
+    void DoAction(int32 action) override
+    {
+        Player* player = GetPlayer();
+        switch (action)
+        {
+            case ACTION_PARJESH_B_GONE:
+            {
+                _parjeshGone = true;
+                Creature* prisoner = ObjectAccessor::GetCreature(*me, _prisonerB);
+                if (Creature* parjesh = Summon(NPC_PARJESH_C, prisoner ? prisoner->GetPosition() : ParjeshBAtFight))
+                    if (npc_save_yourself_naga* ai = CAST_AI(npc_save_yourself_naga, parjesh->AI()))
+                        ai->Drag(prisoner, SlavePenScene);
+                break;
+            }
+            case ACTION_ATHISSA_B_GONE:
+                _athissaGone = true;
+                break;
+            case ACTION_AZSHARA_DONE:
+                if (player && _scene == SCENE_TALKING)
+                {
+                    SaveYourselfCredit(player, NPC_CREDIT_AZSHARA);
+                    _scene = SCENE_CAVE;
+                }
+                return;
+            default:
+                return;
+        }
+
+        if (player && _scene == SCENE_FIGHTING && _parjeshGone && _athissaGone)
+        {
+            SaveYourselfCredit(player, NPC_CREDIT_NAGA);
+            _scene = SCENE_SLAVE_PEN;
+            _scheduler.Schedule(3s, [this](TaskContext)
+            {
+                SaveYourselfSay(me, TEXT_ATHISSA_EVADED_ME, GetPlayer());
+            });
+        }
+    }
+
+    // the account's summons stand in the player's phases (178284 puts the player in personal phase 4321 only)
+    TempSummon* Summon(uint32 entry, Position const& at)
+    {
+        TempSummon* summon = me->SummonCreature(entry, at, TEMPSUMMON_MANUAL_DESPAWN, 0s, 0, 0, me->GetPrivateObjectOwner());
+        if (summon)
+            if (Player* player = GetPlayer())
+                ShareAccountPhases(summon, player);
+        return summon;
+    }
+
+    static void ShareAccountPhases(Creature* creature, Player* player)
+    {
+        PhasingHandler::InheritPhaseShift(creature, player);
+        creature->UpdateObjectVisibility();
+    }
+
+    void CheckScene()
+    {
+        Player* player = GetPlayer();
+        if (!player || player->GetVehicleBase() != me)
+            return;
+
+        // abandoned while riding (removing a quest from the log fires no status hook here)
+        if (player->GetQuestStatus(QUEST_SAVE_YOURSELF) == QUEST_STATUS_NONE && !_ending)
+        {
+            _ending = true;
+            player->m_Events.AddEventAtOffset([player]() { AbortAccount(player); }, 100ms);
+            return;
+        }
+
+        switch (_scene)
+        {
+            case SCENE_ACADEMY:
+                if (!me->IsWithinDist2d(&AcademyScene, SceneRadius))
+                    return;
+                SaveYourselfCredit(player, NPC_CREDIT_ACADEMY);
+                SaveYourselfSay(me, TEXT_TWO_NAGA_IN_TOW, player);
+                {
+                    Creature* prisoner = Summon(NPC_DOPPELGANGER_DRAGGED_A, PrisonerAAtGate);
+                    Creature* athissa = Summon(NPC_ATHISSA_A, AthissaAAtGate);
+                    Creature* parjesh = Summon(NPC_PARJESH_A, ParjeshAAtGate);
+                    if (athissa)
+                    {
+                        _athissaA = athissa->GetGUID();
+                        if (npc_save_yourself_naga* ai = CAST_AI(npc_save_yourself_naga, athissa->AI()))
+                            ai->Drag(nullptr, PursuitScene);
+                    }
+                    if (parjesh)
+                    {
+                        _parjeshA = parjesh->GetGUID();
+                        if (npc_save_yourself_naga* ai = CAST_AI(npc_save_yourself_naga, parjesh->AI()))
+                            ai->Drag(prisoner, PursuitScene);
+                    }
+                }
+                _scheduler.Schedule(5s, [this](TaskContext)
+                {
+                    if (Creature* athissa = ObjectAccessor::GetCreature(*me, _athissaA))
+                        SaveYourselfSay(athissa, TEXT_ATHISSA_PRISONER, GetPlayer());
+                });
+                _scheduler.Schedule(8s, [this](TaskContext)
+                {
+                    if (Creature* parjesh = ObjectAccessor::GetCreature(*me, _parjeshA))
+                        SaveYourselfSay(parjesh, TEXT_PARJESH_YES_MISTRESS, GetPlayer());
+                });
+                _scene = SCENE_PURSUIT;
+                break;
+            case SCENE_PURSUIT:
+                if (!me->IsWithinDist2d(&PursuitScene, SceneRadius))
+                    return;
+                SaveYourselfCredit(player, NPC_CREDIT_PURSUIT);
+                SaveYourselfSay(me, TEXT_FOLLOWED_CLOSELY, player);
+                _scene = SCENE_FIGHT;
+                break;
+            case SCENE_FIGHT:
+                if (!me->IsWithinDist2d(&FightScene, FightSceneRadius))
+                    return;
+                {
+                    if (Creature* prisoner = Summon(NPC_DOPPELGANGER_DRAGGED_B, PrisonerBAtFight))
+                        _prisonerB = prisoner->GetGUID();
+                    Creature* athissa = Summon(NPC_ATHISSA_B, AthissaBAtFight);
+                    Creature* parjesh = Summon(NPC_PARJESH_B, ParjeshBAtFight);
+                    for (Creature* naga : { athissa, parjesh })
+                        if (naga)
+                            naga->AI()->AttackStart(me);
+                    if (athissa)
+                        SaveYourselfSay(athissa, TEXT_ATHISSA_BE_GONE, player);
+                }
+                _scene = SCENE_FIGHTING;
+                break;
+            case SCENE_SLAVE_PEN:
+                if (!me->IsWithinDist2d(&SlavePenScene, SceneRadius))
+                    return;
+                SaveYourselfCredit(player, NPC_CREDIT_CAVE_FOUND);
+                SaveYourselfSay(me, TEXT_FOUND_SLAVE_PEN, player);
+                _scene = SCENE_AZSHARA;
+                break;
+            case SCENE_AZSHARA:
+                if (!me->IsWithinDist2d(&AzsharaScene, SceneRadius))
+                    return;
+                SaveYourselfSay(me, TEXT_OLD_ACQUAINTANCE, player);
+                Summon(NPC_VISION_OF_AZSHARA, { AzsharaScene.GetPositionX(), AzsharaScene.GetPositionY(), AzsharaScene.GetPositionZ(),
+                    AzsharaScene.GetAbsoluteAngle(me) });
+                _scene = SCENE_TALKING;
+                break;
+            case SCENE_CAVE:
+                if (!me->IsWithinDist2d(&CaveScene, CaveSceneRadius))
+                    return;
+                SaveYourselfCredit(player, NPC_CREDIT_SAVE_YOURSELF);
+                _scene = SCENE_DONE;
+                break;
+            default:
+                break;
+        }
+    }
+
+    // the turn-in: the account is over, the player is back in their body
+    void EndAtTheBody()
+    {
+        _ending = true;
+    }
+
+    // the clock is Tick (see above), whether or not the AI is updated
+    void UpdateAI(uint32 /*diff*/) override { }
+
+private:
+    ObjectGuid _self;
+    bool _boarded = false;
+    bool _phased = false;
+    std::vector<ObjectGuid> _accountNaga;
+    TaskScheduler _scheduler;
+    SaveYourselfScene _scene = SCENE_ACADEMY;
+    ObjectGuid _athissaA;
+    ObjectGuid _parjeshA;
+    ObjectGuid _prisonerB;
+    bool _parjeshGone = false;
+    bool _athissaGone = false;
+    bool _ending = false;
+};
+
+static void SaveYourselfAction(Creature* farondis, int32 action)
+{
+    auto itr = SaveYourselfFarondisAIs.find(farondis->GetGUID());
+    if (itr != SaveYourselfFarondisAIs.end())
+        itr->second->DoAction(action);
+}
+
+static npc_save_yourself_farondis* GetAccountAI(Player* player)
+{
+    Creature* farondis = player->GetVehicleCreatureBase();
+    if (!farondis)
+        return nullptr;
+    auto itr = SaveYourselfFarondisAIs.find(farondis->GetGUID());
+    return itr != SaveYourselfFarondisAIs.end() ? itr->second : nullptr;
+}
+
+// 179215 - Meteor Storm (Farondis's second button): a dummy at the target point; the damage is 179217 there
+class spell_save_yourself_meteor_storm : public SpellScript
+{
+    bool Validate(SpellInfo const* /*spellInfo*/) override
+    {
+        return ValidateSpellInfo({ SPELL_METEOR_STORM_DAMAGE });
+    }
+
+    void HandleDummy(SpellEffIndex /*effIndex*/)
+    {
+        if (WorldLocation const* dest = GetHitDest())
+            GetCaster()->CastSpell(*dest, SPELL_METEOR_STORM_DAMAGE, true);
+    }
+
+    void Register() override
+    {
+        OnEffectHit += SpellEffectFn(spell_save_yourself_meteor_storm::HandleDummy, EFFECT_0, SPELL_EFFECT_DUMMY);
+    }
+};
+
+// The Tidestone: Shattered's hand-over to Save Yourself, and Save Yourself's ending and starting over
+class player_save_yourself : public PlayerScript
+{
+public:
+    player_save_yourself() : PlayerScript("player_save_yourself") { }
+
+    void OnQuestStatusChange(Player* player, uint32 questId) override
+    {
+        if (questId == QUEST_THE_TIDESTONE_SHATTERED)
+        {
+            // the naga seize the player at the core and carry them to the slave pen (178714, the reward, is a dummy)
+            if (player->GetQuestStatus(QUEST_THE_TIDESTONE_SHATTERED) != QUEST_STATUS_REWARDED
+                || player->GetQuestStatus(QUEST_SAVE_YOURSELF) != QUEST_STATUS_NONE || player->GetMapId() != 1220
+                || !player->IsWithinDist2d(&TidestoneCore, 200.0f))
+                return;
+            TC_LOG_INFO("scripts", "SaveYourself: {} is carried to the slave pen", player->GetName());
+            player->CastSpell(player, SPELL_FADE_TO_BLACK, true);
+            player->m_Events.AddEventAtOffset([player]() { player->NearTeleportTo(SlavePenLanding); }, 1200ms);
+            return;
+        }
+
+        if (questId != QUEST_SAVE_YOURSELF)
+            return;
+
+        switch (player->GetQuestStatus(QUEST_SAVE_YOURSELF))
+        {
+            case QUEST_STATUS_NONE:     // abandoned
+                if (player->GetVehicleBase() || FindOwnDoppelganger(player))
+                {
+                    if (npc_save_yourself_farondis* ai = GetAccountAI(player))
+                        ai->EndAtTheBody();
+                    player->m_Events.AddEventAtOffset([player]() { AbortAccount(player); }, 100ms);
+                }
+                break;
+            case QUEST_STATUS_REWARDED: // turned in to the body: back in it
+            {
+                if (npc_save_yourself_farondis* ai = GetAccountAI(player))
+                    ai->EndAtTheBody();
+                if (Creature* farondis = player->GetVehicleCreatureBase())
+                    SaveYourselfSay(farondis, TEXT_KNOW_THE_REST, player);
+                Position body = SlavePenLanding;
+                if (Creature* doppelganger = FindOwnDoppelganger(player))
+                    body = doppelganger->GetPosition();
+                player->m_Events.AddEventAtOffset([player, body]()
+                {
+                    player->RemoveAurasDueToSpell(SPELL_FARONDIS_ACCOUNT);
+                    DespawnAccountSummons(player, true);
+                    player->NearTeleportTo(body);
+                }, 3s);
+                break;
+            }
+            default:
+                break;
+        }
+    }
+
+    void OnLogout(Player* player) override
+    {
+        if (player->GetQuestStatus(QUEST_SAVE_YOURSELF) == QUEST_STATUS_NONE)
+            return;
+        if (npc_save_yourself_farondis* ai = GetAccountAI(player))
+            ai->EndAtTheBody();
+        DespawnAccountSummons(player, true);
+    }
+
+    // a login inside the account (it ended with the logout) starts it over at the cave
+    void OnLogin(Player* player, bool /*firstLogin*/) override
+    {
+        QuestStatus status = player->GetQuestStatus(QUEST_SAVE_YOURSELF);
+        if ((status == QUEST_STATUS_INCOMPLETE && player->IsQuestObjectiveComplete(QUEST_SAVE_YOURSELF, OBJECTIVE_SPEAK_WITH_FARONDIS))
+            || status == QUEST_STATUS_COMPLETE)
+            player->m_Events.AddEventAtOffset([player]() { AbortAccount(player); }, 1s);
     }
 };
 
@@ -1451,4 +2273,11 @@ void AddSC_zone_azsuna()
     new player_faronaar_korvas();
     RegisterCreatureAI(npc_overseer_lykill);
     RegisterGameObjectAI(go_saving_stellagosa_fel_lock);
+    RegisterCreatureAI(npc_farondis_slave_pen);
+    RegisterCreatureAI(npc_save_yourself_doppelganger);
+    RegisterCreatureAI(npc_save_yourself_naga);
+    RegisterCreatureAI(npc_save_yourself_azshara);
+    RegisterCreatureAI(npc_save_yourself_farondis);
+    RegisterSpellScript(spell_save_yourself_meteor_storm);
+    new player_save_yourself();
 }
