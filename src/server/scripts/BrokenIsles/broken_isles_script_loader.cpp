@@ -34,6 +34,9 @@ void AddSC_instance_trial_of_valor();
 void AddSC_boss_amalgam_of_souls();
 void AddSC_instance_black_rook_hold();
 
+// Eye of Azshara
+void AddSC_instance_eye_of_azshara();
+
 // Emerald Nightmare
 void AddSC_instance_emerald_nightmare();
 void AddSC_boss_nythendra();
@@ -77,6 +80,9 @@ void AddBrokenIslesScripts()
     // Black Rook Hold
     AddSC_boss_amalgam_of_souls();
     AddSC_instance_black_rook_hold();
+
+    // Eye of Azshara
+    AddSC_instance_eye_of_azshara();
 
     // Emerald Nightmare
     AddSC_instance_emerald_nightmare();
