@@ -29,6 +29,7 @@
 #include "SpellScript.h"
 #include "eye_of_azshara.h"
 #include <array>
+#include <set>
 
 enum HatecoilSpells
 {
@@ -131,10 +132,30 @@ namespace
             dune->KillSelf();
     }
 
-    void RestoreDunes(WorldObject const* center)
+    // A blown dune whose corpse has decayed is no longer in the grid, so dunes are restored by spawn id: a corpse
+    // still there is respawned in place, a removed one through the map's respawn of that spawn.
+    void RestoreDunes(Map* map, std::set<ObjectGuid::LowType> const& spawnIds)
     {
-        for (Creature* dune : Dunes(center, false))
-            dune->Respawn(true);
+        for (ObjectGuid::LowType spawnId : spawnIds)
+        {
+            auto bounds = map->GetCreatureBySpawnIdStore().equal_range(spawnId);
+            bool alive = false;
+            Creature* corpse = nullptr;
+            for (auto itr = bounds.first; itr != bounds.second; ++itr)
+            {
+                if (itr->second->IsAlive())
+                    alive = true;
+                else
+                    corpse = itr->second;
+            }
+
+            if (alive)
+                continue;
+            if (corpse)
+                corpse->Respawn(true);
+            else
+                map->Respawn(SPAWN_TYPE_CREATURE, spawnId);
+        }
     }
 }
 
@@ -164,6 +185,10 @@ struct boss_lady_hatecoil : public BossAI
         instance->SendEncounterUnit(ENCOUNTER_FRAME_ENGAGE, me, 1);
         Talk(TALK_AGGRO);
 
+        // Remember every dune standing at the pull, to bring each back by spawn id.
+        for (Creature* dune : Dunes(me, true))
+            _duneSpawns.insert(dune->GetSpawnId());
+
         events.ScheduleEvent(EVENT_STATIC_NOVA, 10500ms);
         events.ScheduleEvent(EVENT_BECKON_STORM, 19s);
         events.ScheduleEvent(EVENT_CURSE, 15s);
@@ -183,7 +208,7 @@ struct boss_lady_hatecoil : public BossAI
         instance->DoRemoveAurasDueToSpellOnPlayers(SPELL_LIGHTNING_ARENA);
         instance->DoRemoveAurasDueToSpellOnPlayers(SPELL_CRACKLING_THUNDER);
         instance->DoRemoveAurasDueToSpellOnPlayers(SPELL_CURSE_OF_THE_WITCH);
-        RestoreDunes(me);
+        RestoreDunes(me->GetMap(), _duneSpawns);
     }
 
     void EnterEvadeMode(EvadeReason /*why*/) override
@@ -301,6 +326,7 @@ private:
         }
     }
 
+    std::set<ObjectGuid::LowType> _duneSpawns;
     std::size_t _curseStep = 0;
     uint32 _arenaTicks = 0;
 };

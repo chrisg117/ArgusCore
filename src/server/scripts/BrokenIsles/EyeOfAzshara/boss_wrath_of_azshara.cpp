@@ -168,6 +168,12 @@ struct boss_wrath_of_azshara : public BossAI
             StartPhaseTwo();
     }
 
+    void OnSpellFailed(SpellInfo const* spell) override
+    {
+        if (spell->Id == SPELL_CRY_OF_WRATH)
+            events.ScheduleEvent(EVENT_CRY_OF_WRATH, 1s);
+    }
+
     void CleanUp()
     {
         summons.DespawnAll();
@@ -251,8 +257,13 @@ struct boss_wrath_of_azshara : public BossAI
                     events.Repeat(1s);
                     break;
                 case EVENT_CRY_OF_WRATH:
+                    // Retried until it goes through (OnSpellFailed reschedules an interrupted one): phase 2 must come.
+                    if (DoCastSelf(SPELL_CRY_OF_WRATH) != SPELL_CAST_OK)
+                    {
+                        events.Repeat(500ms);
+                        break;
+                    }
                     Talk(TALK_CRY_OF_WRATH);
-                    DoCastSelf(SPELL_CRY_OF_WRATH);
                     break;
                 case EVENT_STORM_WINDS:
                     _windAngle = frand(0.0f, 2.0f * float(M_PI));
@@ -354,14 +365,12 @@ struct npc_wrath_arcane_bomb : public ScriptedAI
 {
     npc_wrath_arcane_bomb(Creature* creature) : ScriptedAI(creature) { }
 
-    void IsSummonedBy(WorldObject* summoner) override
+    // The Arcane Bomb aura script makes it follow its player and starts the blast.
+    void JustAppeared() override
     {
         me->SetReactState(REACT_PASSIVE);
         me->SetUnitFlag(UNIT_FLAG_NON_ATTACKABLE);
         me->SetUninteractible(true);
-        if (Unit* target = summoner->ToUnit())
-            me->GetMotionMaster()->MoveFollow(target, 0.0f, 0.0f);
-        DoCastSelf(SPELL_ARCANE_BOMB_BLAST);
     }
 
     void DoAction(int32 /*action*/) override
@@ -452,13 +461,22 @@ class spell_wrath_arcane_bomb : public AuraScript
         PreventDefaultAction();
     }
 
+    // The Wrath summons the bomb, so her summon list despawns it on a wipe and on her death.
     void HandleApply(AuraEffect const* /*aurEff*/, AuraEffectHandleModes /*mode*/)
     {
+        Unit* caster = GetCaster();
         Unit* target = GetTarget();
+        if (!caster)
+            return;
+
         Position pos = target->GetPosition();
         pos.m_positionZ += 3.0f;
-        if (TempSummon* bomb = target->SummonCreature(NPC_ARCANE_BOMB, pos, TEMPSUMMON_TIMED_DESPAWN, 22s))
+        if (TempSummon* bomb = caster->SummonCreature(NPC_ARCANE_BOMB, pos, TEMPSUMMON_TIMED_DESPAWN, 22s))
+        {
             _bomb = bomb->GetGUID();
+            bomb->GetMotionMaster()->MoveFollow(target, 0.0f, 0.0f);
+            bomb->CastSpell(bomb, SPELL_ARCANE_BOMB_BLAST, CastSpellExtraArgs());
+        }
     }
 
     void HandleRemove(AuraEffect const* /*aurEff*/, AuraEffectHandleModes /*mode*/)
@@ -485,11 +503,17 @@ class spell_wrath_arcane_bomb : public AuraScript
 // 197365 - Crushing Depths (Heroic, Mythic): 60% of maximum health, split among the players within 12 yd.
 class spell_wrath_crushing_depths : public SpellScript
 {
+    // The hook runs before the default handler, which would add the full percentage on top: so the default is
+    // prevented and the split damage is set here.
     void HandleSplit(SpellEffIndex effIndex)
     {
-        int64 const count = GetUnitTargetCountForEffect(effIndex);
-        if (count > 1)
-            SetHitDamage(int32(GetHitDamage() / count));
+        Unit* target = GetHitUnit();
+        if (!target)
+            return;
+
+        PreventHitDefaultEffect(effIndex);
+        int64 const count = std::max<int64>(1, GetUnitTargetCountForEffect(effIndex));
+        SetHitDamage(int32(target->CountPctFromMaxHealth(GetEffectValue()) / count));
     }
 
     void Register() override

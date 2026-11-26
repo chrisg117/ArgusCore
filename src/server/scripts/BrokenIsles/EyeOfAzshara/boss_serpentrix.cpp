@@ -172,6 +172,12 @@ struct boss_serpentrix : public BossAI
             Emerge();
     }
 
+    void OnSpellFailed(SpellInfo const* spell) override
+    {
+        if (spell->Id == SPELL_SUBMERGE)
+            events.ScheduleEvent(EVENT_EMERGE, 1s);
+    }
+
     void UpdateAI(uint32 diff) override
     {
         if (!UpdateVictim())
@@ -204,8 +210,13 @@ struct boss_serpentrix : public BossAI
                     events.Repeat(1s);
                     break;
                 case EVENT_EMERGE:
+                    // Retried until it goes through (OnSpellFailed reschedules an interrupted one).
+                    if (DoCastSelf(SPELL_SUBMERGE) != SPELL_CAST_OK)
+                    {
+                        events.Repeat(500ms);
+                        break;
+                    }
                     Talk(EMOTE_SUBMERGE);
-                    DoCastSelf(SPELL_SUBMERGE);
                     break;
                 default:
                     break;
