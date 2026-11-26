@@ -47,6 +47,13 @@ What is playable on the `dev` branch. Counts only; details live in the specs.
 | Tomb of Sargeras | 0 of 9 |
 | Antorus, the Burning Throne | 0 of 11 |
 
+**Dungeon bosses**
+
+| Dungeon | Bosses playable |
+|---------|-----------------|
+| Eye of Azshara | 0 of 5 (instance script, levels and factions) |
+| Other Legion dungeons | 0 |
+
 **Engine systems**
 
 | System | Status |
