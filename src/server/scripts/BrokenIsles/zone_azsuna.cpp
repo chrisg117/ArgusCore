@@ -2247,6 +2247,145 @@ public:
     }
 };
 
+enum HeadOfTheSnake
+{
+    QUEST_HEAD_OF_THE_SNAKE             = 37470,
+
+    NPC_SNAKE_ATHISSA                   = 88855,
+    NPC_SNAKE_MYRMIDON                  = 89006,
+    NPC_SNAKE_THALDRYS                  = 97841,
+    NPC_SNAKE_NIGHTWATCHER              = 97845,
+
+    TEXT_SNAKE_ATHISSA_SEIZE_THEM       = 93578,    // "Hatecoil! Seize them!" (yell)
+    TEXT_SNAKE_ATHISSA_RALLY_FORCES     = 91800,    // "Parjesh! Rally the rest of our forces. I shall make short work of..."
+    TEXT_SNAKE_THALDRYS_LOOK_ALIVE      = 93579,    // "Look alive, nightwatchers! Our prince needs us!"
+};
+
+static void HeadOfTheSnakeSay(Creature* speaker, uint32 textId, WorldObject const* target, bool yell = false)
+{
+    TC_LOG_INFO("scripts", "HeadOfTheSnake: {} ({}) {} broadcast text {} to {}", speaker->GetName(), speaker->GetEntry(),
+        yell ? "yells" : "says", textId, target ? target->GetName() : std::string("nobody"));
+    if (yell)
+        speaker->Yell(textId, target);
+    else
+        speaker->Say(textId, target);
+}
+
+// Thaldrys and the Nightwatchers near him join the fight on Athissa (a no-op for the ones already fighting)
+static void HeadOfTheSnakeRally(Creature* thaldrys, Creature* athissa)
+{
+    std::list<Creature*> spirits;
+    thaldrys->GetCreatureListWithEntryInGrid(spirits, NPC_SNAKE_NIGHTWATCHER, 30.0f);
+    spirits.push_back(thaldrys);
+    for (Creature* spirit : spirits)
+    {
+        if (!spirit->IsAlive() || spirit->IsInCombat())
+            continue;
+        spirit->SetImmuneToNPC(false);
+        spirit->AI()->AttackStart(athissa);
+    }
+}
+
+// 88855 - Athissa (The Head of the Snake): on the Hatecoil ledge, dies for the kill credit. Her two Myrmidons fight with
+// her, and the Nightwatchers below join in.
+struct npc_head_of_the_snake_athissa : public ScriptedAI
+{
+    npc_head_of_the_snake_athissa(Creature* creature) : ScriptedAI(creature) { }
+
+    void Reset() override
+    {
+        _rallySaid = false;
+    }
+
+    void JustEngagedWith(Unit* who) override
+    {
+        HeadOfTheSnakeSay(me, TEXT_SNAKE_ATHISSA_SEIZE_THEM, who, true);
+
+        std::list<Creature*> guards;
+        me->GetCreatureListWithEntryInGrid(guards, NPC_SNAKE_MYRMIDON, 15.0f);
+        for (Creature* guard : guards)
+            if (guard->IsAlive() && !guard->IsInCombat())
+                guard->AI()->AttackStart(who);
+
+        if (Creature* thaldrys = me->FindNearestCreature(NPC_SNAKE_THALDRYS, 50.0f))
+            HeadOfTheSnakeRally(thaldrys, me);
+    }
+
+    void DamageTaken(Unit* attacker, uint32& damage, DamageEffectType /*damageType*/, SpellInfo const* /*spellInfo*/) override
+    {
+        if (!_rallySaid && me->HealthBelowPctDamaged(50, damage))
+        {
+            _rallySaid = true;
+            HeadOfTheSnakeSay(me, TEXT_SNAKE_ATHISSA_RALLY_FORCES, attacker);
+        }
+    }
+
+private:
+    bool _rallySaid = false;
+};
+
+// 97841 - Nightwatcher Thaldrys, 97845 - Nar'thalas Nightwatcher (The Head of the Snake): Farondis's people below
+// Athissa's ledge. They can't be attacked by (or attack) the naga until Thaldrys rallies them, when a player on the quest
+// comes near or Athissa is engaged; after the fight they go home and wait again.
+struct npc_head_of_the_snake_nightwatcher : public ScriptedAI
+{
+    npc_head_of_the_snake_nightwatcher(Creature* creature) : ScriptedAI(creature) { }
+
+    void Reset() override
+    {
+        me->SetImmuneToNPC(true);
+    }
+
+    void MoveInLineOfSight(Unit* who) override
+    {
+        if (me->GetEntry() == NPC_SNAKE_THALDRYS && !me->IsInCombat() && who->IsPlayer() && me->IsWithinDist(who, ThaldrysRallyRange))
+        {
+            Player* player = who->ToPlayer();
+            if (player->GetQuestStatus(QUEST_HEAD_OF_THE_SNAKE) == QUEST_STATUS_INCOMPLETE)
+            {
+                if (Creature* athissa = me->FindNearestCreature(NPC_SNAKE_ATHISSA, 50.0f))
+                {
+                    HeadOfTheSnakeSay(me, TEXT_SNAKE_THALDRYS_LOOK_ALIVE, player);    // each time a fight starts
+                    HeadOfTheSnakeRally(me, athissa);
+                }
+            }
+        }
+        ScriptedAI::MoveInLineOfSight(who);
+    }
+
+    // they fight only while a player on the quest is near: with nobody left they go home (and wait, immune, again), and
+    // Athissa, with no one left on her threat list, does the same
+    void UpdateAI(uint32 diff) override
+    {
+        if (!UpdateVictim())
+            return;
+
+        if (_leashCheck <= diff)
+        {
+            _leashCheck = LeashCheckEvery;
+            std::list<Player*> players;
+            me->GetPlayerListInGrid(players, LeashRange);
+            bool anyone = std::any_of(players.begin(), players.end(), [](Player const* player)
+            {
+                return player->GetQuestStatus(QUEST_HEAD_OF_THE_SNAKE) == QUEST_STATUS_INCOMPLETE;
+            });
+            if (!anyone)
+            {
+                EnterEvadeMode(EvadeReason::Other);
+                return;
+            }
+        }
+        else
+            _leashCheck -= diff;
+    }
+
+private:
+    static constexpr float ThaldrysRallyRange = 30.0f;
+    static constexpr float LeashRange = 60.0f;
+    static constexpr uint32 LeashCheckEvery = 2000;
+    uint32 _leashCheck = LeashCheckEvery;
+};
+
 void AddSC_zone_azsuna()
 {
     RegisterCreatureAI(npc_demon_souls_soul_gem);
@@ -2280,4 +2419,6 @@ void AddSC_zone_azsuna()
     RegisterCreatureAI(npc_save_yourself_farondis);
     RegisterSpellScript(spell_save_yourself_meteor_storm);
     new player_save_yourself();
+    RegisterCreatureAI(npc_head_of_the_snake_athissa);
+    RegisterCreatureAI(npc_head_of_the_snake_nightwatcher);
 }
