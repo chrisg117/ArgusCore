@@ -51,7 +51,7 @@ What is playable on the `dev` branch. Counts only; details live in the specs.
 
 | Dungeon | Bosses playable |
 |---------|-----------------|
-| Eye of Azshara | 0 of 5 (instance script, levels and factions) |
+| Eye of Azshara | 5 of 5 (Normal, Heroic, Mythic; trash; lead-in 38286) |
 | Other Legion dungeons | 0 |
 
 **Engine systems**
