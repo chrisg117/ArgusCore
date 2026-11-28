@@ -92,7 +92,6 @@ static constexpr float QuestPollRadius = 30.0f;
 static constexpr Milliseconds QuestPollInterval = 1s;
 static constexpr Milliseconds SoulCompelTime = 5s;
 static constexpr float SenegosPoolRadius = 20.0f;
-static constexpr uint32 ITEM_GRIEVOUSLY_WOUNDED_WHELPLING = 122292;
 static constexpr Milliseconds WhelplingReviveTime = 2s;
 static constexpr Seconds WhelplingRespawnTime = 30s;
 
@@ -434,8 +433,9 @@ struct npc_agapanthus : public AzsunaQuestPollAI
 };
 
 // 90880 - Mana-Drained Whelpling (Their Dying Breaths): the click casts Resuscitating (180713), which credits. A revived
-// whelpling leaves for a while, so one whelpling can't be revived four times. The last one is the Grievously Wounded
-// Whelpling the player carries back to Senegos: nothing in the data hands that item out.
+// whelpling leaves for a while, so one whelpling can't be revived four times. With four revived, a click casts Create
+// Whelpling (180527) instead, which creates the Grievously Wounded Whelpling (122292) the player carries back to Senegos
+// (the guide's "and one more whelpling"); the spellclick conditions pick the spell.
 struct npc_their_dying_breaths_whelpling : public ScriptedAI
 {
     npc_their_dying_breaths_whelpling(Creature* creature) : ScriptedAI(creature) { }
@@ -459,9 +459,10 @@ struct npc_their_dying_breaths_whelpling : public ScriptedAI
             if (!reviver || reviver->GetQuestObjectiveData(QUEST_THEIR_DYING_BREATHS, OBJECTIVE_WHELPLINGS_REVIVED) <= revivedBefore)
                 return;
 
-            if (reviver->IsQuestObjectiveComplete(QUEST_THEIR_DYING_BREATHS, OBJECTIVE_WHELPLINGS_REVIVED)
-                && !reviver->HasItemCount(ITEM_GRIEVOUSLY_WOUNDED_WHELPLING))
-                reviver->AddItem(ITEM_GRIEVOUSLY_WOUNDED_WHELPLING, 1);
+            // the fourth stays: its next click (Create Whelpling, 180527, by the spellclick conditions) lifts it up as
+            // the Grievously Wounded Whelpling
+            if (reviver->IsQuestObjectiveComplete(QUEST_THEIR_DYING_BREATHS, OBJECTIVE_WHELPLINGS_REVIVED))
+                return;
 
             me->DespawnOrUnsummon(0ms, WhelplingRespawnTime);
         });
